@@ -142,6 +142,16 @@ func _rank_travel_mult(rank: int) -> float:
 var consume_rules: Dictionary = {}                 # pid→{consume_model, period_days, base?}
 var _consume_period_cache: Dictionary = {}         # pid→period（最適化）
 
+# --- Industries (lightweight, story-friendly) ---
+@export var enable_industries: bool = true
+@export var industries_file: String = "industries.csv"
+@export_range(0.0, 3.0, 0.05) var industry_level_bonus: float = 0.25
+@export var industry_log: bool = false
+@export_range(0.0, 1.0, 0.05) var industry_log_util_threshold: float = 0.50
+
+# city_id -> Array[{industry_id,name,enabled,out_pid,out_per_day,inputs{pid:ratio},level,last_util,last_out}]
+var industries_by_city: Dictionary = {}
+
 @export var pay_toll_on_depart: bool = true      # 出発時に通行料を支払う（両端都市に折半）
 @export var depart_same_day: bool = false      # 到着日に再出発しない（方針）
 
@@ -426,34 +436,46 @@ func _decay_backlog_daily() -> void:
         backlog[cid] = d
 
 func finalize_day() -> void:
-    # 生産/消費 → 供給 → 価格 → 市・屋台 → NPC → プレイヤー到着 → 劣化 → 通知
-    _decay_backlog_daily()  # ← 追加：バックログを日次で少し蒸発させる
-    for city_id in stock.keys():
-        for pid in stock[city_id].keys():
-            var rec: Dictionary = stock[city_id][pid]
+    # 生産/消費 → 産業 → 供給 → 価格 → 市・屋台 → NPC → プレイヤー到着 → 劣化 → 通知
+    _decay_backlog_daily()  # バックログを日次で少し蒸発
+
+    # --- Pass A: 需要計算 & 基礎供給（バッチ放出） ---
+    for city_id_any in stock.keys():
+        var city_id: String = String(city_id_any)
+        for pid_any in stock[city_id].keys():
+            var pid: String = String(pid_any)
+            var rec: Dictionary = stock[city_id][pid] as Dictionary
 
             # 需要（Elasticity を含む基礎関数で算出）
             var demand: float = _consumption_for_today(city_id, pid)
-            stock[city_id][pid]["cons"] = demand
+            rec["cons"] = demand
 
-            # 1) 生産の取り込み: まず backlog の即時吸収、残りのみ在庫へ
-            var cal := get_calendar()
-            var _m: int = int(cal.get("month", 1))
+            # 生産の取り込み: バッファへ積み、条件成立時だけ市場に出す
             var base_prod_today: float = float(rec.get("prod", 0.0))
-            _enqueue_prod(city_id, pid, base_prod_today)   # ← バッファへ
-            _try_release_batches(city_id, pid)             # ← 条件成立時だけ市場に出す
+            _enqueue_prod(city_id, pid, base_prod_today)
+            _try_release_batches(city_id, pid)
 
-            # 2) 当日の販売（市場在庫から需要ぶんだけ減る）
-            var have: float = float(stock[city_id][pid].get("qty", 0.0))
-            var sold: float = min(have, demand)
+            stock[city_id][pid] = rec
+
+    # --- Pass B: 産業（原料→製品） ---
+    _tick_industries()
+
+    # --- Pass C: 当日の販売（市場在庫から需要ぶんだけ減る） & backlog ---
+    for city_id_any2 in stock.keys():
+        var city_id2: String = String(city_id_any2)
+        for pid_any2 in stock[city_id2].keys():
+            var pid2: String = String(pid_any2)
+            var demand2: float = float(stock[city_id2][pid2].get("cons", 0.0))
+
+            var have: float = float(stock[city_id2][pid2].get("qty", 0.0))
+            var sold: float = min(have, demand2)
             have -= sold
-            stock[city_id][pid]["qty"] = have
+            stock[city_id2][pid2]["qty"] = have
 
-            # 3) 残需要は backlog に積む
-            var unmet: float = max(0.0, demand - sold)
+            var unmet: float = max(0.0, demand2 - sold)
             if use_backlog_absorption and unmet > 0.0:
-                _ensure_backlog_record(city_id, pid)
-                backlog[city_id][pid] = float(backlog[city_id].get(pid, 0.0)) + unmet
+                _ensure_backlog_record(city_id2, pid2)
+                backlog[city_id2][pid2] = float(backlog[city_id2].get(pid2, 0.0)) + unmet
 
     # 追加: ランダム供給（既存機能）
     if enable_auto_supply:
@@ -473,9 +495,9 @@ func finalize_day() -> void:
             _arrive_and_trade(t)
 
         if not bool(t.get("enroute", false)) and (depart_same_day or not just_arrived):
-            var city_id: String = String(t.get("city", ""))
-            if city_id != "":
-                var plan: Dictionary = _best_trade_from(city_id, t)
+            var city_id3: String = String(t.get("city", ""))
+            if city_id3 != "":
+                var plan: Dictionary = _best_trade_from(city_id3, t)
                 _plan_and_depart(t, plan)
 
     if bool(player.get("enroute", false)) and int(player.get("arrival_day", 0)) <= day:
@@ -863,6 +885,131 @@ func _consumption_for_today(cid: String, pid: String) -> float:
             return 0.0
 
     return per_day
+
+# --- Industries helpers ---
+func _parse_industry_inputs(s: String) -> Dictionary:
+    # "PR001:2;PR014:1" -> {"PR001":2.0, "PR014":1.0}
+    var out: Dictionary = {}
+    var t: String = s.strip_edges()
+    if t == "":
+        return out
+
+    var parts: PackedStringArray = t.split(";", false)
+    for part_any in parts:
+        var part: String = String(part_any).strip_edges()
+        if part == "":
+            continue
+
+        var kv: PackedStringArray = part.split(":", false)
+        if kv.size() < 2:
+            continue
+
+        var pid: String = String(kv[0]).strip_edges()
+        if pid == "":
+            continue
+
+        var q: float = float(_num(kv[1]))
+        if q <= 0.0:
+            continue
+
+        out[pid] = q
+
+    return out
+
+
+func _tick_industries() -> void:
+    if not enable_industries:
+        return
+    if industries_by_city == null or industries_by_city.is_empty():
+        return
+
+    var city_ids: Array = industries_by_city.keys()
+    for cid_any in city_ids:
+        var cid: String = String(cid_any)
+        var arr: Array = industries_by_city.get(cid, []) as Array
+        if arr.is_empty():
+            continue
+
+        for i in range(arr.size()):
+            var ind: Dictionary = arr[i] as Dictionary
+            var enabled: bool = int(ind.get("enabled", 1)) == 1
+            if not enabled:
+                continue
+
+            var out_pid: String = String(ind.get("out_pid", ""))
+            if out_pid == "":
+                continue
+
+            var base_out: float = float(ind.get("out_per_day", 0.0))
+            if base_out <= 0.0:
+                continue
+
+            var lvl: int = max(1, int(ind.get("level", 1)))
+            var desire_out: float = base_out * (1.0 + industry_level_bonus * float(lvl - 1))
+            if desire_out <= 0.0:
+                continue
+
+            var inputs: Dictionary = ind.get("inputs", {}) as Dictionary
+            var cap_out: float = desire_out
+
+            # Cap by available inputs.
+            for in_pid_any in inputs.keys():
+                var in_pid: String = String(in_pid_any)
+                var ratio: float = float(inputs.get(in_pid_any, 0.0))
+                if ratio <= 0.0:
+                    continue
+
+                _ensure_stock_record(cid, in_pid)
+                var avail: float = float(stock[cid][in_pid].get("qty", 0.0))
+                cap_out = min(cap_out, avail / ratio)
+
+            var actual_out: float = clamp(cap_out, 0.0, desire_out)
+
+            # Status (for UI/story use).
+            ind["last_out"] = actual_out
+            if desire_out > 0.0:
+                ind["last_util"] = actual_out / desire_out
+            else:
+                ind["last_util"] = 0.0
+
+            if actual_out <= 0.0:
+                arr[i] = ind
+                continue
+
+            # Consume inputs from market stock.
+            for in_pid_any2 in inputs.keys():
+                var in_pid2: String = String(in_pid_any2)
+                var ratio2: float = float(inputs.get(in_pid_any2, 0.0))
+                if ratio2 <= 0.0:
+                    continue
+
+                _ensure_stock_record(cid, in_pid2)
+                var need: float = ratio2 * actual_out
+                var have: float = float(stock[cid][in_pid2].get("qty", 0.0))
+                stock[cid][in_pid2]["qty"] = max(0.0, have - need)
+
+            # Output supply as inflow (absorbs backlog immediately).
+            _ensure_stock_record(cid, out_pid)
+            _add_stock_inflow(cid, out_pid, actual_out)
+
+            if industry_log and float(ind.get("last_util", 1.0)) < industry_log_util_threshold:
+                var msg := "%sの%sが原料不足で稼働低下（%d%%）" % [
+                    String(cities.get(cid, {}).get("name", cid)),
+                    String(ind.get("name", ind.get("industry_id", "工房"))),
+                    int(round(float(ind.get("last_util", 0.0)) * 100.0))
+                ]
+                _log(msg)
+
+            arr[i] = ind
+
+        industries_by_city[cid] = arr
+
+
+func get_city_industries(cid: String) -> Array:
+    # For UI/story use: return deep copy.
+    if industries_by_city.has(cid):
+        return (industries_by_city[cid] as Array).duplicate(true)
+    return []
 
 # 都市別税率（RANK反映）
 func get_trade_tax_rate(city_id: String = "") -> float:
@@ -1271,6 +1418,54 @@ func load_data() -> void:
             "prod": _num(st.get("prod_per_day", 0)),
             "cons": _num(st.get("cons_per_day", 0)),
         }
+
+    # --- Industries (optional) ---
+    industries_by_city.clear()
+    var ind_path := data_dir + industries_file
+    if FileAccess.file_exists(ind_path):
+        var ind_rows: Array[Dictionary] = _loader.load_csv_dicts(ind_path)
+        for ind_any in ind_rows:
+            var ir: Dictionary = ind_any
+            var cid4: String = String(ir.get("city_id", "")).strip_edges()
+            if cid4 == "" or not cities.has(cid4):
+                continue
+
+            var iid: String = String(ir.get("industry_id", ir.get("id", ""))).strip_edges()
+            if iid == "":
+                continue
+
+            var out_pid: String = String(ir.get("out_pid", ir.get("output_pid", ""))).strip_edges()
+            var out_per_day: float = float(_num(ir.get("out_per_day", ir.get("output_per_day", 0.0))))
+            var inputs_txt: String = String(ir.get("inputs", ir.get("input_list", "")))
+            var inputs: Dictionary = _parse_industry_inputs(inputs_txt)
+
+            var name_str: String = String(ir.get("name_ja", ir.get("name", iid)))
+            var enabled: int = int(_num(ir.get("enabled", 1)))
+            var lvl: int = max(1, int(_num(ir.get("level", 1))))
+
+            var ind: Dictionary = {
+                "industry_id": iid,
+                "name": name_str,
+                "enabled": enabled,
+                "out_pid": out_pid,
+                "out_per_day": out_per_day,
+                "inputs": inputs,
+                "level": lvl,
+                "last_util": 1.0,
+                "last_out": 0.0,
+            }
+
+            if not industries_by_city.has(cid4):
+                industries_by_city[cid4] = []
+            (industries_by_city[cid4] as Array).append(ind)
+
+            # Ensure related stock records exist.
+            if out_pid != "":
+                _ensure_stock_record(cid4, out_pid)
+            for k2 in inputs.keys():
+                _ensure_stock_record(cid4, String(k2))
+
+        _log("Industries: loaded=%d (%s)" % [ind_rows.size(), ind_path])
 
     # --- イベントテーブル読込（無ければ空配列） ---
     _events_daily = _loader.load_csv_dicts(data_dir + events_daily_file)
