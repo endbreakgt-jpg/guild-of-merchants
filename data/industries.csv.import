@@ -1,0 +1,17 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://xkbglcdjip4l"
+
+[deps]
+
+files=["res://data/industries.industry.translation", "res://data/industries.name.translation", "res://data/industries.enabled.translation", "res://data/industries.level.translation", "res://data/industries.out.translation", "res://data/industries.out.translation", "res://data/industries.inputs.translation"]
+
+source_file="res://data/industries.csv"
+dest_files=["res://data/industries.industry.translation", "res://data/industries.name.translation", "res://data/industries.enabled.translation", "res://data/industries.level.translation", "res://data/industries.out.translation", "res://data/industries.out.translation", "res://data/industries.inputs.translation"]
+
+[params]
+
+compress=true
+delimiter=0

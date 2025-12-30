@@ -1,9 +1,4 @@
-# industries.csv (例)
-# 注意: CsvLoader は "" によるクォート解釈をしないので、inputs列にカンマを入れないでください。
-# inputs 形式: "PR001:2;PR014:1"（セミコロン区切り / コロンで数量）
-# 数量は「出力1あたりに必要な入力量」です。
-#
-# city_id,industry_id,name_ja,enabled,level,out_pid,out_per_day,inputs
+city_id,industry_id,name_ja,enabled,level,out_pid,out_per_day,inputs
 RE0001,IND_SAWMILL,製材所,1,1,PR010,2.0,PR001:1.5
 RE0001,IND_BAKERY,パン工房,1,1,PR020,1.2,PR003:2.0
 RE0002,IND_TANNERY,皮なめし工房,1,1,PR030,0.8,PR004:1.0;PR001:0.5
