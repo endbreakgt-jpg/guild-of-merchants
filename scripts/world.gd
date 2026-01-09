@@ -2016,8 +2016,22 @@ func _update_shortage_ema(c: String, pid: String, s: float) -> void:
 
 func _cargo_used(t: Dictionary) -> int:
     var total: int = 0
-    for pid in (t["cargo"] as Dictionary).keys():
-        var qty: int = int(t["cargo"][pid])
+
+    # cargo が無い/型が違う場合でも落とさない
+    var cargo_any: Variant = t.get("cargo", null)
+    if cargo_any == null:
+        t["cargo"] = {}
+        return 0
+    if not (cargo_any is Dictionary):
+        t["cargo"] = {}
+        return 0
+
+    var cargo: Dictionary = cargo_any as Dictionary
+    for pid in cargo.keys():
+        var qty: int = int(cargo.get(pid, 0))
+        if qty <= 0:
+            continue
+
         var size: int = 1
         if products.has(pid):
             size = int(products[pid].get("size", 1))
@@ -2075,6 +2089,48 @@ func init_player() -> void:
     }
     player["escort_level"] = int(player.get("escort_level", 0))
     player["last_arrival_day"] = -999
+
+func _ensure_player_integrity() -> void:
+    # セーブデータ互換や初期化順のズレで、必須キーが欠けた場合の保険
+    if player.is_empty():
+        init_player()
+        return
+
+    if not player.has("id"):
+        player["id"] = "YOU"
+
+    if not player.has("city"):
+        player["city"] = "RE0001"
+
+    if not player.has("cash"):
+        player["cash"] = 0.0
+
+    if not player.has("cap"):
+        player["cap"] = 40
+
+    if not player.has("cargo") or not (player.get("cargo") is Dictionary):
+        player["cargo"] = {}
+
+    if not player.has("key_items") or not (player.get("key_items") is Dictionary):
+        player["key_items"] = {}
+
+    if not player.has("enroute"):
+        player["enroute"] = false
+
+    if not player.has("dest"):
+        player["dest"] = ""
+
+    if not player.has("arrival_day"):
+        player["arrival_day"] = 0
+
+    if not player.has("escort_level"):
+        player["escort_level"] = 0
+
+    player["escort_level"] = int(player.get("escort_level", 0))
+
+    if not player.has("last_arrival_day"):
+        player["last_arrival_day"] = -999
+
 func _player_arrive() -> void:
     player["enroute"] = false
     player["city"] = player["dest"]
@@ -2898,10 +2954,18 @@ func _apply_save_payload(data: Dictionary) -> void:
     var state: Dictionary = (data.get("state", {}) as Dictionary)
     day = int(state.get("day", day))
 
-    if state.has("player"): player = state.get("player") as Dictionary
-    if state.has("price"):  price  = state.get("price")  as Dictionary
-    if state.has("stock"):  stock  = state.get("stock")  as Dictionary
-    if state.has("_shortage_ema"): _shortage_ema = state.get("_shortage_ema") as Dictionary
+    if state.has("player"):
+        player = state.get("player") as Dictionary
+
+    # ★ここでセーブ互換や不足キーを補完
+    _ensure_player_integrity()
+
+    if state.has("price"):
+        price = state.get("price") as Dictionary
+    if state.has("stock"):
+        stock = state.get("stock") as Dictionary
+    if state.has("_shortage_ema"):
+        _shortage_ema = state.get("_shortage_ema") as Dictionary
 
     # --- tutorial ---
     if state.has("tutorial"):

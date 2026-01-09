@@ -1,67 +1,64 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://b6xknvmlmsmja"]
 
 [node name="CityModeUI" type="Control"]
+layout_mode = 3
 anchors_preset = 15
-anchor_left = 0.0
-anchor_top = 0.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 0.0
-offset_top = 0.0
-offset_right = 0.0
-offset_bottom = 0.0
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="Center" type="CenterContainer" parent="."]
-anchors_preset = 15
-anchor_left = 0.0
-anchor_top = 0.0
+layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 0.0
-offset_top = 0.0
-offset_right = 0.0
-offset_bottom = 0.0
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="Grid" type="GridContainer" parent="Center"]
-columns = 3
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+columns = 3
 
 [node name="TradeBtn" type="Button" parent="Center/Grid"]
-text = "取引（市場）"
 custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
 size_flags_horizontal = 3
+text = "取引（市場）"
 
 [node name="ContractBtn" type="Button" parent="Center/Grid"]
-text = "依頼（契約）"
 custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
 size_flags_horizontal = 3
+text = "依頼（契約）"
 
 [node name="InvBtn" type="Button" parent="Center/Grid"]
-text = "荷物（持ち物）"
 custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
 size_flags_horizontal = 3
+text = "荷物（持ち物）"
 
 [node name="MoveBtn" type="Button" parent="Center/Grid"]
-text = "移動（MAP）"
 custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
 size_flags_horizontal = 3
+text = "移動（MAP）"
 
 [node name="InfoBtn" type="Button" parent="Center/Grid"]
-text = "情報（週報など）"
 custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
 size_flags_horizontal = 3
+text = "情報（週報など）"
 
 [node name="SaveBtn" type="Button" parent="Center/Grid"]
-text = "セーブ／ロード"
 custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
 size_flags_horizontal = 3
+text = "セーブ／ロード"
 
 [node name="SettingsBtn" type="Button" parent="Center/Grid"]
-text = "設定"
 custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
 size_flags_horizontal = 3
+text = "設定"
