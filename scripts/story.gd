@@ -176,6 +176,12 @@ func _run_dev_command(id: String, seq: int, text: String) -> void:
     var cmd: String = parts[0].to_lower()
 
     match cmd:
+        # "break" は元々「間（ウィンドウだけ一瞬消す）」演出に使っていたが、
+        # チュートリアル等で "break" を別用途に回したい時に紛らわしいので
+        # 新表記を "beat" に変更。
+        # 互換のため "break" も当面受け付ける。
+        "beat":
+            _dev_break(id, seq)
         "break":
             _dev_break(id, seq)
         "keyitem_grant":

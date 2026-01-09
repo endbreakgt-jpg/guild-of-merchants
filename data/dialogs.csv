@@ -10,7 +10,7 @@ prologue_1,40,マルク,Pilton？ それなら僕も行ったことあるし、�
 prologue_1,45,父親,お前が？,res://ui/portraits/father_01.png
 prologue_1,50,父親,……ふむ。,res://ui/portraits/father_01.png
 prologue_1,55,父親,分かった。お前に頼もう。ちょっと待っていろ。,res://ui/portraits/father_01.png
-prologue_1,56,DEV,break,
+prologue_1,56,DEV,beat,
 prologue_1,60,父親,……よし、これを持っていきなさい。,res://ui/portraits/father_01.png
 prologue_1,61,DEV,keyitem_grant guild_permit_father,
 prologue_1,62,システム,大切なもの：父親のギルド許可証を入手！,
