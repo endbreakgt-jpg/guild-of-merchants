@@ -363,7 +363,7 @@ func _refresh() -> void:
     if world.get("turn") != null:
         _turn_now = int(world.get("turn")) + 1
 
-    var _tpd := 3
+    var _tpd := 2
     if world.get("turns_per_day") != null:
         _tpd = int(world.get("turns_per_day"))
 

@@ -39,7 +39,7 @@ var tutorial_locks: Dictionary = {}
 @export var day_seconds: float = 0.5
 
 # ターン制（1日は複数ターンで構成）
-@export var turns_per_day: int = 3
+@export var turns_per_day: int = 2
 
 # 価格ダイナミクス
 @export var price_k: float = 0.25

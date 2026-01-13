@@ -353,7 +353,7 @@ func _rebuild() -> void:
     if world.get("turn") != null:
         turn_now = int(world.get("turn")) + 1
 
-    var tpd: int = 3
+    var tpd: int = 2
     if world.get("turns_per_day") != null:
         tpd = int(world.get("turns_per_day"))
 
