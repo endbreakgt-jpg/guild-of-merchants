@@ -1400,7 +1400,7 @@ func load_data() -> void:
         stock[cid] = {}
         price[cid] = {}
         history[cid] = {}
-    var _stock_path := (data_dir + "city_stock_minimal.csv") if FileAccess.file_exists(data_dir + "city_stock_minimal.csv") else (data_dir + "city_stock.csv")
+    var _stock_path := data_dir + "city_stock.csv"
     var st_rows: Array[Dictionary] = _loader.load_csv_dicts(_stock_path)
     for st_any in st_rows:
         var st: Dictionary = st_any
