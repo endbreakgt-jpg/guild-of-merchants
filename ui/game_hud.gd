@@ -535,7 +535,10 @@ func _toggle_debug() -> void:
         if is_instance_valid(debug_panel):
             debug_panel.visible = _debug_user_open
             if debug_panel.visible:
-                debug_panel.raise()
+                if debug_panel.has_method("move_to_front"):
+                    debug_panel.move_to_front()
+                elif debug_panel.has_method("raise"):
+                    debug_panel.raise()
                 debug_panel.grab_focus()
         return
 
