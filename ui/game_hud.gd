@@ -81,6 +81,7 @@ var _popup_paused: bool = false
 var play_btn: Button = null
 var story_btn: Button = null
 var debug_btn: Button = null
+var _debug_user_open: bool = false
 
 
 @export var debug_embed: bool = true
@@ -138,6 +139,16 @@ func _ready() -> void:
     if show_city_mode_ui:
         _ensure_city_mode_ui()
         _wire_city_mode_buttons()
+
+        # --- city_move_btn は MAP ではなく Move を呼ぶ ---
+        if is_instance_valid(city_move_btn):
+            var cb_map := Callable(self, "_on_city_move")
+            if city_move_btn.pressed.is_connected(cb_map):
+                city_move_btn.pressed.disconnect(cb_map)
+
+            var cb_move := Callable(self, "_on_city_move_pressed")
+            if not city_move_btn.pressed.is_connected(cb_move):
+                city_move_btn.pressed.connect(cb_move)
 
         # 都市モードUIを前提にする場合は、旧TopBarのショートカットを隠す
         if menu_btn:
@@ -272,24 +283,20 @@ func _create_story_button() -> void:
         story_btn.pressed.connect(_on_story_btn)
 
 func _create_debug_button() -> void:
-    if not is_instance_valid(topbar):
+    if is_instance_valid(debug_btn):
         return
-    var existing := topbar.get_node_or_null("DebugBtn")
-    if existing:
-        debug_btn = existing as Button
-    else:
-        debug_btn = Button.new()
-        debug_btn.name = "DebugBtn"
-        debug_btn.text = "DBG"
-        debug_btn.custom_minimum_size = Vector2(64, 32)
-        debug_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-        debug_btn.focus_mode = Control.FOCUS_NONE
-        debug_btn.mouse_filter = Control.MOUSE_FILTER_STOP
-        topbar.add_child(debug_btn)
-        if play_btn and debug_btn.get_parent() == topbar:
-            topbar.move_child(debug_btn, play_btn.get_index() + 1)
-    if debug_btn and not debug_btn.pressed.is_connected(Callable(self, "_on_debug_btn")):
-        debug_btn.pressed.connect(_on_debug_btn)
+
+    debug_btn = Button.new()
+    debug_btn.text = "DBG"
+    debug_btn.custom_minimum_size = Vector2(70, 32)
+    debug_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+    debug_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+    topbar.add_child(debug_btn)
+
+    var cb := Callable(self, "_on_debug_btn_pressed")
+    if debug_btn.pressed.is_connected(cb):
+        debug_btn.pressed.disconnect(cb)
+    debug_btn.pressed.connect(cb)
 
 func _create_supply_label() -> void:
     if not is_instance_valid(topbar):
@@ -474,8 +481,8 @@ func _wire_buttons() -> void:
         play_btn.pressed.connect(_on_play_pause_btn)
     if story_btn and not story_btn.pressed.is_connected(Callable(self, "_on_story_btn")):
         story_btn.pressed.connect(_on_story_btn)
-    if debug_btn and not debug_btn.pressed.is_connected(Callable(self, "_on_debug_btn")):
-        debug_btn.pressed.connect(_on_debug_btn)
+    if debug_btn and not debug_btn.pressed.is_connected(Callable(self, "_on_debug_btn_pressed")):
+        debug_btn.pressed.connect(_on_debug_btn_pressed)
 
 # ---- open/toggle ----
 func _on_menu_btn() -> void:
@@ -514,30 +521,43 @@ func _on_story_btn() -> void:
 
 
 func _on_debug_btn() -> void:
+    _toggle_debug()
+
+func _on_debug_btn_pressed() -> void:
+    _toggle_debug()
+
+func _toggle_debug() -> void:
     _spawn_debug_if_needed()
-    
+
+    _debug_user_open = not _debug_user_open
+
     if debug_embed:
         if is_instance_valid(debug_panel):
-            debug_panel.visible = not debug_panel.visible
-            
-            if debug_panel.visible and debug_panel.has_method("_update_stats"):
-                debug_panel.call("_update_stats")
-        
-            _on_popup_visibility_changed()
-            
+            debug_panel.visible = _debug_user_open
+            if debug_panel.visible:
+                debug_panel.raise()
+                debug_panel.grab_focus()
         return
-        
-    # debug_embed が false の場合の処理は、if debug_embed: ブロックの
-    # 閉じ括弧と return の後にインデントをリセットして記述する必要があります。
+
     if is_instance_valid(debug_window):
-        if debug_window.visible:
-            debug_window.hide()
-        else:
+        _ensure_debug_window_close_behavior()
+        if _debug_user_open:
             debug_window.popup_centered()
             debug_window.grab_focus()
-            
-            if is_instance_valid(debug_panel) and debug_panel.has_method("_update_stats"):
-                debug_panel.call("_update_stats")
+        else:
+            debug_window.hide()
+
+func _ensure_debug_window_close_behavior() -> void:
+    if not is_instance_valid(debug_window):
+        return
+    var cb := Callable(self, "_on_debug_window_close_requested")
+    if not debug_window.close_requested.is_connected(cb):
+        debug_window.close_requested.connect(cb)
+
+func _on_debug_window_close_requested() -> void:
+    _debug_user_open = false
+    if is_instance_valid(debug_window):
+        debug_window.hide()
 
 func _toggle_popup(win: Node) -> void:
     if win == null: return
@@ -690,8 +710,7 @@ func _spawn_debug_if_needed() -> void:
             main.add_child(debug_window)
         else:
             get_tree().root.add_child(debug_window)
-
-        debug_window.close_requested.connect(func(): debug_window.hide())
+        _ensure_debug_window_close_behavior()
 
     # 2) パネル生成または移設 (Panel reuse/creation)
     if not is_instance_valid(debug_panel):
@@ -2496,6 +2515,28 @@ func _on_city_move() -> void:
     if not _tutorial_guard(World.TUT_LOCK_MAP, "チュートリアル中はまだ地図を開けません。"):
         return
     _on_map_btn()
+
+func _on_city_move_pressed() -> void:
+    # 旧メニューパネルの「Move」相当を優先して呼ぶ
+    if has_method("_spawn_menu_if_needed"):
+        call("_spawn_menu_if_needed")
+
+    if is_instance_valid(menu_win):
+        if menu_win.has_method("_on_move_pressed"):
+            menu_win.call("_on_move_pressed")
+            return
+        if menu_win.has_method("open_move"):
+            menu_win.call("open_move")
+            return
+
+    # HUD側に Move 用の関数があるならそれを使う
+    if has_method("_open_move_window"):
+        call("_open_move_window")
+        return
+
+    # 最後の保険：何も起きないよりはMAPを開く
+    if has_method("_open_map_popup"):
+        call("_open_map_popup")
 
 
 func _on_city_info() -> void:

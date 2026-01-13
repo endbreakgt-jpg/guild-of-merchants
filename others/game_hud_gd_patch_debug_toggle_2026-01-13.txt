@@ -1,0 +1,146 @@
+game_hud.gd用
+
+---
+
+# 1) Debugボタンで「開く→閉じる」ができない件（収納できない）
+
+状況的に、いまの `Debug` ボタンが **「開く処理しかしていない」**（または `visible=true` に固定される）可能性が高いです。
+なので **ボタン押下＝トグル（表示/非表示切替）** に統一します。
+
+## ① 変数を1つ追加
+
+`debug_btn` などがあるあたりに追加：
+
+```gdscript
+var _debug_user_open: bool = false
+```
+
+## ② `func _create_debug_button()` を丸ごと置き換え
+
+`game_hud.gd` 内の `func _create_debug_button()` を、以下で**関数ごと置換**してください。
+
+```gdscript
+func _create_debug_button() -> void:
+    if is_instance_valid(debug_btn):
+        return
+
+    debug_btn = Button.new()
+    debug_btn.text = "DBG"
+    debug_btn.custom_minimum_size = Vector2(70, 32)
+    debug_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+    debug_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+    topbar.add_child(debug_btn)
+
+    var cb := Callable(self, "_on_debug_btn_pressed")
+    if debug_btn.pressed.is_connected(cb):
+        debug_btn.pressed.disconnect(cb)
+    debug_btn.pressed.connect(cb)
+```
+
+## ③ 下の関数をどこかに追記（新規追加）
+
+`game_hud.gd` の末尾付近でOKです。
+
+```gdscript
+func _on_debug_btn_pressed() -> void:
+    _toggle_debug()
+
+func _toggle_debug() -> void:
+    _spawn_debug_if_needed()
+
+    _debug_user_open = not _debug_user_open
+
+    if debug_embed:
+        if is_instance_valid(debug_panel):
+            debug_panel.visible = _debug_user_open
+            if debug_panel.visible:
+                debug_panel.raise()
+                debug_panel.grab_focus()
+        return
+
+    if is_instance_valid(debug_window):
+        _ensure_debug_window_close_behavior()
+        if _debug_user_open:
+            debug_window.popup_centered()
+            debug_window.grab_focus()
+        else:
+            debug_window.hide()
+
+func _ensure_debug_window_close_behavior() -> void:
+    if not is_instance_valid(debug_window):
+        return
+    var cb := Callable(self, "_on_debug_window_close_requested")
+    if not debug_window.close_requested.is_connected(cb):
+        debug_window.close_requested.connect(cb)
+
+func _on_debug_window_close_requested() -> void:
+    _debug_user_open = false
+    if is_instance_valid(debug_window):
+        debug_window.hide()
+```
+
+> これで **DBG → 表示 / もう一度DBG → 非表示** が必ず効きます。
+> さらに Window表示の場合も、×で閉じた時に「状態がズレて次回押しても戻らない」を防ぎます。
+
+---
+
+# 2) 「移動（MAP）」ボタンが旧メニューの MAP 機能になっている件
+
+ここはおっしゃる通りで、都市モードの「移動（MAP）」は **旧メニューの「Move」** 相当を呼ぶのが正しいです。
+（現状は `_on_map_pressed` 相当につながっているはず）
+
+## ① `_ready()` に“配線上書き”を1ブロック追加（安全策）
+
+あなたの `game_hud.gd` では `_ready()` 内に
+
+```gdscript
+_ensure_city_mode_ui()
+_wire_city_mode_buttons()
+```
+
+があるので、その **直後**にこれを追加してください（既存の配線を壊さず上書きできます）：
+
+```gdscript
+        # --- city_move_btn は MAP ではなく Move を呼ぶ ---
+        if is_instance_valid(city_move_btn):
+            var cb_map := Callable(self, "_on_city_map_pressed")
+            if city_move_btn.pressed.is_connected(cb_map):
+                city_move_btn.pressed.disconnect(cb_map)
+
+            var cb_move := Callable(self, "_on_city_move_pressed")
+            if not city_move_btn.pressed.is_connected(cb_move):
+                city_move_btn.pressed.connect(cb_move)
+```
+
+※ もし `_on_city_map_pressed` という名前が存在しない場合は、
+`disconnect` したい“現在つながっている関数名”に合わせて `cb_map` の名前だけ変えてください（例：`"_on_city_open_map"` など）。
+
+## ② Move用ハンドラを追加
+
+下の関数を追記してください（末尾付近でOK）。
+
+```gdscript
+func _on_city_move_pressed() -> void:
+    # 旧メニューパネルの「Move」相当を優先して呼ぶ
+    if has_method("_spawn_menu_if_needed"):
+        call("_spawn_menu_if_needed")
+
+    if is_instance_valid(menu_win):
+        if menu_win.has_method("_on_move_pressed"):
+            menu_win.call("_on_move_pressed")
+            return
+        if menu_win.has_method("open_move"):
+            menu_win.call("open_move")
+            return
+
+    # HUD側に Move 用の関数があるならそれを使う
+    if has_method("_open_move_window"):
+        call("_open_move_window")
+        return
+
+    # 最後の保険：何も起きないよりはMAPを開く
+    if has_method("_open_map_window"):
+        call("_open_map_window")
+```
+
+---
