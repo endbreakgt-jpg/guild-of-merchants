@@ -14,3 +14,6 @@ PR012,石鹸,22,1,material,0,0
 PR013,麻,12,1,textile,0,0
 PR014,茶,26,1,luxury,0,0
 PR015,ワイン,28,1,luxury,0,0
+PR501,板材,18,2,material,0,0
+PR502,パン,14,1,staple,0,0
+PR503,なめし革,26,1,material,0,0
