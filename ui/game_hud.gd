@@ -84,7 +84,7 @@ var debug_btn: Button = null
 
 
 @export var debug_embed: bool = true
-@export var debug_open_on_start: bool = true
+@export var debug_open_on_start: bool = false
 # ★ 追加：簡易ステータス／イベントログ
 var _supply_label: Label = null
 var _event_panel: PanelContainer = null
@@ -148,7 +148,9 @@ func _ready() -> void:
             trade_btn.visible = false
 
     _create_play_button()
-#    _create_debug_button()
+    # Debugボタンはデバッグビルドのみ表示
+    if OS.is_debug_build():
+        _create_debug_button()
     _create_supply_label()     # ★ 追加：当日供給数/今月累計の小さなピル
     _update_play_button()
 
@@ -168,6 +170,15 @@ func _ready() -> void:
             world.supply_event.connect(_on_supply_event)
         if world.has_signal("weekly_report"):
             world.weekly_report.connect(_on_weekly_report)
+
+        # 旧デバッグパネルがシーンに残っている場合は、起動時に隠す
+        # （都市モードUIと重なるのを防ぐ。必要なら Debug ボタンで再表示）
+        var dbg := world.get_node_or_null("DebugPanel")
+        if dbg and dbg is CanvasItem:
+            (dbg as CanvasItem).visible = false
+        var legacy_dbg := world.get_node_or_null("旧DebugPanel")
+        if legacy_dbg and legacy_dbg is CanvasItem:
+            (legacy_dbg as CanvasItem).visible = false
 
     if world and world.has_signal("player_decay_event"):
         world.player_decay_event.connect(_on_player_decay_event)
@@ -269,9 +280,10 @@ func _create_debug_button() -> void:
     else:
         debug_btn = Button.new()
         debug_btn.name = "DebugBtn"
-        debug_btn.text = "Debug"
-        debug_btn.custom_minimum_size = Vector2(84, 32)
+        debug_btn.text = "DBG"
+        debug_btn.custom_minimum_size = Vector2(64, 32)
         debug_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        debug_btn.focus_mode = Control.FOCUS_NONE
         debug_btn.mouse_filter = Control.MOUSE_FILTER_STOP
         topbar.add_child(debug_btn)
         if play_btn and debug_btn.get_parent() == topbar:
@@ -615,9 +627,11 @@ func _spawn_debug_if_needed() -> void:
         if not is_instance_valid(debug_panel):
             var found: Node = null
             if world:
-                # DebugPanelをWorldから探す
+                # DebugPanel を World から探す（旧ノード名にも対応）
                 found = world.get_node_or_null("DebugPanel")
-            
+                if found == null:
+                    found = world.get_node_or_null("旧DebugPanel")
+
             if found and found is DebugPanel:
                 # (1) 既存のパネルを移設
                 debug_panel = found as DebugPanel
@@ -632,33 +646,32 @@ func _spawn_debug_if_needed() -> void:
             if is_instance_valid(debug_panel):
                 if world:
                     debug_panel.world = world
-                # この関数を持つノード（HUD）の子として追加
                 add_child(debug_panel)
-                
+
+                # 旧ノード名だった場合はここで正規名に統一
+                debug_panel.name = "DebugPanel"
+
                 # パネルの初期化とシグナル接続（_init_debug_panel_after_ready）
                 if debug_panel.is_node_ready():
                     _init_debug_panel_after_ready()
                 else:
-                    # readyシグナルに接続
                     debug_panel.ready.connect(_init_debug_panel_after_ready)
-            
+
         # Layout for embedded panel (top-left, fixed size)
         if is_instance_valid(debug_panel):
-            debug_panel.name = "DebugPanel"
-            debug_panel.visible = false  # toggled by button / auto-open
+            debug_panel.visible = false  # Debugボタンで切り替え
             debug_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
             debug_panel.position = Vector2(16, 72)
-            
+
             # custom_minimum_size を設定
-            if debug_panel.has_method("set"):
-                debug_panel.set("custom_minimum_size", Vector2(460, 420))
-                
-            return  # 埋め込みモードの場合、ここで関数を終了
-        
+            debug_panel.set("custom_minimum_size", Vector2(460, 420))
+
+        return  # 埋め込みモードの場合、ここで関数を終了
+
     # ----------------------------------------------------------------------
     # ウィンドウ表示のフロー (debug_embed: false)
     # ----------------------------------------------------------------------
-    
+
     # ウィンドウとパネルが両方とも存在する場合は早期リターン
     if is_instance_valid(debug_window) and is_instance_valid(debug_panel):
         return
@@ -670,7 +683,6 @@ func _spawn_debug_if_needed() -> void:
         debug_window.title = "Debug"
         debug_window.size = Vector2i(480, 420)
         debug_window.min_size = Vector2i(360, 300)
-        # Godot 4: unresizable は存在しないため、resizable = true に修正
         debug_window.unresizable = false
 
         var main := get_window()
@@ -678,49 +690,49 @@ func _spawn_debug_if_needed() -> void:
             main.add_child(debug_window)
         else:
             get_tree().root.add_child(debug_window)
-            
+
         debug_window.close_requested.connect(func(): debug_window.hide())
 
     # 2) パネル生成または移設 (Panel reuse/creation)
     if not is_instance_valid(debug_panel):
-        var found: Node = null
+        var found2: Node = null
         if world:
-            found = world.get_node_or_null("DebugPanel")
-            
-        if found and found is DebugPanel:
+            found2 = world.get_node_or_null("DebugPanel")
+            if found2 == null:
+                found2 = world.get_node_or_null("旧DebugPanel")
+
+        if found2 and found2 is DebugPanel:
             # (1) 既存のパネルを移設
-            debug_panel = found as DebugPanel
+            debug_panel = found2 as DebugPanel
             if debug_panel.get_parent():
                 debug_panel.get_parent().remove_child(debug_panel)
         else:
             # (2) 新しいパネルを生成
-            var DebugPanelScript: Script = preload("res://ui/debug_panel.gd")
-            debug_panel = DebugPanelScript.new()
-            
+            var DebugPanelScript2: Script = preload("res://ui/debug_panel.gd")
+            debug_panel = DebugPanelScript2.new()
+
         # パネルをウィンドウに追加し、レイアウトを設定
         if is_instance_valid(debug_panel):
             debug_window.add_child(debug_panel)
-            
+            debug_panel.name = "DebugPanel"
+
             # レイアウトをフルサイズに設定
-            if debug_panel.has_method("set_anchors_preset"):
-                debug_panel.call("set_anchors_preset", Control.PRESET_FULL_RECT)
-                if debug_panel.has_method("set"):
-                    debug_panel.set("offset_left", 0)
-                    debug_panel.set("offset_top", 0)
-                    debug_panel.set("offset_right", 0)
-                    debug_panel.set("offset_bottom", 0)
+            debug_panel.call("set_anchors_preset", Control.PRESET_FULL_RECT)
+            debug_panel.set("offset_left", 0)
+            debug_panel.set("offset_top", 0)
+            debug_panel.set("offset_right", 0)
+            debug_panel.set("offset_bottom", 0)
 
     # 3) Worldの紐付けと初期化 (Wire world + init)
     if is_instance_valid(debug_panel) and world:
         debug_panel.world = world
-        
-    # 初期化メソッドの呼び出し
+
     if is_instance_valid(debug_panel):
         if debug_panel.has_method("_populate_options"):
             debug_panel.call("_populate_options")
         if debug_panel.has_method("_update_stats"):
             debug_panel.call("_update_stats")
-    
+
 func _open_map_popup(for_move: bool = false) -> void:
     # 既にウィンドウがある場合は再利用
     if is_instance_valid(map_window):
@@ -1536,14 +1548,27 @@ func _find_debug_panel() -> void:
     if local and local is DebugPanel:
         debug_panel = local as DebugPanel
         return
+    var local_legacy := get_node_or_null("../旧DebugPanel")
+    if local_legacy and local_legacy is DebugPanel:
+        debug_panel = local_legacy as DebugPanel
+        return
     var child := get_node_or_null("DebugPanel")
     if child and child is DebugPanel:
         debug_panel = child as DebugPanel
+        return
+    var child_legacy := get_node_or_null("旧DebugPanel")
+    if child_legacy and child_legacy is DebugPanel:
+        debug_panel = child_legacy as DebugPanel
         return
     # 2) シーンツリー上を探索
     var found := get_tree().root.find_child("DebugPanel", true, false)
     if found and found is DebugPanel:
         debug_panel = found as DebugPanel
+        return
+    var found_legacy := get_tree().root.find_child("旧DebugPanel", true, false)
+    if found_legacy and found_legacy is DebugPanel:
+        debug_panel = found_legacy as DebugPanel
+        return
 
 func _on_world_updated_debug() -> void:
     _find_debug_panel()
