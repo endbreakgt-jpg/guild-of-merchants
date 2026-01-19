@@ -49,6 +49,15 @@ var _probe_screen: Vector2 = Vector2.ZERO
 @export var label_font: Font
 @export var label_bg: Color = Color(0,0,0,0.55)
 
+# ---- All Labels（一括表示：議論用）----
+@export var all_labels_default: bool = false
+@export var all_labels_toggle_key: Key = KEY_L
+@export var show_all_labels_indicator: bool = true
+@export var all_labels_indicator_color: Color = Color(1, 1, 1, 0.85)
+@export var all_labels_indicator_bg: Color = Color(0, 0, 0, 0.35)
+@export var label_append_city_id: bool = false
+var _all_labels: bool = false
+
 var _hover_cid: String = ""
 var _hover_path: Array[String] = []
 var _last_clicked_cid: String = ""
@@ -64,7 +73,22 @@ var _external_preview: bool = false
     "RE0006": Vector2(874, 2333),
     "RE0007": Vector2(1095, 1783),
     "RE0008": Vector2(1515, 2189),
-   # "RE0009": Vector2(1188, 2369),    
+    "RE0009": Vector2(1729, 2296),
+    "RE0010": Vector2(2179, 2053),
+    "RE0011": Vector2(2907, 1539),
+    "RE0012": Vector2(2975, 1943),
+    "RE0013": Vector2(3614, 1675),
+    "RE0014": Vector2(3354, 1260),
+    "RE0015": Vector2(3429, 989),
+    "RE0016": Vector2(3854, 957),
+    "RE0017": Vector2(3949, 496),
+    "RE0018": Vector2(4421, 261),
+    "RE0019": Vector2(5214, 775),
+    "RE0020": Vector2(4671, 1246),
+    "RE0021": Vector2(4299, 2196),
+    "RE0022": Vector2(3753, 2224),
+    "RE0023": Vector2(3739, 2714),
+    "RE0024": Vector2(2914, 2560),
 }
 
 @export var city_radius: float = 12.0
@@ -75,7 +99,8 @@ var _external_preview: bool = false
     # RT08: RE0006 → RE0008 を曲げる。テクスチャ座標での中継点
     "RT08": [Vector2(1158, 2369),
              Vector2(1347, 2323),],
-    
+    "RT13": [Vector2(3050, 1519),
+             Vector2(3150,1450)],
 }
 
 @export var player_color: Color = Color(0.2, 1.0, 0.4, 1.0)
@@ -99,16 +124,15 @@ func _ready() -> void:
         if tex is Texture2D:
             base_map = tex
     _zoom = clamp(initial_zoom, zoom_min, zoom_max)
+    _all_labels = all_labels_default
     set_process_input(true)
     set_process(true) # ← 追加：毎フレーム処理を有効化
     queue_redraw()
-
 
 func _process(_delta: float) -> void:
     # 安全策：マウス左ボタンが離されていたらパン状態を強制解除
     if _panning and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
         _panning = false
-
 
 func begin_pick_for_player() -> void:
     if world == null:
@@ -121,7 +145,6 @@ func begin_pick_for_player() -> void:
     _external_preview = false
     queue_redraw()
 
-
 func end_pick() -> void:
     _pick_mode = false
     _pick_origin = ""
@@ -131,14 +154,12 @@ func end_pick() -> void:
     _external_preview = false
     queue_redraw()
 
-
 func clear_pick_highlight() -> void:
     _hover_cid = ""
     _hover_path.clear()
     _last_clicked_cid = ""
     _external_preview = false
     queue_redraw()
-
 
 func preview_move_target(cid: String) -> void:
     # MapWindow の都市一覧などからのホバー/クリック用に、
@@ -167,14 +188,23 @@ func preview_move_target(cid: String) -> void:
 
     if preview_path_on_hover and world.has_method("compute_path"):
         var res: Dictionary = world.compute_path(_pick_origin, cid, "fastest")
-        var path: Array = res.get("path", [])
+        var path: Array[String] = _to_string_path(res.get("path", []))
         if path.size() >= 2:
             _hover_path = path
 
     queue_redraw()
 
-
 # ---- helpers ----
+func _to_string_path(v) -> Array[String]:
+    var out: Array[String] = []
+    if v is PackedStringArray:
+        for s in v:
+            out.append(String(s))
+    elif v is Array:
+        for x in v:
+            out.append(String(x))
+    return out
+
 func set_zoom(z: float) -> void:
     var v: float = clamp(z, zoom_min, zoom_max)
     _zoom = v
@@ -233,6 +263,15 @@ func _is_pickable(origin: String, target: String) -> bool:
             return true
 
 func _input(event: InputEvent) -> void:
+    # ---- All labels toggle key（L）----
+    var ke: InputEventKey = event as InputEventKey
+    if ke and ke.pressed and not ke.echo:
+        if ke.keycode == all_labels_toggle_key:
+            _all_labels = not _all_labels
+            queue_redraw()
+            get_viewport().set_input_as_handled()
+            return
+
     var mb: InputEventMouseButton = event as InputEventMouseButton
     if mb and mb.pressed:
         if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -295,7 +334,9 @@ func _input(event: InputEvent) -> void:
                     _hover_path.clear()
                     if preview_path_on_hover and _hover_cid != "" and world and world.has_method("compute_path"):
                         var res2: Dictionary = world.compute_path(_pick_origin, _hover_cid, "fastest")
-                        _hover_path = res2.get("path", [])
+                        var path2: Array[String] = _to_string_path(res2.get("path", []))
+                        if path2.size() >= 2:
+                            _hover_path = path2
                     queue_redraw()
 
         if _panning:
@@ -314,7 +355,6 @@ func _input(event: InputEvent) -> void:
             _last_clicked_cid = cid_click
             emit_signal("city_picked", cid_click)
             get_viewport().set_input_as_handled()
-
 
 func _city_at_point_screen(p_screen: Vector2) -> String:
     var r: float = city_radius + 8.0
@@ -458,25 +498,29 @@ func _draw() -> void:
         and not bool(world.player.get("enroute", false)):
             draw_circle(p, city_radius * 0.65, player_color)
 
-    # 都市ラベル
-    if labels_mode == 0: # Always
+    # 都市ラベル（Lで一括表示を上書き）
+    if _all_labels:
         for cid in city_positions.keys():
             _draw_city_label(cid, _tex_to_screen(city_positions[cid]))
-    elif labels_mode == 1: # HoverOrPick
-        var show_ids: Array[String] = []
-        if _pick_mode:
-            if _pick_origin != "":
-                show_ids.append(_pick_origin)
-            if _hover_cid != "":
-                show_ids.append(_hover_cid)
-            if _last_clicked_cid != "":
-                show_ids.append(_last_clicked_cid)
-        else:
-            if world and world.player.has("city"):
-                show_ids.append(String(world.player["city"]))
-        for cid in show_ids:
-            if city_positions.has(cid):
+    else:
+        if labels_mode == 0: # Always
+            for cid in city_positions.keys():
                 _draw_city_label(cid, _tex_to_screen(city_positions[cid]))
+        elif labels_mode == 1: # HoverOrPick
+            var show_ids: Array[String] = []
+            if _pick_mode:
+                if _pick_origin != "":
+                    show_ids.append(_pick_origin)
+                if _hover_cid != "":
+                    show_ids.append(_hover_cid)
+                if _last_clicked_cid != "":
+                    show_ids.append(_last_clicked_cid)
+            else:
+                if world and world.player.has("city"):
+                    show_ids.append(String(world.player["city"]))
+            for cid in show_ids:
+                if city_positions.has(cid):
+                    _draw_city_label(cid, _tex_to_screen(city_positions[cid]))
 
     # 右クリックの座標プローブ
     if _has_probe:
@@ -491,11 +535,16 @@ func _draw() -> void:
             Color(1, 1, 1, 0.9)
         )
 
+    _draw_all_labels_indicator()
 
 func _draw_city_label(cid: String, sp: Vector2) -> void:
     var name: String = cid
     if world and world.cities.has(cid):
         name = String(world.cities[cid].get("name", cid))
+
+    if label_append_city_id and name != cid:
+        name = "%s (%s)" % [name, cid]
+
     var font: Font = (label_font if label_font != null else ThemeDB.fallback_font)
     var size: int = label_size
     var bb := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
@@ -503,3 +552,18 @@ func _draw_city_label(cid: String, sp: Vector2) -> void:
     var rect := Rect2(sp + Vector2(10, -bb.y - 12) - pad * 0.5, bb + pad)
     draw_rect(rect, label_bg)
     draw_string(font, sp + Vector2(10, -12), name, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size, label_color)
+
+func _draw_all_labels_indicator() -> void:
+    if not show_all_labels_indicator:
+        return
+
+    var text: String = "ALL LABELS: ON  (L)" if _all_labels else "ALL LABELS: OFF (L)"
+    var font: Font = ThemeDB.fallback_font
+    var size: int = 12
+    var bb := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+    var pad := Vector2(10, 6)
+
+    var pos: Vector2 = Vector2(14, 24) # baseline
+    var rect := Rect2(pos - Vector2(pad.x * 0.5, bb.y) - Vector2(0, pad.y * 0.5), bb + pad)
+    draw_rect(rect, all_labels_indicator_bg)
+    draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size, all_labels_indicator_color)
