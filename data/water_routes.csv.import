@@ -1,0 +1,17 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://5q282uf8eso2"
+
+[deps]
+
+files=["res://data/water_routes.from.translation", "res://data/water_routes.to.translation", "res://data/water_routes.capacity.translation", "res://data/water_routes.keep.translation", "res://data/water_routes.fee.translation", "res://data/water_routes.allowed.translation", "res://data/water_routes.enabled.translation", "res://data/water_routes.notes.translation"]
+
+source_file="res://data/water_routes.csv"
+dest_files=["res://data/water_routes.from.translation", "res://data/water_routes.to.translation", "res://data/water_routes.capacity.translation", "res://data/water_routes.keep.translation", "res://data/water_routes.fee.translation", "res://data/water_routes.allowed.translation", "res://data/water_routes.enabled.translation", "res://data/water_routes.notes.translation"]
+
+[params]
+
+compress=true
+delimiter=0

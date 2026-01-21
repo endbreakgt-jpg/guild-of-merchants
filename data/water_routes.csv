@@ -1,0 +1,6 @@
+route_id,from_city,to_city,capacity,keep_ratio,fee,allowed_categories,enabled,notes
+WR001,RE0003,RE0009,12,0.85,0.02,bulk|food,0,サンプル（enabled=0のため無効）
+WR002,RE0009,RE0011,12,0.85,0.02,bulk|food,0,
+WR003,RE0011,RE0017,12,0.85,0.02,bulk|food,0,
+WR004,RE0017,RE0018,12,0.85,0.02,bulk|food,0,
+WR005,RE0018,RE0020,12,0.85,0.02,bulk|food,0,

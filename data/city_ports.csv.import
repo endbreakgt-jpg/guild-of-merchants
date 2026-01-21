@@ -1,0 +1,17 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://cp4uxgurh85jf"
+
+[deps]
+
+files=["res://data/city_ports.port.translation", "res://data/city_ports.port.translation", "res://data/city_ports.zone.translation", "res://data/city_ports.traffic.translation", "res://data/city_ports.notes.translation"]
+
+source_file="res://data/city_ports.csv"
+dest_files=["res://data/city_ports.port.translation", "res://data/city_ports.port.translation", "res://data/city_ports.zone.translation", "res://data/city_ports.traffic.translation", "res://data/city_ports.notes.translation"]
+
+[params]
+
+compress=true
+delimiter=0

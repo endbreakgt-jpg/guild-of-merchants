@@ -1,0 +1,17 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://b81liwwvp8llh"
+
+[deps]
+
+files=["res://data/port_categories.port.translation", "res://data/port_categories.notes.translation"]
+
+source_file="res://data/port_categories.csv"
+dest_files=["res://data/port_categories.port.translation", "res://data/port_categories.notes.translation"]
+
+[params]
+
+compress=true
+delimiter=0

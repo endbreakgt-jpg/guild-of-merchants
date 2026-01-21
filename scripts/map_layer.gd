@@ -8,7 +8,7 @@ signal background_clicked
 var world: World = null
 
 @export var base_map: Texture2D
-@export var base_map_path: String = "res://ui/back/WorldMap.png"
+@export var base_map_path: String = "res://ui/back/Worldmap.png"
 
 var _last_vp_size: Vector2i = Vector2i.ZERO
 
@@ -65,30 +65,30 @@ var _external_preview: bool = false
 
 # ---- Data ----
 @export var city_positions: Dictionary = {
-    "RE0001": Vector2(478, 1585),
-    "RE0002": Vector2(586, 2333),
-    "RE0003": Vector2(714, 1787),
-    "RE0004": Vector2(251, 2223),
-    "RE0005": Vector2(304, 2559),
-    "RE0006": Vector2(874, 2333),
-    "RE0007": Vector2(1095, 1783),
-    "RE0008": Vector2(1515, 2189),
-    "RE0009": Vector2(1729, 2296),
-    "RE0010": Vector2(2179, 2053),
-    "RE0011": Vector2(2907, 1539),
-    "RE0012": Vector2(2975, 1943),
-    "RE0013": Vector2(3614, 1675),
-    "RE0014": Vector2(3354, 1260),
-    "RE0015": Vector2(3429, 989),
-    "RE0016": Vector2(3854, 957),
-    "RE0017": Vector2(3949, 496),
-    "RE0018": Vector2(4421, 261),
-    "RE0019": Vector2(5214, 775),
-    "RE0020": Vector2(4671, 1246),
-    "RE0021": Vector2(4299, 2196),
-    "RE0022": Vector2(3753, 2224),
-    "RE0023": Vector2(3739, 2714),
-    "RE0024": Vector2(2914, 2560),
+"RE0001": Vector2(717, 2263),
+    "RE0002": Vector2(1112, 3374),
+    "RE0003": Vector2(1302, 2694),
+    "RE0004": Vector2(417, 3279),
+    "RE0005": Vector2(688, 3682),
+    "RE0006": Vector2(1573,3522),
+    "RE0007": Vector2(1733, 2614),
+    "RE0008": Vector2(2275, 3221),
+    "RE0009": Vector2(2655, 3360),
+    "RE0010": Vector2(3240, 2987),
+    "RE0011": Vector2(4220, 2343),
+    "RE0012": Vector2(4213, 2892),
+    "RE0013": Vector2(5040, 2694),
+    "RE0014": Vector2(4776, 2014),
+    "RE0015": Vector2(4952, 1714),
+    "RE0016": Vector2(5471, 1524),
+    "RE0017": Vector2(5595, 953),
+    "RE0018": Vector2(6224, 617),
+    "RE0019": Vector2(7014,1217),
+    "RE0020": Vector2(6656,1999),
+    "RE0021": Vector2(6078,3199),
+    "RE0022": Vector2(5600,3012),
+    "RE0023": Vector2(5449,3806),
+    "RE0024": Vector2(3972, 3594),
 }
 
 @export var city_radius: float = 12.0
@@ -97,10 +97,10 @@ var _external_preview: bool = false
 @export var route_color: Color = Color(0.86, 0.86, 0.86, 1.0)
 @export var route_waypoints_by_id: Dictionary = {
     # RT08: RE0006 → RE0008 を曲げる。テクスチャ座標での中継点
-    "RT08": [Vector2(1158, 2369),
-             Vector2(1347, 2323),],
-    "RT13": [Vector2(3050, 1519),
-             Vector2(3150,1450)],
+    #"RT08": [Vector2(1158, 2369),
+    #         Vector2(1347, 2323),],
+    #"RT13": [Vector2(3050, 1519),
+    #         Vector2(3150,1450)],
 }
 
 @export var player_color: Color = Color(0.2, 1.0, 0.4, 1.0)
