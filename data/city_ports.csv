@@ -1,7 +1,7 @@
 city_id,port_level,port_kind,zone,traffic_base,notes
-RE0003,3,major,PiltonBay,0.45,港湾の主要都市（cities.csv noteより）
-RE0009,2,minor,Node9,0.25,（候補）
-RE0011,3,minor,Node11,0.25,（候補）
-RE0017,2,minor,Node17,0.25,（候補）
-RE0018,1,minor,Node18,0.25,（候補）
-RE0020,2,minor,Node20,0.25,（候補）
+RE0003,3,major,PiltonBay,1.00,港湾の主要都市（cities.csv noteより）
+RE0009,1,minor,Node9,0.55,（候補）内海寄りの小港
+RE0011,2,minor,Node11,0.80,（候補）半島圏の集散地
+RE0017,2,minor,Node17,0.70,（候補）沿岸中継港
+RE0018,1,minor,Node18,0.50,（候補）岬の小港
+RE0020,2,minor,Node20,0.65,（候補）東岸の地方港
