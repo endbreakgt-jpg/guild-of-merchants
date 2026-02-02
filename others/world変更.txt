@@ -1,0 +1,549 @@
+world.gd 変更案（関数差し替え＋追記）
+1) 追記：メンバー変数（world.gd の export 変数群の近くに追加）
+# --- Ports / Water logistics ---
+@export var enable_ports: bool = true
+@export var city_ports_file: String = "city_ports.csv"
+@export var water_routes_file: String = "water_routes.csv"
+@export var port_categories_file: String = "port_categories.csv"
+
+@export var enable_water_logistics: bool = true
+@export var enable_port_imports: bool = true
+
+# 港需要（消費上乗せ）と輸出ターゲット（目標在庫上乗せ）
+@export var port_cons_coeff: Dictionary = {"bulk": 0.25, "food": 0.18, "materials": 0.12, "luxury": 0.06}
+@export var port_export_coeff: Dictionary = {"bulk": 0.55, "food": 0.35, "materials": 0.25, "luxury": 0.10}
+@export_range(0.0, 10.0, 0.05) var port_cons_scale: float = 1.0
+@export_range(0.0, 10.0, 0.05) var port_export_scale: float = 1.0
+
+# 輸入（MVP）：港に外来品が少量入る
+@export var port_import_products: Array[String] = ["PR033", "PR034", "PR035", "PR032"]
+@export_range(0.0, 1.0, 0.01) var port_import_base_prob: float = 0.20
+@export var port_import_qty_min: int = 1
+@export var port_import_qty_max: int = 3
+@export var port_import_only_major: bool = true
+
+@export var port_log: bool = false
+
+var port_category_by_pid: Dictionary = {} # pid -> "bulk/food/materials/luxury"
+var city_ports: Dictionary = {}           # cid -> {port_level, port_kind, traffic_base, ...}
+var water_routes: Array[Dictionary] = []  # {from,to,capacity,keep_ratio,fee,allowed_set}
+
+2) 追記：新規関数（world.gd のどこでもOK。load_data の下あたりが無難）
+func _load_ports_and_water_routes() -> void:
+    port_category_by_pid.clear()
+    city_ports.clear()
+    water_routes.clear()
+
+    if not enable_ports:
+        return
+
+    # port_categories
+    var pc_path := data_dir + port_categories_file
+    if FileAccess.file_exists(pc_path):
+        var pc_rows: Array[Dictionary] = _loader.load_csv_dicts(pc_path)
+        for r_any in pc_rows:
+            var r: Dictionary = r_any
+            var pid: String = String(r.get("product_id", "")).strip_edges()
+            var cat: String = String(r.get("port_category", "")).strip_edges().to_lower()
+            if pid == "" or cat == "":
+                continue
+            port_category_by_pid[pid] = cat
+
+    # city_ports
+    var cp_path := data_dir + city_ports_file
+    if FileAccess.file_exists(cp_path):
+        var cp_rows: Array[Dictionary] = _loader.load_csv_dicts(cp_path)
+        for r2_any in cp_rows:
+            var r2: Dictionary = r2_any
+            var cid: String = String(r2.get("city_id", "")).strip_edges()
+            if cid == "" or not cities.has(cid):
+                continue
+            var lvl: int = int(_num(r2.get("port_level", 0)))
+            var traffic: float = float(_num(r2.get("traffic_base", r2.get("traffic", 0.0))))
+            city_ports[cid] = {
+                "port_level": lvl,
+                "port_kind": String(r2.get("port_kind", "")),
+                "zone": String(r2.get("zone", "")),
+                "traffic_base": traffic,
+                "notes": String(r2.get("notes", ""))
+            }
+
+    # water_routes
+    var wr_path := data_dir + water_routes_file
+    if FileAccess.file_exists(wr_path):
+        var wr_rows: Array[Dictionary] = _loader.load_csv_dicts(wr_path)
+        for r3_any in wr_rows:
+            var r3: Dictionary = r3_any
+            var en: int = int(_num(r3.get("enabled", 1)))
+            if en == 0:
+                continue
+
+            var a: String = String(r3.get("from_city", r3.get("from", ""))).strip_edges()
+            var b: String = String(r3.get("to_city", r3.get("to", ""))).strip_edges()
+            if a == "" or b == "" or not cities.has(a) or not cities.has(b):
+                continue
+
+            var cap: float = float(_num(r3.get("capacity", 0.0)))
+            var keep_ratio: float = float(_num(r3.get("keep_ratio", 1.0)))
+            var fee: float = float(_num(r3.get("fee", 0.0)))
+            var allowed_txt: String = String(r3.get("allowed_categories", "")).strip_edges().to_lower()
+
+            water_routes.append({
+                "route_id": String(r3.get("route_id", "")),
+                "from": a,
+                "to": b,
+                "capacity": cap,
+                "keep_ratio": clamp(keep_ratio, 0.0, 1.0),
+                "fee": fee,
+                "allowed_set": _parse_allowed_categories(allowed_txt)
+            })
+
+    if port_log:
+        _log("Ports loaded: ports=%d, water_routes=%d, port_categories=%d" % [city_ports.size(), water_routes.size(), port_category_by_pid.size()])
+
+
+func _parse_allowed_categories(txt: String) -> Dictionary:
+    var d: Dictionary = {}
+    var s := txt.strip_edges()
+    if s == "":
+        d["*"] = true
+        return d
+
+    var normalized := s.replace("|", ";").replace(",", ";")
+    var parts: PackedStringArray = normalized.split(";", false)
+    for p in parts:
+        var k := String(p).strip_edges().to_lower()
+        if k != "":
+            d[k] = true
+    return d
+
+
+func _is_port_city(cid: String) -> bool:
+    if not enable_ports:
+        return false
+    if not city_ports.has(cid):
+        return false
+    return int((city_ports[cid] as Dictionary).get("port_level", 0)) > 0
+
+
+func _port_category_for(pid: String) -> String:
+    if port_category_by_pid.has(pid):
+        return String(port_category_by_pid[pid])
+
+    # フォールバック（port_categories.csv が無い場合）
+    var cat: String = String(product_category.get(pid, "general")).to_lower()
+    if cat == "staple":
+        return "bulk"
+    if cat == "food" or cat == "drink":
+        return "food"
+    if cat == "luxury":
+        return "luxury"
+    if cat == "material" or cat == "textile" or cat == "craft":
+        return "materials"
+    return ""
+
+
+func _port_consume_bonus(cid: String, pid: String) -> float:
+    if not _is_port_city(cid):
+        return 0.0
+
+    var info: Dictionary = city_ports[cid] as Dictionary
+    var lvl: int = int(info.get("port_level", 0))
+    if lvl <= 0:
+        return 0.0
+
+    var pcat: String = _port_category_for(pid)
+    var coeff: float = float(port_cons_coeff.get(pcat, 0.0))
+    if coeff <= 0.0:
+        return 0.0
+
+    var traffic: float = float(info.get("traffic_base", 0.0))
+    return traffic * float(lvl) * coeff * port_cons_scale
+
+
+func _target_eff(cid: String, pid: String, base_target: float) -> float:
+    var t: float = max(1.0, base_target)
+
+    if not _is_port_city(cid):
+        return t
+
+    var info: Dictionary = city_ports[cid] as Dictionary
+    var lvl: int = int(info.get("port_level", 0))
+    if lvl <= 0:
+        return t
+
+    var pcat: String = _port_category_for(pid)
+    var coeff: float = float(port_export_coeff.get(pcat, 0.0))
+    if coeff <= 0.0:
+        return t
+
+    var traffic: float = float(info.get("traffic_base", 0.0))
+    t += traffic * float(lvl) * coeff * port_export_scale
+    return t
+
+
+func _ensure_stock_record_smart(c: String, pid: String) -> void:
+    _ensure_stock_record(c, pid)
+
+    # target が薄い時は自動補完（ロード後と同様のロジック）
+    if not auto_target_fill_enable:
+        return
+
+    var t0: float = float(stock[c][pid].get("target", 0.0))
+    if t0 > 1.0:
+        return
+
+    var rk: int = int(cities.get(c, {}).get("rank", 5))
+    var days: float = _rank_safety_days(rk)
+    var base: float = _consume_base_for(pid)
+    var per_day: float = base * _rank_consume_mult(rk)
+    stock[c][pid]["target"] = max(1.0, per_day * days)
+
+
+func _tick_port_imports() -> void:
+    if not enable_ports or not enable_port_imports:
+        return
+    if port_import_products.is_empty():
+        return
+
+    for cid in city_ports.keys():
+        var info: Dictionary = city_ports[cid] as Dictionary
+        var lvl: int = int(info.get("port_level", 0))
+        if lvl <= 0:
+            continue
+
+        if port_import_only_major:
+            var pk: String = String(info.get("port_kind", "")).to_lower()
+            if pk != "major" and lvl < 3:
+                continue
+
+        var traffic: float = float(info.get("traffic_base", 0.0))
+        var prob: float = clamp(port_import_base_prob * max(0.0, traffic), 0.0, 1.0)
+        if randf() >= prob:
+            continue
+
+        var pid: String = String(port_import_products[randi() % port_import_products.size()])
+        if not products.has(pid):
+            continue
+
+        var qmin := min(port_import_qty_min, port_import_qty_max)
+        var qmax := max(port_import_qty_min, port_import_qty_max)
+        var qty: int = randi_range(qmin, qmax)
+        qty = max(1, qty)
+
+        _ensure_stock_record_smart(cid, pid)
+        _add_stock_inflow(cid, pid, float(qty))
+
+        if port_log:
+            var cname := String(cities.get(cid, {}).get("name", cid))
+            var pname := get_product_name(pid)
+            _log("PortImport: %s %s +%d" % [cname, pname, qty])
+
+
+func _tick_water_logistics() -> void:
+    if not enable_ports or not enable_water_logistics:
+        return
+    if water_routes.is_empty():
+        return
+
+    var pids: Array = products.keys()
+    pids.shuffle()
+
+    for wr_any in water_routes:
+        var wr: Dictionary = wr_any
+        var a: String = String(wr.get("from", ""))
+        var b: String = String(wr.get("to", ""))
+        if a == "" or b == "":
+            continue
+
+        var cap_left: float = float(wr.get("capacity", 0.0))
+        if cap_left <= 0.0:
+            continue
+
+        var keep_ratio: float = float(wr.get("keep_ratio", 1.0))
+        var allowed_set: Dictionary = wr.get("allowed_set", {}) as Dictionary
+
+        for pid_any in pids:
+            if cap_left <= 0.0:
+                break
+
+            var pid: String = String(pid_any)
+            var pcat: String = _port_category_for(pid)
+            if not (allowed_set.has("*") or allowed_set.has(pcat)):
+                continue
+
+            if not stock.has(a) or not stock.has(b):
+                continue
+
+            # delta = qty - target_eff
+            var qa := 0.0
+            var ta := 1.0
+            if (stock[a] as Dictionary).has(pid):
+                qa = float(stock[a][pid].get("qty", 0.0))
+                ta = _target_eff(a, pid, float(stock[a][pid].get("target", 1.0)))
+            var qb := 0.0
+            var tb := 1.0
+            if (stock[b] as Dictionary).has(pid):
+                qb = float(stock[b][pid].get("qty", 0.0))
+                tb = _target_eff(b, pid, float(stock[b][pid].get("target", 1.0)))
+
+            var da := qa - ta
+            var db := qb - tb
+
+            var src := ""
+            var dst := ""
+            var surplus := 0.0
+            var deficit := 0.0
+
+            if da > 0.0 and db < 0.0:
+                src = a
+                dst = b
+                surplus = da
+                deficit = -db
+            elif db > 0.0 and da < 0.0:
+                src = b
+                dst = a
+                surplus = db
+                deficit = -da
+            else:
+                continue
+
+            var ship: float = min(surplus, deficit)
+            ship = min(ship, cap_left)
+            if ship <= 0.0:
+                continue
+
+            _ensure_stock_record_smart(src, pid)
+            _ensure_stock_record_smart(dst, pid)
+
+            var src_have: float = float(stock[src][pid].get("qty", 0.0))
+            ship = min(ship, src_have)
+            if ship <= 0.0:
+                continue
+
+            stock[src][pid]["qty"] = max(0.0, src_have - ship)
+            stock[dst][pid]["qty"] = float(stock[dst][pid].get("qty", 0.0)) + ship * keep_ratio
+
+            cap_left -= ship
+
+            if port_log and ship >= 1.0:
+                var sname := String(cities.get(src, {}).get("name", src))
+                var dname := String(cities.get(dst, {}).get("name", dst))
+                _log("WaterShip: %s -> %s %s %.1f (keep=%.2f)" % [sname, dname, get_product_name(pid), ship, keep_ratio])
+
+3) 差し替え：func _ready()（ポートデータ読込を追加）
+func _ready() -> void:
+    randomize()
+    _loader = CsvLoader.new()
+    add_child(_loader)
+    load_data()
+
+    # ★追加：港・水運データを読込（load_data 後でOK）
+    _load_ports_and_water_routes()
+
+    _normalize_targets_after_load()
+    _init_reputation()
+    build_graph()
+    update_prices()
+    init_traders()
+    init_player()
+
+    _timer = Timer.new()
+    _timer.wait_time = day_seconds
+    _timer.one_shot = false
+    _timer.autostart = false
+    add_child(_timer)
+    _timer.timeout.connect(_on_day_tick)
+    set_speed(1.0)
+
+    _paused = true
+    _log("World ready. Cities=%d, Products=%d, Routes=%d" % [cities.size(), products.size(), routes.size()])
+    day = _calc_day_index_for_start(start_month, start_dom)
+    world_updated.emit()
+
+4) 差し替え：func _consumption_for_today(cid, pid)（港需要を上乗せ）
+func _consumption_for_today(cid: String, pid: String) -> float:
+    # household（既存） + port bonus（新規）
+    var rank: int = int(cities.get(cid, {}).get("rank", 5))
+    var base: float = _consume_base_for(pid)
+    var house_per_day: float = base * _rank_consume_mult(rank)
+
+    # price elasticity（既存：household のみ）
+    if enable_price_elasticity and price.has(cid) and price[cid].has(pid) and products.has(pid):
+        var p_now: float = float(price[cid][pid])
+        var p_base: float = float(products[pid]["base"])
+        if p_base > 0.0:
+            var ratio: float = max(0.2, p_now / p_base)
+            var elast: float = float(elasticity_by_cat.get(String(product_category.get(pid, "general")), 0.0))
+            if elast > 0.0:
+                house_per_day = house_per_day * pow(ratio, -elast)
+
+    # periodic model（既存：household に適用）
+    var model: String = String(consume_rules.get(pid, {}).get("consume_model", "per_day")).to_lower()
+    if model == "periodic":
+        var period: int = int(_consume_period_cache.get(pid, int(consume_rules.get(pid, {}).get("period_days", 5))))
+        period = max(1, period)
+
+        var do_consume := false
+        if int(day) % period == 0:
+            do_consume = true
+
+        var house_today: float = 0.0
+        if do_consume:
+            house_today = house_per_day * float(period)
+
+        return house_today + _port_consume_bonus(cid, pid)
+
+    return house_per_day + _port_consume_bonus(cid, pid)
+
+5) 差し替え：func update_prices()（target を target_eff に置換）
+func update_prices() -> void:
+    for c in cities.keys():
+        for pid in products.keys():
+            var base_price: float = float(products[pid]["base"])
+            var rec_any: Variant = null
+            if stock.has(c):
+                rec_any = (stock[c] as Dictionary).get(pid, null)
+
+            if rec_any == null:
+                price[c][pid] = base_price
+                _update_shortage_ema(c, pid, 0.0)
+            else:
+                var rd: Dictionary = rec_any
+                var raw_target: float = max(1.0, float(rd.get("target", 1.0)))
+                var target: float = _target_eff(c, pid, raw_target)
+                var qty: float = max(0.0, float(rd.get("qty", 0.0)))
+
+                var b: float = 0.0
+                if use_backlog_absorption and backlog.has(c):
+                    var bd: Dictionary = backlog[c]
+                    if bd.has(pid):
+                        b = float(bd[pid])
+
+                var virt_target: float = max(1.0, target + backlog_target_weight * b)
+                var diff: float = virt_target - qty
+                var mult: float = 1.0 + price_k * (diff / virt_target)
+                mult = clamp(mult, min_mult, max_mult)
+
+                var eff := _price_mult_for(c, pid)
+                price[c][pid] = max(1.0, base_price * mult * eff)
+
+                var s_tmp: float = 0.0
+                if virt_target > 0.0:
+                    s_tmp = max(0.0, 1.0 - (qty / virt_target))
+                _update_shortage_ema(c, pid, s_tmp)
+
+            if not history.has(c):
+                history[c] = {}
+            var arr: Array = history[c].get(pid, [])
+            arr.append(price[c][pid])
+            if arr.size() > history_days:
+                arr.pop_front()
+            history[c][pid] = arr
+
+6) 差し替え：func _update_price_for(c, pid)（target を target_eff に置換）
+func _update_price_for(c: String, pid: String) -> void:
+    if not products.has(pid):
+        return
+    if not price.has(c):
+        price[c] = {}
+
+    var base: float = float(products[pid]["base"])
+    var eff_mult: float = _price_mult_for(c, pid)
+    var local_target: float = max(1.0, base * eff_mult)
+    var s_for_spread: float = 0.0
+
+    var rec: Variant = null
+    if stock.has(c):
+        rec = (stock[c] as Dictionary).get(pid, null)
+
+    if rec != null:
+        var rd: Dictionary = rec
+        var raw_target: float = max(1.0, float(rd.get("target", 1.0)))
+        var target: float = _target_eff(c, pid, raw_target)
+        var qty: float = max(0.0, float(rd.get("qty", 0.0)))
+        var diff: float = target - qty
+        var mult: float = clamp(1.0 + price_k * (diff / target), min_mult, max_mult)
+        local_target = max(1.0, base * mult * eff_mult)
+        s_for_spread = max(0.0, 1.0 - (qty / target))
+
+    var prev: float = float(price.get(c, {}).get(pid, local_target))
+    var target_mid: float = local_target
+
+    if enable_external_signal:
+        var best_nb := _best_neighbor_mid_with_delay_minus_cost(c, pid)
+        var ext_diff := best_nb - local_target
+        target_mid = max(1.0, local_target + _beta_for(pid) * ext_diff)
+
+    if enable_price_inertia:
+        var a: float = clamp(_alpha_for(pid), 0.0, 1.0)
+        price[c][pid] = prev + (target_mid - prev) * a
+    else:
+        price[c][pid] = target_mid
+
+    _update_shortage_ema(c, pid, s_for_spread)
+
+    if not history.has(c):
+        history[c] = {}
+    var arr: Array = history[c].get(pid, [])
+    arr.append(price[c][pid])
+    if arr.size() > history_days:
+        arr.pop_front()
+    history[c][pid] = arr
+
+7) 差し替え：func finalize_day()（輸入→工房→水運→消費の順に追加）
+func finalize_day() -> void:
+    _decay_backlog_daily()
+
+    # --- Pass A: demand/prod accumulate ---
+    for cid in cities.keys():
+        for pid in products.keys():
+            _ensure_stock_record(cid, pid)
+            var rec: Dictionary = stock[cid][pid]
+            var demand: float = _consumption_for_today(cid, pid)
+            rec["cons"] = demand
+
+            var base_prod: float = float(rec.get("prod", 0.0))
+            if enable_prod_buffer:
+                _enqueue_prod(cid, pid, base_prod)
+                _try_release_batches(cid, pid)
+            else:
+                _add_stock_inflow(cid, pid, base_prod)
+
+            stock[cid][pid] = rec
+
+    # ★新規：港への輸入（工房より前に入れると、工房が原料に使える）
+    _tick_port_imports()
+
+    # --- Pass B: industries (consume inputs -> produce outputs) ---
+    _tick_industries()
+
+    # ★新規：港↔港の水運物流（工房の後 / 消費の前）
+    _tick_water_logistics()
+
+    # --- Pass C: apply consumption (market "sells") + backlog optional ---
+    for cid2 in cities.keys():
+        for pid2 in products.keys():
+            var rec2: Dictionary = stock[cid2][pid2]
+            var have: float = float(rec2.get("qty", 0.0))
+            var need: float = float(rec2.get("cons", 0.0))
+            var sold: float = min(have, need)
+            rec2["qty"] = have - sold
+
+            if use_backlog_absorption:
+                var uns: float = max(0.0, need - sold)
+                if uns > 0.0:
+                    if not backlog.has(cid2):
+                        backlog[cid2] = {}
+                    var bd2: Dictionary = backlog[cid2]
+                    bd2[pid2] = float(bd2.get(pid2, 0.0)) + uns
+                    backlog[cid2] = bd2
+
+            stock[cid2][pid2] = rec2
+
+    # optional: stochastic supply events (rumor-like)
+    if enable_auto_supply:
+        _apply_supply_events()
+
+    update_prices()
+    world_updated.emit()
