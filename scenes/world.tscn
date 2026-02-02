@@ -10,6 +10,10 @@
 
 [node name="World" type="Node2D"]
 script = ExtResource("1_uex6n")
+use_event_dice = false
+log_each_supply_event = false
+log_daily_supply_count = false
+log_event_dice = false
 weekly_report_delayed_mode = false
 weekly_report_delayed_include_live = false
 
@@ -73,6 +77,7 @@ show_decay_dialog = false
 world_path = NodePath("..")
 dialog_player_path = NodePath("../DialogPlayer")
 show_supply_dialog = false
+show_event_log_panel = false
 
 [node name="Margin" type="MarginContainer" parent="GameHUD"]
 layout_mode = 0

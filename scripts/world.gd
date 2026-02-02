@@ -1167,6 +1167,9 @@ func _apply_travel_outcome(chosen: Dictionary) -> void:
     if msg != "":
         _world_message(msg)
 func _roll_daily_event() -> void:
+    # use_event_dice=OFF のときは日次イベントを発生させない
+    if not use_event_dice:
+        return
     if _events_daily.size() == 0:
         return
     # 重み付き（NONEを含む）
@@ -1724,8 +1727,8 @@ func _tick_port_imports() -> void:
         if not products.has(pid):
             continue
 
-        var qmin := min(port_import_qty_min, port_import_qty_max)
-        var qmax := max(port_import_qty_min, port_import_qty_max)
+        var qmin: int = min(port_import_qty_min, port_import_qty_max)
+        var qmax: int = max(port_import_qty_min, port_import_qty_max)
         var qty: int = randi_range(qmin, qmax)
         qty = max(1, qty)
 
