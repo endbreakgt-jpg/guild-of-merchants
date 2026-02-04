@@ -1525,78 +1525,120 @@ func load_data() -> void:
             key_items[kid] = ki
     _log("KeyItems: defs=%d (%s)" % [key_items.size(), ki_path])
 
+    # --- Ports / Water logistics ---
+    _load_ports_and_water_routes()
+
 func _load_ports_and_water_routes() -> void:
     port_category_by_pid.clear()
     city_ports.clear()
     water_routes.clear()
 
+    # --- Debug: 実際に参照しているパスと存在有無を必ず出す（Debugビルドのみ） ---
+    var pc_path_dbg: String = data_dir + port_categories_file
+    var cp_path_dbg: String = data_dir + city_ports_file
+    var wr_path_dbg: String = data_dir + water_routes_file
+
+    var pc_exists_dbg: bool = FileAccess.file_exists(pc_path_dbg)
+    var cp_exists_dbg: bool = FileAccess.file_exists(cp_path_dbg)
+    var wr_exists_dbg: bool = FileAccess.file_exists(wr_path_dbg)
+
+    if OS.is_debug_build():
+        _log("PortsDebug(pre): enable_ports=%s enable_water_logistics=%s enable_port_imports=%s port_log=%s" % [
+            str(enable_ports), str(enable_water_logistics), str(enable_port_imports), str(port_log)
+        ])
+        _log("PortsDebug(pre): port_categories_file='%s' path='%s' exists=%s" % [
+            port_categories_file, pc_path_dbg, str(pc_exists_dbg)
+        ])
+        _log("PortsDebug(pre): city_ports_file='%s' path='%s' exists=%s" % [
+            city_ports_file, cp_path_dbg, str(cp_exists_dbg)
+        ])
+        _log("PortsDebug(pre): water_routes_file='%s' path='%s' exists=%s" % [
+            water_routes_file, wr_path_dbg, str(wr_exists_dbg)
+        ])
+
     if not enable_ports:
         return
 
-    # port_categories
-    var pc_path := data_dir + port_categories_file
+    # port categories: product_id -> port_category
+    var pc_path: String = data_dir + port_categories_file
     if FileAccess.file_exists(pc_path):
-        var pc_rows: Array[Dictionary] = _loader.load_csv_dicts(pc_path)
+        var pc_rows: Array = _loader.load_csv_dicts(pc_path)
         for r_any in pc_rows:
-            var r: Dictionary = r_any
+            var r: Dictionary = r_any as Dictionary
             var pid: String = String(r.get("product_id", "")).strip_edges()
-            var cat: String = String(r.get("port_category", "")).strip_edges().to_lower()
-            if pid == "" or cat == "":
+            if pid == "":
+                continue
+            var cat: String = String(r.get("port_category", "")).strip_edges()
+            if cat == "":
                 continue
             port_category_by_pid[pid] = cat
 
     # city_ports
-    var cp_path := data_dir + city_ports_file
+    var cp_path: String = data_dir + city_ports_file
     if FileAccess.file_exists(cp_path):
-        var cp_rows: Array[Dictionary] = _loader.load_csv_dicts(cp_path)
+        var cp_rows: Array = _loader.load_csv_dicts(cp_path)
         for r2_any in cp_rows:
-            var r2: Dictionary = r2_any
+            var r2: Dictionary = r2_any as Dictionary
             var cid: String = String(r2.get("city_id", "")).strip_edges()
             if cid == "" or not cities.has(cid):
                 continue
-            var lvl: int = int(_num(r2.get("port_level", 0)))
-            var traffic: float = float(_num(r2.get("traffic_base", r2.get("traffic", 0.0))))
+            var lvl: int = int(_num(r2.get("port_level", 1)))
+            lvl = clamp(lvl, 0, 5)
+            var kind: String = String(r2.get("port_kind", "minor")).strip_edges()
+            if kind == "":
+                kind = "minor"
+            var zone: String = String(r2.get("zone", "")).strip_edges()
+            var traffic: float = float(_num(r2.get("traffic_base", 1.0)))
+            if traffic <= 0.0:
+                traffic = 1.0
+
             city_ports[cid] = {
                 "port_level": lvl,
-                "port_kind": String(r2.get("port_kind", "")),
-                "zone": String(r2.get("zone", "")),
+                "port_kind": kind,
+                "zone": zone,
                 "traffic_base": traffic,
-                "notes": String(r2.get("notes", ""))
             }
 
-    # water_routes
-    var wr_path := data_dir + water_routes_file
+    # water routes
+    var wr_path: String = data_dir + water_routes_file
     if FileAccess.file_exists(wr_path):
-        var wr_rows: Array[Dictionary] = _loader.load_csv_dicts(wr_path)
+        var wr_rows: Array = _loader.load_csv_dicts(wr_path)
         for r3_any in wr_rows:
-            var r3: Dictionary = r3_any
-            var en: int = int(_num(r3.get("enabled", 1)))
-            if en == 0:
+            var r3: Dictionary = r3_any as Dictionary
+            var a: String = String(r3.get("from_city", "")).strip_edges()
+            var b: String = String(r3.get("to_city", "")).strip_edges()
+            if a == "" or b == "":
                 continue
-
-            var a: String = String(r3.get("from_city", r3.get("from", ""))).strip_edges()
-            var b: String = String(r3.get("to_city", r3.get("to", ""))).strip_edges()
-            if a == "" or b == "" or not cities.has(a) or not cities.has(b):
+            if not cities.has(a) or not cities.has(b):
                 continue
-
-            var cap: float = float(_num(r3.get("capacity", 0.0)))
-            var keep_ratio: float = float(_num(r3.get("keep_ratio", 1.0)))
-            var fee: float = float(_num(r3.get("fee", 0.0)))
-            var allowed_txt: String = String(r3.get("allowed_categories", "")).strip_edges().to_lower()
+            var days: int = max(1, int(_num(r3.get("days", 2))))
+            var cap: float = float(_num(r3.get("cap_per_day", 10.0)))
+            if cap <= 0.0:
+                cap = 10.0
+            var allowed_raw: String = String(r3.get("allowed", "bulk")).strip_edges()
+            var allowed: Array[String] = []
+            for s_any in allowed_raw.split(";", false):
+                var s: String = String(s_any).strip_edges()
+                if s != "":
+                    allowed.append(s)
 
             water_routes.append({
-                "route_id": String(r3.get("route_id", "")),
                 "from": a,
                 "to": b,
-                "capacity": cap,
-                "keep_ratio": clamp(keep_ratio, 0.0, 1.0),
-                "fee": fee,
-                "allowed_set": _parse_allowed_categories(allowed_txt)
+                "days": days,
+                "cap_per_day": cap,
+                "allowed": allowed,
             })
 
-    if port_log:
-        _log("Ports loaded: ports=%d, water_routes=%d, port_categories=%d" % [city_ports.size(), water_routes.size(), port_category_by_pid.size()])
+    if OS.is_debug_build():
+        _log("PortsDebug(post): port_categories=%d ports=%d water_routes=%d" % [
+            int(port_category_by_pid.size()), int(city_ports.size()), int(water_routes.size())
+        ])
 
+    if port_log:
+        _log("Ports loaded: ports=%d routes=%d (ports=%s water=%s import=%s)" % [
+            city_ports.size(), water_routes.size(), str(enable_ports), str(enable_water_logistics), str(enable_port_imports)
+        ])
 
 func _load_port_logistics_data() -> void:
     # legacy alias
@@ -1945,32 +1987,57 @@ func update_prices() -> void:
 
 func init_traders() -> void:
     traders.clear()
-    var presets: Array = []
-    var p1: Dictionary = {}
-    p1["greedy"] = 0.9
-    p1["risk"] = 0.8
-    p1["explore"] = 0.2
-    presets.append(p1)
-    var p2: Dictionary = {}
-    p2["greedy"] = 0.6
-    p2["risk"] = 0.3
-    p2["explore"] = 0.5
-    presets.append(p2)
 
-    for i in range(2):
-        var traits: Dictionary = presets[i % presets.size()]
+    # --- Traits (unified params; behavior differs by role) ---
+    var traits_profit: Dictionary = {"greedy": 0.8, "risk": 0.6, "explore": 0.25}
+    var traits_logistics: Dictionary = {"greedy": 0.2, "risk": 0.3, "explore": 0.10}
+
+    # --- Spawn plan (固定初期位置) ---
+    var spawns: Array[Dictionary] = [
+        {"id": "NPC01", "city": "RE0001", "role": "logistics"},
+        {"id": "NPC02", "city": "RE0002", "role": "profit"},
+        {"id": "NPC03", "city": "RE0009", "role": "logistics"},
+        {"id": "NPC04", "city": "RE0010", "role": "profit"},
+        {"id": "NPC05", "city": "RE0016", "role": "logistics"},
+        {"id": "NPC06", "city": "RE0017", "role": "profit"},
+    ]
+
+    for s_any in spawns:
+        var s: Dictionary = s_any
+        var cid: String = String(s.get("city", "RE0001")).strip_edges()
+        if cid == "" or not cities.has(cid):
+            cid = "RE0001"
+
+        var role: String = String(s.get("role", "profit")).strip_edges()
+        if role == "":
+            role = "profit"
+
+        var traits: Dictionary = traits_profit
+        if role == "logistics":
+            traits = traits_logistics
+
+        var prov: String = String(cities.get(cid, {}).get("province", ""))
+
         var t: Dictionary = {}
-        t["id"] = "NPC%02d" % (i + 1)
-        t["city"] = "RE0001"
+        t["id"] = String(s.get("id", "NPC??"))
+        t["city"] = cid
         t["cash"] = 200.0
         t["cap"] = 30
         t["cargo"] = {}
         t["enroute"] = false
         t["dest"] = ""
         t["arrival_day"] = 0
+
+        # role / province lock
+        t["role"] = role
+        t["home_province"] = prov
+        t["province_lock"] = true  # 州内物流を基本にする
+
+        # traits (kept for noise / thresholds)
         t["greedy"] = float(traits.get("greedy", 0.7))
         t["risk"] = float(traits.get("risk", 0.5))
         t["explore"] = float(traits.get("explore", 0.2))
+
         traders.append(t)
 
     # Load fair calendar from CSV if present
@@ -1983,15 +2050,16 @@ func init_traders() -> void:
             var kind := String(r.get("type", r.get("kind", "")))
             if kind != "" and kind != "fair":
                 continue
-            var cid := String(r.get("city_id", ""))
-            if cid == "":
+            var cid2 := String(r.get("city_id", ""))
+            if cid2 == "":
                 continue
             var start := int(_num(r.get("start_day", r.get("start", 0))))
             var duration := int(_num(r.get("duration", 1)))
             var fee := float(_num(r.get("fee", 0.0)))
             var boost := float(_num(r.get("crowd_factor", r.get("boost", 1.0))))
-            if not fair_schedule.has(cid): fair_schedule[cid] = []
-            (fair_schedule[cid] as Array).append({"start":start, "duration":duration, "fee":fee, "boost":boost})
+            if not fair_schedule.has(cid2):
+                fair_schedule[cid2] = []
+            (fair_schedule[cid2] as Array).append({"start": start, "duration": duration, "fee": fee, "boost": boost})
 
 # -------- trading / travel --------
 func _arrive_and_trade(t: Dictionary) -> void:
@@ -2092,18 +2160,36 @@ func _plan_and_depart(t: Dictionary, plan: Dictionary) -> void:
 
 
 func _best_trade_from(city: String, t: Dictionary) -> Dictionary:
+    # role switch
+    var role: String = String(t.get("role", "profit"))
+    if role == "logistics":
+        return _best_trade_logistics_from(city, t)
+    return _best_trade_profit_from(city, t)
+
+
+func _best_trade_profit_from(city: String, t: Dictionary) -> Dictionary:
     var best: Dictionary = {"dest": "", "pid": "", "qty": 0, "profit": -1e20}
     if not adj.has(city):
         return best
 
     var cap_free: int = max(0, int(t.get("cap", 0)) - _cargo_used(t))
 
-    for nb in (adj[city] as Array):
+    var home_prov: String = String(t.get("home_province", ""))
+    var lock_prov: bool = bool(t.get("province_lock", false)) and home_prov != ""
+
+    for nb_any in (adj[city] as Array):
+        var nb: String = String(nb_any)
+
+        if lock_prov and String(cities.get(nb, {}).get("province", "")) != home_prov:
+            continue
+
         var days: int = _route_days(city, nb)
         var travel: float = travel_cost_per_day * float(days)
         var toll: float = (float(_route_toll(city, nb)) if pay_toll_on_depart else 0.0)
 
-        for pid in products.keys():
+        for pid_any in products.keys():
+            var pid: String = String(pid_any)
+
             if not stock.has(city) or not stock[city].has(pid):
                 continue
 
@@ -2115,7 +2201,7 @@ func _best_trade_from(city: String, t: Dictionary) -> Dictionary:
 
             var unit_size: int = int(products[pid].get("size", 1))
             var max_by_cap: int = cap_free / max(1, unit_size)
-            var avail: int = int(floor(float(stock[city][pid]["qty"])) )
+            var avail: int = int(floor(float(stock[city][pid]["qty"])))
             var max_by_cash: int = int(floor(float(t.get("cash", 0.0)) / max(1.0, ask)))
             var q: int = max(0, min(avail, max_by_cap, max_by_cash))
             if q <= 0:
@@ -2130,7 +2216,110 @@ func _best_trade_from(city: String, t: Dictionary) -> Dictionary:
 
             if profit > float(best.get("profit", -1e20)):
                 best = {"dest": nb, "pid": pid, "qty": q, "profit": profit, "days": days, "travel": travel, "toll": toll}
+
     return best
+
+func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
+    # 生活物資の不足解消を優先（ただし unit_gain>0 を要求して赤字化を避ける）
+    var best: Dictionary = {"dest": "", "pid": "", "qty": 0, "profit": -1e20}
+    var best_score: float = -1e20
+
+    if not adj.has(city):
+        return best
+
+    var cap_free: int = max(0, int(t.get("cap", 0)) - _cargo_used(t))
+
+    var home_prov: String = String(t.get("home_province", ""))
+    var lock_prov: bool = bool(t.get("province_lock", false)) and home_prov != ""
+
+    for nb_any in (adj[city] as Array):
+        var nb: String = String(nb_any)
+
+        if lock_prov and String(cities.get(nb, {}).get("province", "")) != home_prov:
+            continue
+
+        var days: int = _route_days(city, nb)
+        var travel: float = travel_cost_per_day * float(days)
+        var toll: float = (float(_route_toll(city, nb)) if pay_toll_on_depart else 0.0)
+
+        for pid_any in products.keys():
+            var pid: String = String(pid_any)
+
+            if not _is_logistics_pid(pid):
+                continue
+            if not stock.has(city) or not stock[city].has(pid):
+                continue
+            if not stock.has(nb) or not stock[nb].has(pid):
+                continue
+
+            var ask: float = get_ask_price(city, pid)
+            var bid: float = get_bid_price(nb, pid)
+            var unit_gain: float = bid - ask
+            if unit_gain <= 0.0:
+                continue
+
+            var src_rec: Dictionary = stock[city][pid] as Dictionary
+            var dst_rec: Dictionary = stock[nb][pid] as Dictionary
+
+            var base_t_src: float = max(1.0, float(src_rec.get("target", 1.0)))
+            var base_t_dst: float = max(1.0, float(dst_rec.get("target", 1.0)))
+            var t_src: float = max(1.0, _target_eff(city, pid, base_t_src))
+            var t_dst: float = max(1.0, _target_eff(nb, pid, base_t_dst))
+            var q_src: float = max(0.0, float(src_rec.get("qty", 0.0)))
+            var q_dst: float = max(0.0, float(dst_rec.get("qty", 0.0)))
+
+            # 出発地を枯らしすぎない（targetの80%は残す）
+            var keep_ratio: float = 0.80
+            var surplus: float = q_src - t_src * keep_ratio
+            if surplus <= 0.0:
+                continue
+
+            var need: float = t_dst - q_dst
+            if need <= 0.0:
+                continue
+
+            var unit_size: int = int(products[pid].get("size", 1))
+            var max_by_cap: int = cap_free / max(1, unit_size)
+            var q: int = int(floor(min(float(max_by_cap), surplus, need)))
+            if q <= 0:
+                continue
+
+            var max_by_cash: int = int(floor(float(t.get("cash", 0.0)) / max(1.0, ask)))
+            q = min(q, max_by_cash)
+            if q <= 0:
+                continue
+
+            var shortage: float = clamp(1.0 - (q_dst / t_dst), 0.0, 1.0)
+            var profit: float = unit_gain * float(q) - (travel + toll)
+            if profit < 0.0:
+                continue
+
+            # 目的：不足（shortage）×搬入量 を最大化（距離は軽くペナルティ）
+            var score: float = shortage * float(q) - 0.10 * float(days)
+
+            if score > best_score:
+                best_score = score
+                best = {
+                    "dest": nb,
+                    "pid": pid,
+                    "qty": q,
+                    "profit": profit,
+                    "score": score,
+                    "shortage": shortage,
+                    "days": days,
+                    "travel": travel,
+                    "toll": toll,
+                }
+
+    return best
+
+func _is_logistics_pid(pid: String) -> bool:
+    # 生活物資の枠。まずは「luxury を除外」だけにしておく（運用で拡張しやすい）
+    var cat: String = String(product_category.get(pid, "general")).to_lower()
+    if cat == "luxury":
+        return false
+    return true
+
 
 # -------- helpers --------
 

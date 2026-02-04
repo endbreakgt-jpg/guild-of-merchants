@@ -10,11 +10,12 @@
 
 [node name="World" type="Node2D"]
 script = ExtResource("1_uex6n")
+port_log = true
 use_event_dice = false
+weekly_report_on_morning = false
 log_each_supply_event = false
 log_daily_supply_count = false
 log_event_dice = false
-weekly_report_delayed_mode = false
 weekly_report_delayed_include_live = false
 
 [node name="MapLayer" type="Node2D" parent="."]
