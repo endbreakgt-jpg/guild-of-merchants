@@ -95,6 +95,7 @@ var _popup_paused: bool = false
 var play_btn: Button = null
 var story_btn: Button = null
 var debug_btn: Button = null
+var export_btn: Button = null
 var _debug_user_open: bool = false
 
 
@@ -297,20 +298,70 @@ func _create_story_button() -> void:
         story_btn.pressed.connect(_on_story_btn)
 
 func _create_debug_button() -> void:
-    if is_instance_valid(debug_btn):
+    if not is_instance_valid(topbar):
         return
-
-    debug_btn = Button.new()
-    debug_btn.text = "DBG"
-    debug_btn.custom_minimum_size = Vector2(70, 32)
-    debug_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-    debug_btn.mouse_filter = Control.MOUSE_FILTER_STOP
-    topbar.add_child(debug_btn)
+    if not is_instance_valid(debug_btn):
+        debug_btn = Button.new()
+        debug_btn.name = "DebugBtn"
+        debug_btn.text = "DBG"
+        debug_btn.custom_minimum_size = Vector2(70, 32)
+        debug_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        debug_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+        topbar.add_child(debug_btn)
 
     var cb := Callable(self, "_on_debug_btn_pressed")
     if debug_btn.pressed.is_connected(cb):
         debug_btn.pressed.disconnect(cb)
     debug_btn.pressed.connect(cb)
+
+    _create_export_button()
+
+func _create_export_button() -> void:
+    if not is_instance_valid(topbar):
+        return
+    if is_instance_valid(export_btn):
+        return
+
+    export_btn = Button.new()
+    export_btn.name = "ExportBtn"
+    export_btn.text = "EXP"
+    export_btn.custom_minimum_size = Vector2(70, 32)
+    export_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+    export_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+    topbar.add_child(export_btn)
+
+    if is_instance_valid(debug_btn) and export_btn.get_parent() == topbar:
+        topbar.move_child(export_btn, debug_btn.get_index() + 1)
+
+    var cb := Callable(self, "_on_export_btn_pressed")
+    if export_btn.pressed.is_connected(cb):
+        export_btn.pressed.disconnect(cb)
+    export_btn.pressed.connect(cb)
+
+func _on_export_btn_pressed() -> void:
+    if world == null:
+        OS.alert("World is not ready.", "Economy Export")
+        return
+
+    var paths: Array[String] = []
+
+    if world.has_method("export_economy_report_txt"):
+        var p_report: String = String(world.call("export_economy_report_txt", "eco_report", 6))
+        if p_report != "":
+            paths.append(p_report)
+
+    if world.has_method("export_economy_snapshot_csv"):
+        var p_csv: String = String(world.call("export_economy_snapshot_csv", "eco", false))
+        if p_csv != "":
+            paths.append(p_csv)
+
+    if paths.is_empty():
+        OS.alert("Export methods are not available on World.", "Economy Export")
+        return
+
+    var msg := "Exported:\n" + "\n".join(paths)
+    DisplayServer.clipboard_set(msg)
+    OS.alert(msg, "Economy Export")
 
 func _create_supply_label() -> void:
     if not is_instance_valid(topbar):

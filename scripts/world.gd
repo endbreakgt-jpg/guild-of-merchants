@@ -4663,6 +4663,289 @@ func give_key_item(id: String, count: int = 1, show_message: bool = true) -> boo
     world_updated.emit()
     return true
 
+
+func _csv_escape(s: String) -> String:
+    var t := s
+    if t.find("\"") != -1:
+        t = t.replace("\"", "\"\"")
+    var need_quote := false
+    if t.find(",") != -1:
+        need_quote = true
+    if t.find("\n") != -1:
+        need_quote = true
+    if t.find("\r") != -1:
+        need_quote = true
+    if need_quote:
+        return "\"" + t + "\""
+    return t
+
+
+func _safe_filename_component(s: String) -> String:
+    var t := s
+    t = t.replace(":", "-")
+    t = t.replace("/", "-")
+    t = t.replace("\\", "-")
+    t = t.replace(" ", "_")
+    t = t.replace("\t", "_")
+    return t
+
+
+func _ensure_user_dir(dir_path: String) -> bool:
+    if dir_path == "":
+        return false
+    DirAccess.make_dir_recursive_absolute(dir_path)
+    var da := DirAccess.open(dir_path)
+    if da == null:
+        return false
+    return true
+
+
+func _globalize_user_path(user_path: String) -> String:
+    if user_path.begins_with("user://"):
+        return ProjectSettings.globalize_path(user_path)
+    return user_path
+
+
+func _is_active_stock_record(rec: Dictionary) -> bool:
+    if float(rec.get("qty", 0.0)) != 0.0:
+        return true
+    if float(rec.get("target", 0.0)) != 0.0:
+        return true
+    if float(rec.get("prod", 0.0)) != 0.0:
+        return true
+    if float(rec.get("cons", 0.0)) != 0.0:
+        return true
+    return false
+
+
+func build_economy_snapshot_csv(include_inactive: bool = false) -> String:
+    var lines: Array[String] = []
+    lines.append("day,city_id,city_name,province,rank,is_port,port_level,product_id,product_name,category,qty,target,target_eff,delta,ratio,prod_per_day,cons_per_day,mid_price,bid_price,ask_price")
+
+    var cids: Array = cities.keys()
+    cids.sort()
+
+    for cid_any in cids:
+        var cid: String = String(cid_any)
+        if not stock.has(cid):
+            continue
+        var city_row: Dictionary = cities.get(cid, {}) as Dictionary
+        var city_name: String = String(city_row.get("name", cid))
+        var province: String = String(city_row.get("province", ""))
+        var rank: int = int(city_row.get("rank", 3))
+
+        var is_port: int = 0
+        var port_level: int = 0
+        if city_ports.has(cid):
+            is_port = 1
+            var pr: Dictionary = city_ports.get(cid, {}) as Dictionary
+            port_level = int(pr.get("port_level", 0))
+
+        var recs: Dictionary = stock[cid] as Dictionary
+        var pids: Array = recs.keys()
+        pids.sort()
+
+        for pid_any in pids:
+            var pid: String = String(pid_any)
+            var rec: Dictionary = recs.get(pid, {}) as Dictionary
+            if not include_inactive and not _is_active_stock_record(rec):
+                continue
+
+            var qty: float = max(0.0, float(rec.get("qty", 0.0)))
+            var target_base: float = max(1.0, float(rec.get("target", 1.0)))
+            var target_eff: float = max(1.0, _target_eff(cid, pid, target_base))
+            var delta: float = qty - target_eff
+            var ratio: float = 0.0
+            if target_eff > 0.0:
+                ratio = qty / target_eff
+
+            var prod_per_day: float = float(rec.get("prod", 0.0))
+            var cons_per_day: float = float(rec.get("cons", 0.0))
+
+            var pname: String = get_product_name(pid)
+            var cat: String = "general"
+            if product_category != null and product_category.has(pid):
+                cat = String(product_category.get(pid, "general"))
+
+            var mid: float = 0.0
+            if products.has(pid):
+                mid = float((products.get(pid, {}) as Dictionary).get("base", 0.0))
+            if price.has(cid):
+                var pc: Dictionary = price[cid] as Dictionary
+                if pc.has(pid):
+                    mid = float(pc.get(pid, mid))
+
+            var sp: float = _spread_for(cid, pid)
+            var ask: float = max(1.0, mid * (1.0 + sp * 0.5))
+            var bid: float = max(1.0, mid * (1.0 - sp * 0.5))
+
+            var row := [
+                str(day),
+                _csv_escape(cid),
+                _csv_escape(city_name),
+                _csv_escape(province),
+                str(rank),
+                str(is_port),
+                str(port_level),
+                _csv_escape(pid),
+                _csv_escape(pname),
+                _csv_escape(cat),
+                ("%.2f" % qty),
+                ("%.2f" % target_base),
+                ("%.2f" % target_eff),
+                ("%.2f" % delta),
+                ("%.3f" % ratio),
+                ("%.3f" % prod_per_day),
+                ("%.3f" % cons_per_day),
+                ("%.2f" % mid),
+                ("%.2f" % bid),
+                ("%.2f" % ask),
+            ]
+            lines.append(",".join(row))
+
+    return "\n".join(lines)
+
+
+func export_economy_snapshot_csv(tag: String = "eco", include_inactive: bool = false) -> String:
+    var dir_path := "user://exports"
+    if not _ensure_user_dir(dir_path):
+        return ""
+
+    var ts := _safe_filename_component(Time.get_datetime_string_from_system().replace("T", "_"))
+    var fname := "%s_day%04d_%s.csv" % [tag, int(day), ts]
+    var path := dir_path + "/" + fname
+
+    var f := FileAccess.open(path, FileAccess.WRITE)
+    if f == null:
+        return ""
+
+    f.store_string(build_economy_snapshot_csv(include_inactive))
+    f.flush()
+    return _globalize_user_path(path)
+
+
+func build_economy_report_text(top_n: int = 5) -> String:
+    var lines: Array[String] = []
+    lines.append("Economy Report | Day %d" % int(day))
+    lines.append("Cities=%d  Products=%d  Ports=%d" % [cities.size(), products.size(), city_ports.size()])
+    lines.append("")
+
+    var pid_set: Dictionary = {}
+    for cid_any in stock.keys():
+        var recs: Dictionary = stock[cid_any] as Dictionary
+        for pid_any in recs.keys():
+            pid_set[String(pid_any)] = true
+    var pids: Array = pid_set.keys()
+    pids.sort()
+
+    for pid_any in pids:
+        var pid: String = String(pid_any)
+        if not products.has(pid):
+            continue
+
+        var rows: Array[Dictionary] = []
+        var min_ratio: float = 999.0
+        var max_ratio: float = 0.0
+        var min_ask: float = 999999.0
+        var max_ask: float = 0.0
+
+        for cid_any2 in stock.keys():
+            var cid: String = String(cid_any2)
+            var recs2: Dictionary = stock[cid] as Dictionary
+            if not recs2.has(pid):
+                continue
+
+            var rec: Dictionary = recs2.get(pid, {}) as Dictionary
+            var qty: float = max(0.0, float(rec.get("qty", 0.0)))
+            var target_base: float = max(1.0, float(rec.get("target", 1.0)))
+            var target_eff: float = max(1.0, _target_eff(cid, pid, target_base))
+            var ratio: float = 0.0
+            if target_eff > 0.0:
+                ratio = qty / target_eff
+
+            var mid: float = float((products[pid] as Dictionary).get("base", 0.0))
+            if price.has(cid):
+                var pc: Dictionary = price[cid] as Dictionary
+                if pc.has(pid):
+                    mid = float(pc.get(pid, mid))
+
+            var sp: float = _spread_for(cid, pid)
+            var ask: float = max(1.0, mid * (1.0 + sp * 0.5))
+
+            min_ratio = min(min_ratio, ratio)
+            max_ratio = max(max_ratio, ratio)
+            min_ask = min(min_ask, ask)
+            max_ask = max(max_ask, ask)
+
+            rows.append({
+                "cid": cid,
+                "qty": qty,
+                "target_eff": target_eff,
+                "ratio": ratio,
+                "ask": ask,
+                "delta": qty - target_eff,
+            })
+
+        if rows.is_empty():
+            continue
+
+        if min_ratio > 0.95 and max_ratio < 1.05:
+            continue
+
+        var pname: String = String((products[pid] as Dictionary).get("name", pid))
+        lines.append("[%s] %s | ratio %.2f..%.2f | ask %.1f..%.1f" % [pid, pname, min_ratio, max_ratio, min_ask, max_ask])
+
+        var shortage := rows.duplicate()
+        shortage.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+            return float(a.get("ratio", 0.0)) < float(b.get("ratio", 0.0))
+        )
+
+        var surplus := rows.duplicate()
+        surplus.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+            return float(a.get("ratio", 0.0)) > float(b.get("ratio", 0.0))
+        )
+
+        lines.append("  shortage:")
+        var lim1: int = min(top_n, shortage.size())
+        for i in range(lim1):
+            var r: Dictionary = shortage[i]
+            var cid: String = String(r.get("cid", ""))
+            var cname: String = String((cities.get(cid, {}) as Dictionary).get("name", cid))
+            lines.append("    - %s (%.2f) qty %.1f / %.1f ask %.1f" % [cname, float(r.get("ratio", 0.0)), float(r.get("qty", 0.0)), float(r.get("target_eff", 0.0)), float(r.get("ask", 0.0))])
+
+        lines.append("  surplus:")
+        var lim2: int = min(top_n, surplus.size())
+        for j in range(lim2):
+            var r2: Dictionary = surplus[j]
+            var cid2: String = String(r2.get("cid", ""))
+            var cname2: String = String((cities.get(cid2, {}) as Dictionary).get("name", cid2))
+            lines.append("    - %s (%.2f) qty %.1f / %.1f ask %.1f" % [cname2, float(r2.get("ratio", 0.0)), float(r2.get("qty", 0.0)), float(r2.get("target_eff", 0.0)), float(r2.get("ask", 0.0))])
+
+        lines.append("")
+
+    if lines.size() <= 3:
+        lines.append("(No notable imbalance yet)")
+
+    return "\n".join(lines)
+
+
+func export_economy_report_txt(tag: String = "eco_report", top_n: int = 5) -> String:
+    var dir_path := "user://exports"
+    if not _ensure_user_dir(dir_path):
+        return ""
+
+    var ts := _safe_filename_component(Time.get_datetime_string_from_system().replace("T", "_"))
+    var fname := "%s_day%04d_%s.txt" % [tag, int(day), ts]
+    var path := dir_path + "/" + fname
+
+    var f := FileAccess.open(path, FileAccess.WRITE)
+    if f == null:
+        return ""
+
+    f.store_string(build_economy_report_text(top_n))
+    f.flush()
+    return _globalize_user_path(path)
+
 func _apply_key_item_effect(def: Dictionary, qty_added: int) -> void:
     if def.is_empty() or player == null:
         return
