@@ -249,6 +249,19 @@ var _prev_snapshot_by_prov: Dictionary = {}   # ★追加：prov -> {day, rows}�
 @export var supply_skip_when_above_ratio: float = 1.4  # 在庫/目標がこの比率以上ならスキップ（豊富すぎる時は入荷しない）
 var _last_supply_day: Dictionary = {}               # city_id -> pid -> last_day
 
+# --- Emergency supply (破綻回避用の安全柵) ---
+@export var enable_emergency_supply: bool = false
+@export var emergency_supply_min_days: int = 5
+@export var emergency_supply_ratio_threshold: float = 0.15
+@export var emergency_supply_qty_ratio: float = 0.08
+@export var emergency_supply_daily_cap: int = 2
+@export var emergency_supply_cooldown_days: int = 10
+@export var emergency_supply_min_target: float = 6.0
+@export var emergency_supply_categories: Array[String] = ["staple","food","drink","textile","material"]
+
+var _emergency_shortage_streak: Dictionary = {}  # city_id -> pid -> int
+var _emergency_last_day: Dictionary = {}         # city_id -> pid -> int
+
 # --- Debug / Stats & Seasonal gates ---
 @export var supply_debug_boost_enable: bool = true
 @export var supply_debug_boost: float = 1.35                 # デバッグ時の発火確率ブースト
@@ -517,6 +530,9 @@ func finalize_day() -> void:
     if enable_auto_supply:
         _apply_supply_events()
 
+    # 追加: 欠品救済（安全柵。デフォルトOFF）
+    _tick_emergency_supply()
+
     update_prices()
 
     if enable_fairs:
@@ -547,7 +563,6 @@ func finalize_day() -> void:
     _log_day_summary()
     if log_daily_supply_count:
         _log_supply_daily_count()
-
 
 
 func pause() -> void:
@@ -1605,29 +1620,49 @@ func _load_ports_and_water_routes() -> void:
         var wr_rows: Array = _loader.load_csv_dicts(wr_path)
         for r3_any in wr_rows:
             var r3: Dictionary = r3_any as Dictionary
-            var a: String = String(r3.get("from_city", "")).strip_edges()
-            var b: String = String(r3.get("to_city", "")).strip_edges()
+
+            # enabled列がある場合だけ見る（無ければ1扱い）
+            var enabled_i: int = int(_num(r3.get("enabled", 1)))
+            if enabled_i == 0:
+                continue
+
+            var a: String = String(r3.get("from_city", r3.get("from", ""))).strip_edges()
+            var b: String = String(r3.get("to_city", r3.get("to", ""))).strip_edges()
             if a == "" or b == "":
                 continue
             if not cities.has(a) or not cities.has(b):
                 continue
-            var days: int = max(1, int(_num(r3.get("days", 2))))
-            var cap: float = float(_num(r3.get("cap_per_day", 10.0)))
+
+            var route_id: String = String(r3.get("route_id", r3.get("id", ""))).strip_edges()
+            if route_id == "":
+                route_id = "%s-%s" % [a, b]
+
+            var days: int = max(1, int(_num(r3.get("days", 1))))
+
+            # 新: capacity / 旧: cap_per_day
+            var cap: float = float(_num(r3.get("capacity", r3.get("cap_per_day", 10.0))))
             if cap <= 0.0:
                 cap = 10.0
-            var allowed_raw: String = String(r3.get("allowed", "bulk")).strip_edges()
-            var allowed: Array[String] = []
-            for s_any in allowed_raw.split(";", false):
-                var s: String = String(s_any).strip_edges()
-                if s != "":
-                    allowed.append(s)
+
+            # keep_ratio（新） / keep（旧）
+            var keep_ratio: float = float(_num(r3.get("keep_ratio", r3.get("keep", 0.80))))
+            keep_ratio = clamp(keep_ratio, 0.0, 1.0)
+
+            var fee: float = float(_num(r3.get("fee", 0.0)))
+
+            # allowed_categories（新） / allowed（旧）
+            var allowed_raw: String = String(r3.get("allowed_categories", r3.get("allowed", "bulk"))).strip_edges()
+            var allowed_set: Dictionary = _parse_allowed_categories(allowed_raw)
 
             water_routes.append({
+                "route_id": route_id,
                 "from": a,
                 "to": b,
-                "days": days,
-                "cap_per_day": cap,
-                "allowed": allowed,
+                "days": days,            # 将来用（現行tickでは未使用）
+                "capacity": cap,         # ★ _tick_water_logistics が参照するキー
+                "keep_ratio": keep_ratio,
+                "fee": fee,
+                "allowed_set": allowed_set,
             })
 
     if OS.is_debug_build():
@@ -2426,6 +2461,114 @@ func _apply_supply_events() -> void:
                 supply_count_by_pid[pid] = int(supply_count_by_pid.get(pid, 0)) + 1
 
                 events_today += 1
+
+func _emergency_get_streak(cid: String, pid: String) -> int:
+    if _emergency_shortage_streak.has(cid):
+        return int((_emergency_shortage_streak[cid] as Dictionary).get(pid, 0))
+    return 0
+
+func _emergency_set_streak(cid: String, pid: String, v: int) -> void:
+    if not _emergency_shortage_streak.has(cid):
+        _emergency_shortage_streak[cid] = {}
+    (_emergency_shortage_streak[cid] as Dictionary)[pid] = max(0, v)
+
+func _emergency_get_last(cid: String, pid: String) -> int:
+    if _emergency_last_day.has(cid):
+        return int((_emergency_last_day[cid] as Dictionary).get(pid, -1000000))
+    return -1000000
+
+func _emergency_set_last(cid: String, pid: String, d: int) -> void:
+    if not _emergency_last_day.has(cid):
+        _emergency_last_day[cid] = {}
+    (_emergency_last_day[cid] as Dictionary)[pid] = d
+
+func _is_emergency_pid(pid: String) -> bool:
+    var cat: String = String(product_category.get(pid, "general")).to_lower()
+    if cat == "luxury":
+        return false
+    for c_any in emergency_supply_categories:
+        var c: String = String(c_any).to_lower()
+        if c == cat:
+            return true
+    return false
+
+func _format_emergency_supply_flavor(cid: String, pid: String, q: int) -> String:
+    var cname: String = String(cities.get(cid, {}).get("name", cid))
+    var pname: String = get_product_name(pid)
+    return "%sに救援の隊商が到着し、%sが補充された。（+%d）" % [cname, pname, q]
+
+func _tick_emergency_supply() -> void:
+    if not enable_emergency_supply:
+        return
+    if emergency_supply_daily_cap <= 0:
+        return
+
+    var events_today: int = 0
+
+    for cid_any in stock.keys():
+        if events_today >= emergency_supply_daily_cap:
+            return
+
+        var cid: String = String(cid_any)
+        var by_pid: Dictionary = stock[cid] as Dictionary
+
+        for pid_any in by_pid.keys():
+            if events_today >= emergency_supply_daily_cap:
+                return
+
+            var pid: String = String(pid_any)
+            if not _is_emergency_pid(pid):
+                continue
+
+            var rec: Dictionary = by_pid[pid] as Dictionary
+
+            var raw_target: float = max(1.0, float(rec.get("target", 1.0)))
+            var target_eff: float = max(1.0, _target_eff(cid, pid, raw_target))
+
+            var virt_target: float = target_eff
+            if use_backlog_absorption and backlog.has(cid):
+                var bd: Dictionary = backlog[cid] as Dictionary
+                if bd.has(pid):
+                    virt_target += backlog_target_weight * max(0.0, float(bd[pid]))
+
+            virt_target = max(1.0, virt_target)
+            if virt_target < emergency_supply_min_target:
+                _emergency_set_streak(cid, pid, 0)
+                continue
+
+            var qty: float = max(0.0, float(rec.get("qty", 0.0)))
+            var ratio: float = qty / virt_target
+
+            var streak: int = _emergency_get_streak(cid, pid)
+            if ratio < emergency_supply_ratio_threshold:
+                streak += 1
+            else:
+                streak = 0
+            _emergency_set_streak(cid, pid, streak)
+
+            if streak < emergency_supply_min_days:
+                continue
+
+            var last_d: int = _emergency_get_last(cid, pid)
+            if (day - last_d) < emergency_supply_cooldown_days:
+                continue
+
+            var add_f: float = virt_target * clamp(emergency_supply_qty_ratio, 0.0, 0.50)
+            var q: int = int(max(1.0, ceil(add_f)))
+
+            _ensure_stock_record_smart(cid, pid)
+            _add_stock_inflow(cid, pid, float(q))
+
+            var flavor: String = _format_emergency_supply_flavor(cid, pid, q)
+            push_event(flavor)
+            supply_event.emit(cid, pid, q, "emergency", flavor)
+
+            if log_each_supply_event:
+                _log("EmergencySupply: %s %s +%d (streak=%d ratio=%.2f)" % [cid, pid, q, streak, ratio])
+
+            _emergency_set_last(cid, pid, day)
+            _emergency_set_streak(cid, pid, 0)
+            events_today += 1
 
 func _cheapest_ratio_pid(city_id: String) -> String:
     var best_pid: String = ""
@@ -3501,12 +3644,18 @@ func _make_save_payload() -> Dictionary:
         "stock": stock,
         "_shortage_ema": _shortage_ema,
         "_effects_active": _effects_active,
+
+        # --- emergency supply ---
+        "_emergency_shortage_streak": _emergency_shortage_streak,
+        "_emergency_last_day": _emergency_last_day,
+
         "supply_count_today": (supply_count_today if "supply_count_today" in self else 0),
         "supply_count_total": (supply_count_total if "supply_count_total" in self else 0),
         "supply_count_by_month": (supply_count_by_month if "supply_count_by_month" in self else {}),
         "supply_count_by_city": (supply_count_by_city if "supply_count_by_city" in self else {}),
         "supply_count_by_pid": (supply_count_by_pid if "supply_count_by_pid" in self else {}),
         "event_log": (event_log if "event_log" in self else []),
+
         # --- tutorial ---
         "tutorial": {
             "state": tutorial_state,
@@ -3541,13 +3690,22 @@ func _apply_save_payload(data: Dictionary) -> void:
     if state.has("_shortage_ema"):
         _shortage_ema = state.get("_shortage_ema") as Dictionary
 
+    # --- emergency supply ---
+    if state.has("_emergency_shortage_streak"):
+        _emergency_shortage_streak = state.get("_emergency_shortage_streak") as Dictionary
+    else:
+        _emergency_shortage_streak = {}
+    if state.has("_emergency_last_day"):
+        _emergency_last_day = state.get("_emergency_last_day") as Dictionary
+    else:
+        _emergency_last_day = {}
+
     # --- tutorial ---
     if state.has("tutorial"):
         var tut: Dictionary = state.get("tutorial") as Dictionary
         var prev_state := tutorial_state
         tutorial_state = String(tut.get("state", tutorial_state))
         tutorial_locks = (tut.get("locks", {}) as Dictionary)
-        # ロード直後にUIが追従できるようシグナル発火
         tutorial_state_changed.emit(prev_state, tutorial_state)
         tutorial_locks_changed.emit(get_tutorial_locks())
 
