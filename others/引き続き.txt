@@ -80,3 +80,70 @@ Day300 までシミュレーション実行
 Day121-180 vs Day241-300 の比較レポート作成
 Node20/Node23 輸入ハブが機能しているか（価格貼り付き、NPC流通、品目偏り）を評価
 必要なら port_cons_scale や輸入品 prod_per_day を再チューニング
+
+
+以下を反映しました。Node23は「港化せず内陸集散ハブ」方針のままです。
+
+物流NPCの対象に PR014/015/032/033/034/035 を追加し、優先度を上げました。
+world.gd (line 90) world.gd (line 2365) world.gd (line 2371)
+物流NPCだけ州ロックを解除できるようにし、越境搬送を有効化しました。
+world.gd (line 93) world.gd (line 2075)
+ハブ直下の物流担当として RE0020 と RE0023 に物流NPCを追加しました。
+world.gd (line 2042)
+物流判定で「不足/余剰が1未満でも一定閾値を超えたら1個運ぶ」最小ロット処理を入れ、0件化しやすい条件を緩和しました。
+world.gd (line 2327)
+港需要の押し上げを抑えるため port_cons_scale = 0.45 を設定しました。
+world.tscn (line 14)
+Node20の輸入ハブ強度を上げるため traffic_base を 0.80 -> 0.90 に変更しました（Node23は未追加）。
+city_ports.csv (line 7)
+
+
+2026-02-06 追加調整（Day121-360分析を受けた実装）
+
+目的:
+- Day241以降に固定化した「不足高止まり + 一部過剰」の解消
+- Node20/Node23の輸入品を実需側へ押し出す流通改善
+
+反映内容:
+
+scripts/world.gd
+- 物流NPCに中継評価を追加（隣接都市の先、最大2hop先の売り先価格を期待値に反映）
+  - logistics_relay_hops = 2
+  - _best_relay_bid() を追加
+- 優先物流品（PR014/015/032/033/034/035）に限定して、深刻不足時は小幅赤字搬送を許可
+  - logistics_enable_priority_relief = true
+  - logistics_priority_relief_min_shortage = 0.55
+  - logistics_priority_relief_max_loss = 12.0
+- 出発地在庫の保全率を可変化
+  - logistics_source_keep_ratio = 0.80
+- 中継ノード強化として物流NPCを1体追加
+  - NPC09 @ RE0012（role=logistics）
+
+data/water_routes.csv
+- 南回廊の海路カテゴリを bulk 限定から bulk;luxury へ拡張
+  - WR003 (RE0011-RE0017)
+  - WR004 (RE0017-RE0018)
+  - WR005 (RE0018-RE0020)
+
+data/city_stock.csv
+- 不足補強:
+  - RE0019,PR010 の prod_per_day: 0.00 -> 0.06
+  - RE0018,PR019 の prod_per_day: 0.00 -> 0.06
+- 過剰抑制:
+  - RE0001,PR001 の prod_per_day: 0.4463 -> 0.32
+  - RE0014,PR001 の prod_per_day: 0.4252 -> 0.30
+  - RE0004,PR022 の prod_per_day: 1.656 -> 1.20
+  - RE0010,PR022 の prod_per_day: 1.4309 -> 1.05
+  - RE0019,PR022 の prod_per_day: 1.092 -> 0.90
+
+検証推奨:
+- まず Day121 から Day240 まで再走（120日）で一次評価
+- 改善が見える場合は Day121 から Day300 まで再走（180日）で収束確認
+- 注視指標:
+  - Node20/Node23 の PR033/PR034 の下限貼り付き解消
+  - RE0003/RE0008/RE0011 の高級品（PR032-PR035）高止まりの緩和
+  - carrying/sold ログで優先物流品の実搬送回数増加
+
+シナリオ前提メモ:
+- 将来的に一部海路は海賊影響で不安定化予定のため、海路依存一辺倒にならないよう
+  陸路物流（RE0012中継）も同時に強化する方針で実装済み。

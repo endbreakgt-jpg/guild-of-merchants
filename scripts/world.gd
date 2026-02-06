@@ -90,6 +90,11 @@ var tutorial_locks: Dictionary = {}
 @export var logistics_priority_products: Array[String] = ["PR014", "PR015", "PR032", "PR033", "PR034", "PR035"]
 @export_range(0.0, 1.0, 0.05) var logistics_min_fractional_lot: float = 0.35
 @export_range(1.0, 5.0, 0.1) var logistics_priority_score_mult: float = 1.60
+@export_range(0.0, 1.0, 0.05) var logistics_source_keep_ratio: float = 0.80
+@export_range(1, 4, 1) var logistics_relay_hops: int = 2
+@export var logistics_enable_priority_relief: bool = true
+@export_range(0.0, 1.0, 0.05) var logistics_priority_relief_min_shortage: float = 0.55
+@export_range(0.0, 100.0, 0.5) var logistics_priority_relief_max_loss: float = 12.0
 @export var logistics_unlock_cross_province: bool = true
 
 # --- 噂コスト/真実度（Inspectorで即変更可） ---
@@ -2041,6 +2046,7 @@ func init_traders() -> void:
         {"id": "NPC06", "city": "RE0017", "role": "profit"},
         {"id": "NPC07", "city": "RE0020", "role": "logistics"},
         {"id": "NPC08", "city": "RE0023", "role": "logistics"},
+        {"id": "NPC09", "city": "RE0012", "role": "logistics"},
     ]
 
     for s_any in spawns:
@@ -2297,10 +2303,6 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
                 continue
 
             var ask: float = get_ask_price(city, pid)
-            var bid: float = get_bid_price(nb, pid)
-            var unit_gain: float = bid - ask
-            if unit_gain <= 0.0:
-                continue
 
             var src_rec: Dictionary = stock[city][pid] as Dictionary
             var dst_rec: Dictionary = stock[nb][pid] as Dictionary
@@ -2312,8 +2314,8 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
             var q_src: float = max(0.0, float(src_rec.get("qty", 0.0)))
             var q_dst: float = max(0.0, float(dst_rec.get("qty", 0.0)))
 
-            # 出発地を枯らしすぎない（targetの80%は残す）
-            var keep_ratio: float = 0.80
+            # 出発地を枯らしすぎない（targetの一定比率は残す）
+            var keep_ratio: float = clamp(logistics_source_keep_ratio, 0.0, 1.0)
             var surplus: float = q_src - t_src * keep_ratio
             if surplus <= 0.0:
                 continue
@@ -2337,14 +2339,34 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
                 continue
 
             var shortage: float = clamp(1.0 - (q_dst / t_dst), 0.0, 1.0)
+            var is_priority: bool = _is_logistics_priority_pid(pid)
+
+            var direct_bid: float = get_bid_price(nb, pid)
+            var relay_hops: int = max(1, logistics_relay_hops)
+            var relay_bid: float = _best_relay_bid(nb, pid, relay_hops, home_prov, lock_prov)
+            var expected_bid: float = max(direct_bid, relay_bid)
+            var unit_gain: float = expected_bid - ask
+
             var profit: float = unit_gain * float(q) - (travel + toll)
             if profit < 0.0:
+                var allow_relief: bool = (
+                    logistics_enable_priority_relief
+                    and is_priority
+                    and shortage >= logistics_priority_relief_min_shortage
+                    and absf(profit) <= logistics_priority_relief_max_loss
+                )
+                if not allow_relief:
+                    continue
+            elif unit_gain <= 0.0 and not is_priority:
                 continue
 
             # 目的：不足（shortage）×搬入量 を最大化（距離は軽くペナルティ）
             var score: float = shortage * float(q) - 0.10 * float(days)
-            if _is_logistics_priority_pid(pid):
+            if is_priority:
                 score *= logistics_priority_score_mult
+            if relay_bid > direct_bid:
+                # 中継先での捌きやすさが高い品目を優先しやすくする
+                score += 0.05 * (relay_bid - direct_bid)
 
             if score > best_score:
                 best_score = score
@@ -2359,6 +2381,36 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
                     "travel": travel,
                     "toll": toll,
                 }
+
+    return best
+
+func _best_relay_bid(origin: String, pid: String, max_hops: int, home_prov: String, lock_prov: bool) -> float:
+    var hops: int = clamp(max_hops, 1, 4)
+    var best: float = get_bid_price(origin, pid)
+    var visited: Dictionary = {origin: true}
+    var frontier: Array = [origin]
+
+    for _depth in range(hops):
+        var next_frontier: Array = []
+        for c_any in frontier:
+            var c: String = String(c_any)
+            if not adj.has(c):
+                continue
+            for nb_any in (adj[c] as Array):
+                var nb: String = String(nb_any)
+                if visited.has(nb):
+                    continue
+                if lock_prov and String(cities.get(nb, {}).get("province", "")) != home_prov:
+                    continue
+
+                visited[nb] = true
+                next_frontier.append(nb)
+                var bid: float = get_bid_price(nb, pid)
+                if bid > best:
+                    best = bid
+        frontier = next_frontier
+        if frontier.is_empty():
+            break
 
     return best
 
