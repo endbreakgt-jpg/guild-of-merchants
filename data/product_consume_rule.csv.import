@@ -6,10 +6,10 @@ uid="uid://bjjpkt2cbmmqt"
 
 [deps]
 
-files=["res://data/product_consume_rule.name.translation", "res://data/product_consume_rule.consume.translation", "res://data/product_consume_rule.period.translation", "res://data/product_consume_rule.note.translation"]
+files=["res://data/product_consume_rule.name.translation", "res://data/product_consume_rule.consume.translation", "res://data/product_consume_rule.period.translation", "res://data/product_consume_rule.base.translation", "res://data/product_consume_rule.note.translation"]
 
 source_file="res://data/product_consume_rule.csv"
-dest_files=["res://data/product_consume_rule.name.translation", "res://data/product_consume_rule.consume.translation", "res://data/product_consume_rule.period.translation", "res://data/product_consume_rule.note.translation"]
+dest_files=["res://data/product_consume_rule.name.translation", "res://data/product_consume_rule.consume.translation", "res://data/product_consume_rule.period.translation", "res://data/product_consume_rule.base.translation", "res://data/product_consume_rule.note.translation"]
 
 [params]
 
