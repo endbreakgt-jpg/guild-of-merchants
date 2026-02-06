@@ -5,6 +5,7 @@
 - guild-of-merchants（Godot 4.3）
 
 前提:
+ゲーム概要は全体仕様（縦スライス） 2025-12-30.txt参照
 - 3プロヴィンス構成。
 - シナリオ上、将来的に一部海路は海賊影響で不安定化予定。
 - 方針は「特産地生産 + 非特産地は輸入/流通」。
@@ -13,12 +14,11 @@
 - `scripts/world.gd`
 - `data/city_stock.csv`
 - `data/water_routes.csv`
+- `data/industries.csv`
 - `data/city_ports.csv`
-- `others/20260206_prodlog-3.txt`（前回比較元）
-- `others/20260207_prodlog4.txt`（最新テスト）
 
 注意:
-- 最新ログ名は `20260207_prodlog4.txt`（ハイフンなし）。
+- 最新ログ名は `prodlog*.txt`。過去2バージョンまで保管
 - ログは `Day121` から `Day362` まで出力されている。
 
 反映済み調整（2026-02-06〜07）:
