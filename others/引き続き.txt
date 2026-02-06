@@ -1,149 +1,110 @@
-新規チャット貼り付け用サマリ
+新規チャット用 引き継ぎサマリ（更新: 2026-02-07）
 
-プロジェクト: guild-of-merchants（Godot）
+プロジェクト:
+- guild-of-merchants（Godot 4.3）
 
-地図前提:
+前提:
+- 3プロヴィンス構成。
+- シナリオ上、将来的に一部海路は海賊影響で不安定化予定。
+- 方針は「特産地生産 + 非特産地は輸入/流通」。
 
-実ゲーム表示は Worldmap.png（map_layer.gd の base_map_path）
+主な対象ファイル:
+- `scripts/world.gd`
+- `data/city_stock.csv`
+- `data/water_routes.csv`
+- `data/city_ports.csv`
+- `others/20260206_prodlog-3.txt`（前回比較元）
+- `others/20260207_prodlog4.txt`（最新テスト）
 
-MAPnew.png は都市ノードとルート確認用のスクショ（ゲーム本体では未使用）
+注意:
+- 最新ログ名は `20260207_prodlog4.txt`（ハイフンなし）。
+- ログは `Day121` から `Day362` まで出力されている。
 
-検証ログ前提:
+反映済み調整（2026-02-06〜07）:
 
-既存ログ 20260206_prodlog.txt は Day121〜Day180（実質60日）
+1) 物流ロジック強化（`scripts/world.gd`）
+- 優先物流品: `PR014/PR015/PR032/PR033/PR034/PR035`
+- 物流NPCの越境搬送を有効化済み。
+- 中継評価を追加（最大2hop先の売値を期待値に反映）。
+  - `logistics_relay_hops = 2`
+  - `_best_relay_bid()` 追加
+- 優先品のみ、深刻不足時に小幅赤字搬送を許可。
+  - `logistics_priority_relief_min_shortage = 0.55`
+  - `logistics_priority_relief_max_loss = 12.0`
+- 出発地保全率を変数化。
+  - `logistics_source_keep_ratio = 0.80`
+- 物流NPC追加:
+  - `NPC07` at `RE0020`（既存）
+  - `NPC08` at `RE0023`（既存）
+  - `NPC09` at `RE0012`（新規）
 
-次の評価は Day300 まで回す（追加120日）方針
+2) 海路カテゴリ拡張（`data/water_routes.csv`）
+- `WR003/WR004/WR005` を `bulk` -> `bulk;luxury` に変更。
+- 南回廊で高級品が海路搬送可能になった。
 
-産地設計の元資料:
-
-産地初期案.txt
-
-方針: 「特産地生産 + 非特産地は輸入/流通」
-
-ここまでの主な反映:
-
-city_stock.csv
-
-産業品/加工品の受け皿行を追加（前回提案ベース）
-
-Node20/Node23 を南方輸入ハブとして反映:
-
-RE0020 と RE0023 に PR014/PR015 の輸入供給 (prod_per_day) を設定
-
-RE0020 と RE0023 に PR032/PR033/PR034/PR035 を追加し輸入供給設定
-
-消費拠点として RE0003/RE0008/RE0011 に PR032-PR035 の受け皿行（prod_per_day=0）を追加
-
-RE0001,PR014 と RE0007,PR015 は国内生産を止めて prod_per_day=0 化
-
-industries.csv
-
-燻製過多を抑制:
-
-RE0005/RE0011/RE0021 の IND_SMOKEHOUSE を 1.0/0.9/1.1 に調整
-
-不足側を補強:
-
-IND_TANNERY_DEER 0.14
-
-IND_TANNERY_COW 0.09
-
-IND_LEATHERWORK 0.14
-
-IND_DYEWORKS 0.05
-
-IND_SMELTER_TIN(RE0015) 0.08
-
-IND_SMELTER_TIN(RE0016) を有効化し 0.06
-
-IND_PEWTER 0.06
-
-IND_POTTERY(RE0008) を有効化し 0.12
-
-city_ports.csv
-
-RE0020 を海路輸入ハブ化:
-
-port_level=3, port_kind=major, traffic_base=0.80
-
-note は south_sea_import_hub
-
-補助ファイル（提案履歴）:
-
-20260206_city_stock_add_rows_proposal_phase1.csv
-
-20260206_city_stock_add_rows_proposal_phase1_notes.md
-
-次チャットで依頼したい内容（推奨）:
-
-Day300 までシミュレーション実行
-Day121-180 vs Day241-300 の比較レポート作成
-Node20/Node23 輸入ハブが機能しているか（価格貼り付き、NPC流通、品目偏り）を評価
-必要なら port_cons_scale や輸入品 prod_per_day を再チューニング
-
-
-以下を反映しました。Node23は「港化せず内陸集散ハブ」方針のままです。
-
-物流NPCの対象に PR014/015/032/033/034/035 を追加し、優先度を上げました。
-world.gd (line 90) world.gd (line 2365) world.gd (line 2371)
-物流NPCだけ州ロックを解除できるようにし、越境搬送を有効化しました。
-world.gd (line 93) world.gd (line 2075)
-ハブ直下の物流担当として RE0020 と RE0023 に物流NPCを追加しました。
-world.gd (line 2042)
-物流判定で「不足/余剰が1未満でも一定閾値を超えたら1個運ぶ」最小ロット処理を入れ、0件化しやすい条件を緩和しました。
-world.gd (line 2327)
-港需要の押し上げを抑えるため port_cons_scale = 0.45 を設定しました。
-world.tscn (line 14)
-Node20の輸入ハブ強度を上げるため traffic_base を 0.80 -> 0.90 に変更しました（Node23は未追加）。
-city_ports.csv (line 7)
-
-
-2026-02-06 追加調整（Day121-360分析を受けた実装）
-
-目的:
-- Day241以降に固定化した「不足高止まり + 一部過剰」の解消
-- Node20/Node23の輸入品を実需側へ押し出す流通改善
-
-反映内容:
-
-scripts/world.gd
-- 物流NPCに中継評価を追加（隣接都市の先、最大2hop先の売り先価格を期待値に反映）
-  - logistics_relay_hops = 2
-  - _best_relay_bid() を追加
-- 優先物流品（PR014/015/032/033/034/035）に限定して、深刻不足時は小幅赤字搬送を許可
-  - logistics_enable_priority_relief = true
-  - logistics_priority_relief_min_shortage = 0.55
-  - logistics_priority_relief_max_loss = 12.0
-- 出発地在庫の保全率を可変化
-  - logistics_source_keep_ratio = 0.80
-- 中継ノード強化として物流NPCを1体追加
-  - NPC09 @ RE0012（role=logistics）
-
-data/water_routes.csv
-- 南回廊の海路カテゴリを bulk 限定から bulk;luxury へ拡張
-  - WR003 (RE0011-RE0017)
-  - WR004 (RE0017-RE0018)
-  - WR005 (RE0018-RE0020)
-
-data/city_stock.csv
+3) 生産量調整（`data/city_stock.csv`）
 - 不足補強:
-  - RE0019,PR010 の prod_per_day: 0.00 -> 0.06
-  - RE0018,PR019 の prod_per_day: 0.00 -> 0.06
+  - `RE0019,PR010`: `0.00 -> 0.06`
+  - `RE0018,PR019`: `0.00 -> 0.06`
 - 過剰抑制:
-  - RE0001,PR001 の prod_per_day: 0.4463 -> 0.32
-  - RE0014,PR001 の prod_per_day: 0.4252 -> 0.30
-  - RE0004,PR022 の prod_per_day: 1.656 -> 1.20
-  - RE0010,PR022 の prod_per_day: 1.4309 -> 1.05
-  - RE0019,PR022 の prod_per_day: 1.092 -> 0.90
+  - `RE0001,PR001`: `0.4463 -> 0.32`
+  - `RE0014,PR001`: `0.4252 -> 0.30`
+  - `RE0004,PR022`: `1.656 -> 1.20`
+  - `RE0010,PR022`: `1.4309 -> 1.05`
+  - `RE0019,PR022`: `1.092 -> 0.90`
 
-検証推奨:
-- まず Day121 から Day240 まで再走（120日）で一次評価
-- 改善が見える場合は Day121 から Day300 まで再走（180日）で収束確認
-- 注視指標:
-  - Node20/Node23 の PR033/PR034 の下限貼り付き解消
-  - RE0003/RE0008/RE0011 の高級品（PR032-PR035）高止まりの緩和
-  - carrying/sold ログで優先物流品の実搬送回数増加
+最新テスト結果（A=20260206_prodlog-3 / B=20260207_prodlog4）:
 
-シナリオ前提メモ:
-- 将来的に一部海路は海賊影響で不安定化予定のため、海路依存一辺倒にならないよう
-  陸路物流（RE0012中継）も同時に強化する方針で実装済み。
+1) 全体の貼り付き率（Day121-360比較）
+- 下限側（ratio <= 0.52）: `A 6.42% -> B 6.34%`
+- 上限側（ratio >= 1.20）: `A 30.19% -> B 30.16%`
+- 全体はほぼ横ばい。
+
+2) 期間別
+- Day241-300: 上限側 `31.84% -> 31.39%`（わずかに改善）
+- Day301-360: 上限側 `31.63% -> 31.70%`（再び横ばい）
+
+3) Node20/Node23周り（Day360）
+- `RE0020` の輸入高級品下限貼り付きは改善:
+  - `PR033: 40.0 -> 66.2`
+  - `PR034: 35.0 -> 76.8`
+  - `PR032: 66.0 -> 72.4`
+  - `PR035: 70.1 -> 112.5`
+- `RE0023` は大きな改善なし（`PR014/015` が依然弱い）。
+
+4) 需要地側（Day360）
+- `RE0008/RE0011` の高級品高止まりは継続。
+- `RE0003` は `PR033` が逆に低下（`91.0 -> 44.8`）し、局所過剰化。
+
+5) 物流実績
+- 優先品の陸路搬送はまだ少ない。
+  - A: `PR033` 搬送3回
+  - B: `PR034` 搬送1回（`RE0020 -> RE0019`）
+  - `PR014/015/032/035` は実搬送ほぼ0
+- 海路は改善:
+  - Bで `香辛料/高級ワイン/絹織物/ガラス器` の `WaterShip` が発生。
+
+総評:
+- 海路拡張は効いた。
+- ただし「ハブ -> 需要地」の最終配送（陸路リレー）が不足。
+- 経済全体の収束改善はまだ弱い。
+
+次チャットの優先タスク:
+1. 陸路リレーをさらに強化
+- 優先品の搬送条件を追加緩和（特に `PR014/015/032/035`）。
+- 需要地側の中継ノード（`RE0011` 近傍）に物流NPC追加も検討。
+
+2. 高級品の偏在を補正
+- `RE0003` の `PR033` 過剰化と `RE0008/RE0011` 高止まりを同時に解く条件調整。
+
+3. 海賊シナリオを見据えた冗長化
+- 海路が不安定でも破綻しないよう、陸路のみで最低限回る設定を維持。
+
+再走推奨:
+- まず `Day121 -> Day300`（180日）
+- 可能なら `Day121 -> Day360`（240日）
+
+次回見る指標:
+- `RE0020/RE0023` の `PR033/PR034/PR035` の安定推移
+- `RE0003/RE0008/RE0011` の高級品貼り付き
+- 優先物流品（`PR014/015/032/033/034/035`）の `carrying/sold` 回数
