@@ -87,6 +87,10 @@ var tutorial_locks: Dictionary = {}
 @export var port_import_only_major: bool = true
 
 @export var port_log: bool = false
+@export var logistics_priority_products: Array[String] = ["PR014", "PR015", "PR032", "PR033", "PR034", "PR035"]
+@export_range(0.0, 1.0, 0.05) var logistics_min_fractional_lot: float = 0.35
+@export_range(1.0, 5.0, 0.1) var logistics_priority_score_mult: float = 1.60
+@export var logistics_unlock_cross_province: bool = true
 
 # --- 噂コスト/真実度（Inspectorで即変更可） ---
 @export var rumor_cost_free: int = 0
@@ -707,7 +711,7 @@ func resolve_daily_with_roll(roll: int) -> void:
         return
     _apply_daily_event(ev)
 
-func resolve_travel_with_roll(roll: int, q: float = -1.0) -> void:
+func resolve_travel_with_roll(roll: int, _q: float = -1.0) -> void:
     if not bool(player.get("enroute", false)):
         return
     var origin := String(player.get("city", ""))
@@ -824,7 +828,7 @@ func generate_rumors(current_city: String, count: int = 3) -> Array[Dictionary]:
             res.append(rumor3)
     return res
 
-func apply_rumor(r: Dictionary, truth_prob: float = 1.0, false_mode: String = "none") -> void:
+func apply_rumor(r: Dictionary, truth_prob: float = 1.0, _false_mode: String = "none") -> void:
     if randf() > clamp(truth_prob, 0.0, 1.0):
         var msgf := String(r.get("flavor_ja", "噂")) + "…は誤報だった。"
         _world_message(msgf)
@@ -863,7 +867,7 @@ func apply_rumor(r: Dictionary, truth_prob: float = 1.0, false_mode: String = "n
             supply_event.emit(cid2, pid2, qty, "rumor", msg2)
             world_updated.emit()
 
-func _format_rumor_price(cid: String, pid: String, mult: float, days: int) -> String:
+func _format_rumor_price(cid: String, pid: String, _mult: float, days: int) -> String:
     var cname: String = String(cities.get(cid, {}).get("name", cid))
     var pname: String = get_product_name(pid)
     return "%sで%sが値上がりしている。（%d日間 価格上昇）" % [cname, pname, days]
@@ -873,7 +877,7 @@ func _format_rumor_stock(cid: String, pid: String, q: int) -> String:
     var pname: String = get_product_name(pid)
     return "%sで%sが多く入荷している。（在庫 +%d）" % [cname, pname, q]
 
-func _format_rumor_trend(cid: String, pid: String, mult: float, days: int) -> String:
+func _format_rumor_trend(cid: String, pid: String, _mult: float, days: int) -> String:
     var cname: String = String(cities.get(cid, {}).get("name", cid))
     var pname: String = get_product_name(pid)
     return "%sで%sが流行している。（%d日間 価格上昇）" % [cname, pname, days]
@@ -2035,6 +2039,8 @@ func init_traders() -> void:
         {"id": "NPC04", "city": "RE0010", "role": "profit"},
         {"id": "NPC05", "city": "RE0016", "role": "logistics"},
         {"id": "NPC06", "city": "RE0017", "role": "profit"},
+        {"id": "NPC07", "city": "RE0020", "role": "logistics"},
+        {"id": "NPC08", "city": "RE0023", "role": "logistics"},
     ]
 
     for s_any in spawns:
@@ -2066,7 +2072,10 @@ func init_traders() -> void:
         # role / province lock
         t["role"] = role
         t["home_province"] = prov
-        t["province_lock"] = true  # 州内物流を基本にする
+        var lock_by_province := true
+        if role == "logistics" and logistics_unlock_cross_province:
+            lock_by_province = false
+        t["province_lock"] = lock_by_province
 
         # traits (kept for noise / thresholds)
         t["greedy"] = float(traits.get("greedy", 0.7))
@@ -2315,7 +2324,10 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
 
             var unit_size: int = int(products[pid].get("size", 1))
             var max_by_cap: int = cap_free / max(1, unit_size)
-            var q: int = int(floor(min(float(max_by_cap), surplus, need)))
+            var flow_cap: float = min(float(max_by_cap), surplus, need)
+            var q: int = int(floor(flow_cap))
+            if q <= 0 and flow_cap >= logistics_min_fractional_lot:
+                q = 1
             if q <= 0:
                 continue
 
@@ -2331,6 +2343,8 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
 
             # 目的：不足（shortage）×搬入量 を最大化（距離は軽くペナルティ）
             var score: float = shortage * float(q) - 0.10 * float(days)
+            if _is_logistics_priority_pid(pid):
+                score *= logistics_priority_score_mult
 
             if score > best_score:
                 best_score = score
@@ -2348,11 +2362,16 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
 
     return best
 
+func _is_logistics_priority_pid(pid: String) -> bool:
+    for p_any in logistics_priority_products:
+        if String(p_any) == pid:
+            return true
+    return false
+
 func _is_logistics_pid(pid: String) -> bool:
-    # 生活物資の枠。まずは「luxury を除外」だけにしておく（運用で拡張しやすい）
     var cat: String = String(product_category.get(pid, "general")).to_lower()
     if cat == "luxury":
-        return false
+        return _is_logistics_priority_pid(pid)
     return true
 
 
@@ -3190,17 +3209,17 @@ var DAYS_PER_YEAR: int = DAYS_PER_MONTH * MONTHS_PER_YEAR
 @export var start_dom:   int = 1          # 初期開始「日」（1..DAYS_PER_MONTH）
 
 func _calc_day_index_for_start(month: int, dom: int) -> int:
-    var m : float = clamp(month, 1, MONTHS_PER_YEAR)
-    var d : float = clamp(dom,   1, DAYS_PER_MONTH)
+    var m: int = clampi(month, 1, MONTHS_PER_YEAR)
+    var d: int = clampi(dom, 1, DAYS_PER_MONTH)
     # 年は常に1年目開始想定：Day0＝1/1
     return (m - 1) * DAYS_PER_MONTH + (d - 1)
 
 # day は従来どおり「通算日」。0スタート想定（Day 0 ＝ 1年1月1日）
 func get_calendar(day_idx: int = -1) -> Dictionary:
-    var d := (day if day_idx < 0 else day_idx)
-    var y := (d / DAYS_PER_YEAR) + 1
-    var m := ((d % DAYS_PER_YEAR) / DAYS_PER_MONTH) + 1
-    var dm := (d % DAYS_PER_MONTH) + 1
+    var d: int = (day if day_idx < 0 else day_idx)
+    var y: int = floori(float(d) / float(DAYS_PER_YEAR)) + 1
+    var m: int = floori(float(d % DAYS_PER_YEAR) / float(DAYS_PER_MONTH)) + 1
+    var dm: int = (d % DAYS_PER_MONTH) + 1
     return {"year": y, "month": m, "day": dm}
 
 func format_date(day_idx: int = -1) -> String:
@@ -3342,7 +3361,7 @@ func _process_auto_sales() -> void:
                 boost *= float((fair_active[city] as Dictionary).get("boost", 1.0))
 
             var base_rate: float = float(stall_base_rate) * (0.3 + shortage) * boost
-            var sell: int = int(clamp(roundf(base_rate * (0.7 + randf() * 0.6)), 0.0, float(q)))
+            var sell: int = clampi(roundi(base_rate * (0.7 + randf() * 0.6)), 0, q)
             var unit_price: float = min(get_ask_price(city, pid), get_bid_price(city, pid) * float(s["price_mult"]))
 
             s["days_left"] = int(s["days_left"]) - 1
@@ -3356,7 +3375,7 @@ func _process_auto_sales() -> void:
             player["cash"] = float(player.get("cash", 0.0)) + (gross - tax - commission - fee)
 
             s["qty"] = q - sell
-            emit_signal("stall_sold", city, pid, sell, unit_price, gross, tax, commission, fee)
+            stall_sold.emit(city, pid, sell, unit_price, gross, tax, commission, fee)
             _log("StallSold: %s %s x%d @%.1f (net %.1f)" % [city, pid, sell, unit_price, gross - tax - commission - fee])
 
         for k in by_pid.keys():
@@ -3721,8 +3740,8 @@ func _apply_save_payload(data: Dictionary) -> void:
 func _pick_daily_event_for_tier(tier: String) -> Dictionary:
     var total: float = 0.0
     for r in _events_daily:
-        var tr: String = String(r.get("tier", "")).to_lower()
-        if tr != tier:
+        var row_tier: String = String(r.get("tier", "")).to_lower()
+        if row_tier != tier:
             continue
         total += float(r.get("weight", 0.0))
     if total <= 0.0:
@@ -3744,8 +3763,8 @@ func _pick_travel_event_for_tier_layers(tier: String, layers: Dictionary) -> Dic
     var total: float = 0.0
     var threshold: float = 0.05
     for r in _events_travel:
-        var tr: String = String(r.get("tier", "")).to_lower()
-        if tr != tier:
+        var row_tier: String = String(r.get("tier", "")).to_lower()
+        if row_tier != tier:
             continue
         var w: float = float(r.get("weight", 0.0))
         if w <= 0.0:
@@ -4591,11 +4610,18 @@ func _contracts_rng(seed_key: String) -> RandomNumberGenerator:
     return rng
 
 func _contracts_city_rank(cid: String) -> int:
-    var rk := 1
+    var rk: int = 1
     if cities.has(cid):
-        var v: Variant = (cities[cid] as Dictionary).get("CityRANK", (cities[cid] as Dictionary).get("rank", 1))
-        rk = int(_num(v))
-    if rk < 1: rk = 1
+        var city_data: Dictionary = cities[cid] as Dictionary
+        var raw_rank: Variant = city_data.get("CityRANK", city_data.get("rank", 1))
+        if raw_rank is int:
+            rk = int(raw_rank)
+        elif raw_rank is float:
+            rk = floori(float(raw_rank))
+        else:
+            rk = String(raw_rank).to_int()
+    if rk < 1:
+        rk = 1
     return rk
 
 func _contracts_offers_count(cid: String) -> int:
@@ -4641,8 +4667,8 @@ func _contracts_make_offer_for_city(cid: String, rng: RandomNumberGenerator) -> 
             if stock.has(dst) and (stock[dst] as Dictionary).has(pid):
                 var rec: Dictionary = stock[dst][pid]
                 var target : float = max(1.0, float(rec.get("target", 1.0)))
-                var qty : float = max(0.0, float(rec.get("qty", 0.0)))
-                s = max(0.0, 1.0 - (qty / target))
+                var stock_qty: float = max(0.0, float(rec.get("qty", 0.0)))
+                s = max(0.0, 1.0 - (stock_qty / target))
         if s > best_score:
             best_score = s
             best_pid = pid
@@ -4653,16 +4679,16 @@ func _contracts_make_offer_for_city(cid: String, rng: RandomNumberGenerator) -> 
     var rarity := _contracts_pick_rarity(rng)
     var size_u := int(products[best_pid].get("size", 1))
     var base_qty := 4 + rng.randi_range(0, 6)         # 4〜10
-    var qty : float = base_qty * max(1, size_u)               # 担ぎ単位に寄せる簡易策
-    if rarity == "uncommon": qty = int(round(float(qty) * 1.25))
-    elif rarity == "rare":   qty = int(round(float(qty) * 1.6))
-    elif rarity == "epic":   qty = int(round(float(qty) * 2.2))
+    var offer_qty: int = base_qty * max(1, size_u)    # 担ぎ単位に寄せる簡易策
+    if rarity == "uncommon": offer_qty = max(1, roundi(float(offer_qty) * 1.25))
+    elif rarity == "rare":   offer_qty = max(1, roundi(float(offer_qty) * 1.6))
+    elif rarity == "epic":   offer_qty = max(1, roundi(float(offer_qty) * 2.2))
 
     var deadline := day + rng.randi_range(contracts_deadline_min, contracts_deadline_max)
 
     # 市場買い取り価格をベースに報酬を算出（目的地の不足を反映）
     var unit_bid := get_bid_price(dst, best_pid)
-    var reward := float(qty) * unit_bid * contracts_reward_k
+    var reward := float(offer_qty) * unit_bid * contracts_reward_k
     if rarity == "uncommon": reward *= 1.2
     elif rarity == "rare":   reward *= 1.5
     elif rarity == "epic":   reward *= 2.0
@@ -4675,7 +4701,7 @@ func _contracts_make_offer_for_city(cid: String, rng: RandomNumberGenerator) -> 
         "from": cid,
         "to": dst,
         "pid": best_pid,
-        "qty": qty,
+        "qty": offer_qty,
         "deadline": deadline,
         "rarity": rarity,
         "reward": reward
@@ -4727,7 +4753,6 @@ func contracts_try_auto_deliver_at(city_id: String) -> void:
         return
     var cargo: Dictionary = player.get("cargo", {}) as Dictionary
     var changed := false
-    var done: Array[int] = []
 
     for i in range(_contracts_active.size()):
         var ct: Dictionary = _contracts_active[i]
@@ -4781,16 +4806,10 @@ func contracts_try_auto_deliver_at(city_id: String) -> void:
         ct["done_day"] = day
         _contracts_active[i] = ct
         changed = true
-        done.append(i)
 
         _world_message("契約達成: %s を %s に %d 個 納品。報酬 %.0f" % [
             get_product_name(pid), get_city_name(city_id), need, reward
         ])
-
-    # 履歴保持（削除せず state のみ変更）
-    for j in range(done.size()-1, -1, -1):
-        var idx := int(done[j])
-        pass
 
     if changed:
         player["cargo"] = cargo
