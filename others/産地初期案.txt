@@ -1,0 +1,58 @@
+city_id,industry_id,name_ja,enabled,level,out_pid,out_per_day,inputs
+# --- 木材系（背景→加工） ---
+Durton,IND_LOGGING,伐採,1,1,PR001,24,
+Node14,IND_LOGGING,伐採,1,1,PR001,12,
+Boroughambe,IND_SAWMILL,製材所,1,1,PR016,6,PR001:8
+Boroughambe,IND_COOPER,桶樽工房,1,1,PR031,2,PR016:4
+
+# --- 穀物系（背景→加工） ---
+Node10,IND_FARM_WHEAT,小麦農園,1,1,PR003,24,
+Node24,IND_FARM_WHEAT,小麦農園,1,1,PR003,12,
+Node10,IND_FARM_BARLEY,大麦農園,1,1,PR022,18,
+Node24,IND_FARM_BARLEY,大麦農園,1,1,PR022,12,
+Node24,IND_FARM_PEAS,豆畑,1,1,PR008,18,
+Node12,IND_BAKERY,パン工房,1,1,PR017,6,PR003:6
+Node09,IND_BREWERY,醸造所,1,1,PR007,4,PR022:6
+
+# --- 魚・塩（背景→加工／生魚は腐敗） ---
+Southwatch,IND_FISHERY_RAW,漁（生魚）,1,1,PR023,28,
+Node17,IND_FISHERY_RAW,漁（生魚）,1,1,PR023,14,
+Node11,IND_FISHERY_RAW,漁（生魚）,1,1,PR023,10,
+Node18,IND_SALTWORKS,製塩,1,1,PR006,18,
+Southwatch,IND_FISHERY_COD,タラ漁,1,1,PR005,6,
+Southwatch,IND_SMOKEHOUSE,燻製工房,1,1,PR024,6,PR023:10;PR006:2
+Node11,IND_SMOKEHOUSE,燻製工房,1,1,PR024,4,PR023:8;PR006:2
+Node21,IND_SMOKEHOUSE,燻製工房,1,1,PR024,8,PR023:14;PR006:3
+
+# --- 畜産・皮革（プレイヤー一次産品→加工） ---
+Highmoor,IND_SHEEP_RANCH,牧羊,1,1,PR002,16,
+Node19,IND_SHEEP_RANCH,牧羊,1,1,PR002,8,
+Highmoor,IND_HUNT_DEERHIDE,狩猟（鹿原皮）,1,1,PR009,6,
+Node19,IND_HUNT_DEERHIDE,狩猟（鹿原皮）,1,1,PR009,10,
+Alderdale,IND_CATTLE_RANCH,牧畜（牛原皮）,1,1,PR010,10,
+Highmoor,IND_DAIRY,チーズ工房,1,1,PR011,3,
+Alderdale,IND_DAIRY,チーズ工房,1,1,PR011,3,
+Node13,IND_TANNERY_DEER,皮なめし工房(鹿),1,1,PR018,3,PR009:3;PR006:1
+Node13,IND_TANNERY_COW,皮なめし工房(牛),1,1,PR018,3,PR010:3;PR006:1
+Node13,IND_LEATHERWORK,革加工工房,1,1,PR029,2,PR018:3
+
+# --- 繊維（一次産品→加工） ---
+Tolkken,IND_FLAX_FARM,麻畑,1,1,PR013,16,
+Node22,IND_FLAX_FARM,麻畑,1,1,PR013,8,
+Wolkess,IND_WEAVER_W,毛織物工房,1,1,PR027,3,PR002:6
+Tolkken,IND_WEAVER_L,麻織物工房,1,1,PR028,3,PR013:6
+
+# --- 染料（ベリー→染料でつなぐ案） ---
+Durton,IND_BERRY_FARM,Bベリー採取,1,1,PR004,12,
+Wolkess,IND_DYEWORKS,染料工房,1,1,PR026,2,PR004:6
+
+# --- 錫（背景→加工→工芸） ---
+Node15,IND_TIN_MINE,錫採掘,1,1,PR019,10,
+Node15,IND_SMELTER_TIN,錫製錬所,1,1,PR020,2,PR019:6
+Node16,IND_SMELTER_TIN,錫製錬所,0,1,PR020,2,PR019:6
+Pilton,IND_PEWTER,錫器工房,1,1,PR021,2,PR020:2
+
+# --- 陶器・石鹸（入力が未定なので空欄運用） ---
+Tolkken,IND_POTTERY,陶工房,1,1,PR030,2,
+Pilton,IND_SOAPWORKS,石鹸工房,1,1,PR012,2,
+
