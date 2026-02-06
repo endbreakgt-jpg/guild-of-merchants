@@ -1,0 +1,17 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://o0nsak0j8f6a"
+
+[deps]
+
+files=["res://others/20260206_city_stock_add_rows_proposal_phase1.product.translation", "res://others/20260206_city_stock_add_rows_proposal_phase1.stock.translation", "res://others/20260206_city_stock_add_rows_proposal_phase1.target.translation", "res://others/20260206_city_stock_add_rows_proposal_phase1.prod.translation"]
+
+source_file="res://others/20260206_city_stock_add_rows_proposal_phase1.csv"
+dest_files=["res://others/20260206_city_stock_add_rows_proposal_phase1.product.translation", "res://others/20260206_city_stock_add_rows_proposal_phase1.stock.translation", "res://others/20260206_city_stock_add_rows_proposal_phase1.target.translation", "res://others/20260206_city_stock_add_rows_proposal_phase1.prod.translation"]
+
+[params]
+
+compress=true
+delimiter=0
