@@ -4424,8 +4424,8 @@ func _compute_watchlist_from_rows(rows: Array, top_n: int=3) -> Dictionary:
     scarcity.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
     surplus.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
 
-    var nscar: float = min(int(top_n), scarcity.size())
-    var nsurp: float = min(int(top_n), surplus.size())
+    var nscar: int = int(min(top_n, scarcity.size()))
+    var nsurp: int = int(min(top_n, surplus.size()))
     return {"scarcity": scarcity.slice(0, nscar), "surplus": surplus.slice(0, nsurp)}
 
 
