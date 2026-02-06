@@ -1,0 +1,82 @@
+新規チャット貼り付け用サマリ
+
+プロジェクト: guild-of-merchants（Godot）
+
+地図前提:
+
+実ゲーム表示は Worldmap.png（map_layer.gd の base_map_path）
+
+MAPnew.png は都市ノードとルート確認用のスクショ（ゲーム本体では未使用）
+
+検証ログ前提:
+
+既存ログ 20260206_prodlog.txt は Day121〜Day180（実質60日）
+
+次の評価は Day300 まで回す（追加120日）方針
+
+産地設計の元資料:
+
+産地初期案.txt
+
+方針: 「特産地生産 + 非特産地は輸入/流通」
+
+ここまでの主な反映:
+
+city_stock.csv
+
+産業品/加工品の受け皿行を追加（前回提案ベース）
+
+Node20/Node23 を南方輸入ハブとして反映:
+
+RE0020 と RE0023 に PR014/PR015 の輸入供給 (prod_per_day) を設定
+
+RE0020 と RE0023 に PR032/PR033/PR034/PR035 を追加し輸入供給設定
+
+消費拠点として RE0003/RE0008/RE0011 に PR032-PR035 の受け皿行（prod_per_day=0）を追加
+
+RE0001,PR014 と RE0007,PR015 は国内生産を止めて prod_per_day=0 化
+
+industries.csv
+
+燻製過多を抑制:
+
+RE0005/RE0011/RE0021 の IND_SMOKEHOUSE を 1.0/0.9/1.1 に調整
+
+不足側を補強:
+
+IND_TANNERY_DEER 0.14
+
+IND_TANNERY_COW 0.09
+
+IND_LEATHERWORK 0.14
+
+IND_DYEWORKS 0.05
+
+IND_SMELTER_TIN(RE0015) 0.08
+
+IND_SMELTER_TIN(RE0016) を有効化し 0.06
+
+IND_PEWTER 0.06
+
+IND_POTTERY(RE0008) を有効化し 0.12
+
+city_ports.csv
+
+RE0020 を海路輸入ハブ化:
+
+port_level=3, port_kind=major, traffic_base=0.80
+
+note は south_sea_import_hub
+
+補助ファイル（提案履歴）:
+
+20260206_city_stock_add_rows_proposal_phase1.csv
+
+20260206_city_stock_add_rows_proposal_phase1_notes.md
+
+次チャットで依頼したい内容（推奨）:
+
+Day300 までシミュレーション実行
+Day121-180 vs Day241-300 の比較レポート作成
+Node20/Node23 輸入ハブが機能しているか（価格貼り付き、NPC流通、品目偏り）を評価
+必要なら port_cons_scale や輸入品 prod_per_day を再チューニング
