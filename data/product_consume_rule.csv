@@ -1,37 +1,37 @@
-product_id,name,consume_model,period_days,note
-PR001,丸太,per_day,,日次消費（cons = base×rank係数）
-PR002,羊毛,per_day,,日次消費（cons = base×rank係数）
-PR003,小麦,per_day,,日次消費（cons = base×rank係数）
-PR004,Bベリー,per_day,,日次消費（cons = base×rank係数）
-PR005,タラ,per_day,,日次消費（cons = base×rank係数）
-PR006,塩,per_day,,日次消費（cons = base×rank係数）
-PR007,エール,per_day,,日次消費（cons = base×rank係数）
-PR008,ひら豆,per_day,,日次消費（cons = base×rank係数）
-PR009,鹿原皮,per_day,,日次消費（cons = base×rank係数）
-PR010,牛原皮,per_day,,日次消費（cons = base×rank係数）
-PR011,チーズ,per_day,,日次消費（cons = base×rank係数）
-PR012,石鹸,per_day,,日次消費（cons = base×rank係数）
-PR013,麻,per_day,,日次消費（cons = base×rank係数）
-PR014,茶,periodic,5.0,5日ごとにまとめて消費（平均は日次と同等）
-PR015,ワイン,periodic,5.0,5日ごとにまとめて消費（平均は日次と同等）
-PR016,板材,per_day,,日次消費（cons = base×rank係数）
-PR017,パン,per_day,,日次消費（cons = base×rank係数）
-PR018,なめし革,per_day,,日次消費（cons = base×rank係数）
-PR019,錫鉱石,per_day,,日次消費（cons = base×rank係数）
-PR020,錫塊,per_day,,日次消費（cons = base×rank係数）
-PR021,錫器,per_day,,日次消費（cons = base×rank係数）
-PR022,大麦,per_day,,日次消費（cons = base×rank係数）
-PR023,生魚,per_day,,日次消費（cons = base×rank係数）
-PR024,燻製魚,per_day,,日次消費（cons = base×rank係数）
-PR025,蜂蜜,per_day,,日次消費（cons = base×rank係数）
-PR026,染料,per_day,,日次消費（cons = base×rank係数）
-PR027,毛織物,per_day,,日次消費（cons = base×rank係数）
-PR028,麻織物,per_day,,日次消費（cons = base×rank係数）
-PR029,革製品,per_day,,日次消費（cons = base×rank係数）
-PR030,陶器,per_day,,日次消費（cons = base×rank係数）
-PR031,樽,per_day,,日次消費（cons = base×rank係数）
-PR032,高級ワイン,periodic,5,5日ごとにまとめて消費（平均は日次と同等）
-PR033,香辛料,periodic,5,5日ごとにまとめて消費（平均は日次と同等）
-PR034,ガラス器,periodic,5,5日ごとにまとめて消費（平均は日次と同等）
-PR035,絹織物,periodic,5,5日ごとにまとめて消費（平均は日次と同等）
-PR036,鉄塊,per_day,,日次消費（cons = base×rank係数）
+product_id,name,consume_model,period_days,base_per_day,note
+PR001,丸太,per_day,,0.05,日次消費（cons = base×rank係数）
+PR002,羊毛,per_day,,0.1,日次消費（cons = base×rank係数）
+PR003,小麦,per_day,,,日次消費（cons = base×rank係数）
+PR004,Bベリー,per_day,,0.003,日次消費（cons = base×rank係数）
+PR005,タラ,per_day,,0.003,日次消費（cons = base×rank係数）
+PR006,塩,per_day,,0.04,日次消費（cons = base×rank係数）
+PR007,エール,per_day,,,日次消費（cons = base×rank係数）
+PR008,ひら豆,per_day,,,日次消費（cons = base×rank係数）
+PR009,鹿原皮,per_day,,0.005,日次消費（cons = base×rank係数）
+PR010,牛原皮,per_day,,0.005,日次消費（cons = base×rank係数）
+PR011,チーズ,per_day,,,日次消費（cons = base×rank係数）
+PR012,石鹸,per_day,,,日次消費（cons = base×rank係数）
+PR013,麻,per_day,,0.1,日次消費（cons = base×rank係数）
+PR014,燭台,per_day,,,日次消費（cons = base×rank係数）
+PR015,鉄釘,per_day,,,日次消費（cons = base×rank係数）
+PR016,板材,per_day,,,日次消費（cons = base×rank係数）
+PR017,パン,per_day,,,日次消費（cons = base×rank係数）
+PR018,なめし革,per_day,,,日次消費（cons = base×rank係数）
+PR019,錫鉱石,per_day,,0.001,日次消費（cons = base×rank係数）
+PR020,錫地金,per_day,,,日次消費（cons = base×rank係数）
+PR021,錫器,per_day,,,日次消費（cons = base×rank係数）
+PR022,大麦,per_day,,,日次消費（cons = base×rank係数）
+PR023,生魚,per_day,,0.08,日次消費（cons = base×rank係数）
+PR024,燻製魚,per_day,,,日次消費（cons = base×rank係数）
+PR025,蜂蜜,per_day,,0.003,日次消費（cons = base×rank係数）
+PR026,染料,per_day,,,日次消費（cons = base×rank係数）
+PR027,毛織物,per_day,,,日次消費（cons = base×rank係数）
+PR028,麻織物,per_day,,,日次消費（cons = base×rank係数）
+PR029,革製品,per_day,,,日次消費（cons = base×rank係数）
+PR030,陶器,per_day,,,日次消費（cons = base×rank係数）
+PR031,桶樽,per_day,,,日次消費（cons = base×rank係数）
+PR032,ワイン,per_day,,,日次消費（cons = base×rank係数）
+PR033,薬草,per_day,,,日次消費（cons = base×rank係数）
+PR034,香辛料,per_day,,,日次消費（cons = base×rank係数）
+PR035,絹布,per_day,,,日次消費（cons = base×rank係数）
+PR036,宝石,per_day,,,日次消費（cons = base×rank係数）
