@@ -1,0 +1,78 @@
+差分（world.gd）※ファイルが巨大なので「関数置き換え＋追記」だけ
+A) 追加するexport（travel_bad_weight_per_* 付近がおすすめ）
+@export_range(0, 50, 1) var travel_roll_shift_max: int = 20
+@export_range(0.0, 1.0, 0.01) var escort_bandit_layer_reduction_per_level: float = 0.15
+
+B) 追加するヘルパー関数（どこでもOKですが、ルート危険度ヘルパー群の近く推奨）
+func _get_current_route_layers(key: String) -> Dictionary:
+    var base_layers: Dictionary = route_hazard_layers.get(key, {})
+    var dyn_layers: Dictionary = _collect_dyn_layers(key)
+    var merged: Dictionary = {}
+    for k in hazard_layer_weights.keys():
+        var v: float = float(base_layers.get(k, 0.0)) + float(dyn_layers.get(k, 0.0))
+        merged[k] = clamp(v, 0.0, 1.0)
+    return merged
+
+func _apply_escort_to_layers(layers: Dictionary, escort_level: int) -> Dictionary:
+    var out: Dictionary = layers.duplicate(true)
+    if escort_level > 0:
+        var b: float = float(out.get("bandit", 0.0))
+        b = max(0.0, b - float(escort_level) * escort_bandit_layer_reduction_per_level)
+        out["bandit"] = b
+    return out
+
+func _hazard_strength_for_travel_dice(layers: Dictionary) -> float:
+    var h: float = 0.0
+    for k in hazard_layer_weights.keys():
+        h = max(h, float(layers.get(k, 0.0)))
+    return clamp(h, 0.0, 1.0)
+
+func _normalize_travel_tier(tier: String) -> String:
+    var t := tier.to_lower()
+    if t == "marvelous" or t == "great":
+        return "good"
+    if t == "critical":
+        return "worst"
+    return t
+
+C) 置き換え：resolve_travel_with_roll()（関数まるごと差し替え）
+func resolve_travel_with_roll(roll: int, q: float = -1.0) -> void:
+    if not bool(player.get("enroute", false)):
+        return
+
+    var origin := String(player.get("city", ""))
+    var dest := String(player.get("dest", ""))
+
+    var escort: int = int(player.get("escort_level", 0))
+    var key := _route_key(origin, dest)
+
+    var layers: Dictionary = _get_current_route_layers(key)
+    layers = _apply_escort_to_layers(layers, escort)
+
+    var hazard_strength: float = _hazard_strength_for_travel_dice(layers)
+    var shift: int = int(round(hazard_strength * float(travel_roll_shift_max)))
+    var eff_roll: int = int(clamp(roll + shift, 1, 100))
+
+    var tier: String = _normalize_travel_tier(_dice_tier_from_roll(eff_roll))
+
+    if log_event_dice_verbose:
+        _dice_debug("TravelRoll: raw=%02d eff=%02d shift=%d hazard=%.2f escort=%d tier=%s" % [roll, eff_roll, shift, hazard_strength, escort, tier])
+
+    if tier == "normal":
+        return
+
+    var ev: Dictionary = _pick_travel_event_for_tier_layers(tier, layers)
+    if ev.is_empty():
+        # 対応tier/レイヤのイベントが無い場合は「何も起きない」扱い
+        return
+
+    _apply_travel_outcome(ev)
+
+D) 置き換え：_apply_travel_outcome() の末尾だけ（ログパネルに乗せる）
+
+この関数の最後のメッセージ部分を、下記に差し替え。
+
+    var msg := String(chosen.get("flavor_ja", ""))
+    if msg != "":
+        push_event(msg)
+        _world_message(msg)

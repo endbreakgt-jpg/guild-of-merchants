@@ -285,6 +285,8 @@ var _emergency_last_day: Dictionary = {}         # city_id -> pid -> int
 @export var travel_bad_weight_per_escort: float = -0.4     # 護衛Lv1で悪イベント重み -40%
 @export var travel_good_weight_per_hazard: float = -0.2    # 危険度で良イベントはやや減
 @export var travel_good_weight_per_escort: float = 0.3     # 護衛で良イベントはやや増
+@export_range(0, 50, 1) var travel_roll_shift_max: int = 20
+@export_range(0.0, 1.0, 0.01) var escort_bandit_layer_reduction_per_level: float = 0.15
 @export var route_hazard_map: Dictionary = {}
 @export var hazard_layer_weights: Dictionary = {"bandit":1.0,"terrain":0.8,"weather":0.8,"water":0.9,"politics":0.7}
 var route_hazard_layers: Dictionary = {}    # key -> {kind:value}
@@ -716,25 +718,36 @@ func resolve_daily_with_roll(roll: int) -> void:
         return
     _apply_daily_event(ev)
 
-func resolve_travel_with_roll(roll: int, _q: float = -1.0) -> void:
+func resolve_travel_with_roll(roll: int, q: float = -1.0) -> void:
     if not bool(player.get("enroute", false)):
         return
+
     var origin := String(player.get("city", ""))
     var dest := String(player.get("dest", ""))
-    var key: String = ""
-    if has_method("_route_key"):
-        key = _route_key(origin, dest)
-    var layers: Dictionary = {}
-    if "route_hazard_layers" in self:
-        layers = route_hazard_layers.get(key, {}) as Dictionary
-    var tier: String = _dice_tier_from_roll(roll)
+
+    var escort: int = int(player.get("escort_level", 0))
+    var key := _route_key(origin, dest)
+
+    var layers: Dictionary = _get_current_route_layers(key)
+    layers = _apply_escort_to_layers(layers, escort)
+
+    var hazard_strength: float = _hazard_strength_for_travel_dice(layers)
+    var shift: int = int(round(hazard_strength * float(travel_roll_shift_max)))
+    var eff_roll: int = int(clamp(roll + shift, 1, 100))
+
+    var tier: String = _normalize_travel_tier(_dice_tier_from_roll(eff_roll))
+
+    if log_event_dice_verbose:
+        _dice_debug("TravelRoll: raw=%02d eff=%02d shift=%d hazard=%.2f escort=%d tier=%s" % [roll, eff_roll, shift, hazard_strength, escort, tier])
+
     if tier == "normal":
         return
+
     var ev: Dictionary = _pick_travel_event_for_tier_layers(tier, layers)
     if ev.is_empty():
-        ev = _pick_travel_event_outcome()
-    if ev.is_empty():
+        # 対応tier/レイヤのイベントが無い場合は「何も起きない」扱い
         return
+
     _apply_travel_outcome(ev)
 
 # ---- Effects / Message helpers ----
@@ -1189,6 +1202,7 @@ func _apply_travel_outcome(chosen: Dictionary) -> void:
         player["cargo"] = cargo
     var msg := String(chosen.get("flavor_ja", ""))
     if msg != "":
+        push_event(msg)
         _world_message(msg)
 func _roll_daily_event() -> void:
     # use_event_dice=OFF のときは日次イベントを発生させない
@@ -3597,6 +3611,37 @@ func _current_hazard_for_key(key: String) -> float:
     for k in hazard_layer_weights.keys():
         merged[k] = clamp(float(base_layers.get(k, 0.0)) + float(dyn_layers.get(k, 0.0)), 0.0, 1.0)
     return _combine_hazard_layers(merged)
+
+func _get_current_route_layers(key: String) -> Dictionary:
+    var base_layers: Dictionary = route_hazard_layers.get(key, {})
+    var dyn_layers: Dictionary = _collect_dyn_layers(key)
+    var merged: Dictionary = {}
+    for k in hazard_layer_weights.keys():
+        var v: float = float(base_layers.get(k, 0.0)) + float(dyn_layers.get(k, 0.0))
+        merged[k] = clamp(v, 0.0, 1.0)
+    return merged
+
+func _apply_escort_to_layers(layers: Dictionary, escort_level: int) -> Dictionary:
+    var out: Dictionary = layers.duplicate(true)
+    if escort_level > 0:
+        var b: float = float(out.get("bandit", 0.0))
+        b = max(0.0, b - float(escort_level) * escort_bandit_layer_reduction_per_level)
+        out["bandit"] = b
+    return out
+
+func _hazard_strength_for_travel_dice(layers: Dictionary) -> float:
+    var h: float = 0.0
+    for k in hazard_layer_weights.keys():
+        h = max(h, float(layers.get(k, 0.0)))
+    return clamp(h, 0.0, 1.0)
+
+func _normalize_travel_tier(tier: String) -> String:
+    var t := tier.to_lower()
+    if t == "marvelous" or t == "great":
+        return "good"
+    if t == "critical":
+        return "worst"
+    return t
 
 func set_route_layer_by_id(route_id: String, kind: String, value: float) -> void:
     var key := _route_key_from_route_id(route_id)
