@@ -1,0 +1,181 @@
+新規チャット用 引き継ぎサマリ（更新: 2026-02-09）
+作業後このファイルに内容を追記修正してください。
+このタスクは Local で実行。Cloudに委譲しないこと。
+
+0) プロジェクト基本情報
+- プロジェクト: `guild-of-merchants`（Godot 4.3）
+- 実行ファイル: `C:\Godot_v4.3-stable_win64.exe\Godot_v4.3-stable_win64.exe`
+- 仕様参照（全体）: `others/01_全体仕様_縦スライス_2025-12-30.txt` 〜 `others/07_イベントダイス統合_2025-12-30.txt`
+- 世界観前提:
+  - 3プロヴィンス構成
+  - 将来的に一部海路は海賊影響で不安定化予定
+  - 方針は「特産地生産 + 非特産地は輸入/流通」
+
+1) 現在の主課題（要約）
+- 海路改善は進んだが、`ハブ -> 需要地` の最終配送（陸路リレー）不足が残る。
+- 高級品の偏在（特に `RE0008/RE0011` 高止まり、`RE0003` 局所過剰）が継続。
+- 値調整だけでは改善に限界があり、`scripts/world.gd` 側の搬送再出荷ロジック改善が本命。
+
+2) 反映済み変更（集約）
+2-1) 物流ロジック（`scripts/world.gd`）
+- 優先物流品: `PR014/PR015/PR032/PR033/PR034/PR035`
+- 越境搬送: 有効化済み
+- 中継売値評価（最大2hop）:
+  - `logistics_relay_hops = 2`
+  - `_best_relay_bid()` 追加済み
+- 優先品の不足救済（小幅赤字容認）:
+  - `logistics_priority_relief_min_shortage = 0.55`
+  - `logistics_priority_relief_max_loss = 12.0`
+- 出発地在庫の保全率:
+  - `logistics_source_keep_ratio = 0.80`
+- 物流NPC:
+  - `NPC07 @ RE0020`
+  - `NPC08 @ RE0023`
+  - `NPC09 @ RE0012`（追加済み）
+
+2-2) データ調整（物流・供給側）
+- `data/water_routes.csv`
+  - `WR003/WR004/WR005` の `allowed`: `bulk` -> `bulk;luxury`
+- `data/city_stock.csv`
+  - 不足補強:
+    - `RE0019,PR010`: `0.00 -> 0.06`
+    - `RE0018,PR019`: `0.00 -> 0.06`
+  - 過剰抑制:
+    - `RE0001,PR001`: `0.4463 -> 0.32`
+    - `RE0014,PR001`: `0.4252 -> 0.30`
+    - `RE0004,PR022`: `1.656 -> 1.20`
+    - `RE0010,PR022`: `1.4309 -> 1.05`
+    - `RE0019,PR022`: `1.092 -> 0.90`
+  - 中継行追加（`prod_per_day=0`）:
+    - `PR014/015/032/035` + `PR033/034`
+    - 対象都市: `RE0024/RE0022/RE0019/RE0016/RE0015/RE0013/RE0012/RE0010/RE0009`
+  - 重複検査: `city_id + product_id` 重複なし確認済み
+- `data/product_consume_rule.csv`
+  - `PR014`: `0.065 -> 0.055`
+  - `PR015`: `0.065 -> 0.055`
+  - `PR032`: `0.050 -> 0.042`
+  - `PR035`: `0.045 -> 0.038`
+  - `PR033`: `0.050 -> 0.048`
+  - `PR034`: `0.050 -> 0.048`
+- `data/industries.csv`
+  - `RE0005,IND_SMOKEHOUSE`: `out 1.0 -> 0.9`, 入力 `PR023 1.60->1.75`, `PR006 0.25->0.30`
+  - `RE0021,IND_SMOKEHOUSE`: `out 1.1 -> 1.0`, 入力 `PR023 1.65->1.75`, `PR006 0.28->0.30`
+  - `RE0011,IND_SMOKEHOUSE`: 入力緩和 `PR023 1.90->1.80`, `PR006 0.35->0.32`
+
+2-3) Travel Dice V2 + Weather（`others/patch.txt` 反映）
+- 追加パラメータ:
+  - `travel_good_width_base=5`
+  - `travel_great_max_roll=2`
+  - `travel_fixed_misc_roll=98`
+  - `travel_fixed_bad_roll=99`
+  - `travel_fixed_worst_roll=100`
+  - `weather_system_enabled=true`
+  - `weather_severity_start=2`
+  - `weather_change_chance=0.45`
+  - `weather_big_change_chance=0.10`
+  - `_weather_severity_today`（state保存対象）
+- 追加関数:
+  - `_tick_weather_daily()`
+  - `_layer_score10()`
+  - `_effective_weather_layer()`
+  - `_travel_good_width()`
+  - `_travel_bad_width_from_layers()`
+  - `_travel_tier_from_roll_and_layers()`
+- 日次進行:
+  - `step_one_day()` で `_effects_tick_down()` 直後に `_tick_weather_daily()`
+- Travel解決:
+  - `resolve_travel_with_roll()` をV2化
+  - `weather = exposure x severity_today`
+  - `misc` layer常時追加
+  - イベント欠落時フォールバック:
+    - `great -> good`
+    - `worst -> bad`
+    - `misc -> bad`
+- 抽選方式:
+  - `_pick_travel_event_for_tier_layers()` を二段抽選（layer重み -> layer内weight）
+  - layer内件数差で重みが歪む問題を抑制
+
+3) 計測サマリ（重要値のみ）
+3-1) A/B（A=20260206_prodlog-3, B=20260207_prodlog4 / Day121-360）
+- `ratio <= 0.52`: `6.42% -> 6.34%`
+- `ratio >= 1.20`: `30.19% -> 30.16%`
+- 海路は改善（`WaterShip`で高級品搬送が発生）
+- 陸路優先品搬送は依然少ない
+
+3-2) 値側AB再調整（同一seed, Day363）
+- Baseline:
+  - `ratio <= 0.52`: `65.33%`
+  - `ratio >= 1.20`: `18.24%`
+- Adjusted:
+  - `ratio <= 0.52`: `64.20%`（改善）
+  - `ratio >= 1.20`: `19.20%`（悪化）
+- 優先品 `depart/sold` は `PR033/PR034` が増加したが、需給の偏在は解け切っていない
+
+3-3) 別比較（Day363）
+- `ratio <= 0.52`: `61.25% -> 64.03%`（悪化）
+- `ratio >= 1.20`: `21.83% -> 18.71%`（改善）
+- `PR014/015/032` は「ゼロ搬送」から脱却
+
+4) 次回優先タスク
+1. `scripts/world.gd` の relay再出荷条件を優先調整（需要地近傍ノード通過性を上げる）
+2. `RE0003` の `PR033` 過剰と `RE0008/RE0011` 高止まりを同時に抑える条件（値側だけで押し切らない）
+3. 海賊シナリオを前提に、陸路のみでも最低限回る冗長性を維持
+4. 検証はまず `Day121 -> Day300`、可能なら `Day360` まで
+
+5) 全体改修（物流・パラメータ以外）向け事前知識
+5-1) 主要アーキテクチャ
+- メインシーン: `scenes/world.tscn`
+  - `World`（`scripts/world.gd`）
+  - `GameHUD`（`ui/game_hud.gd`）
+  - `Dialog`（`ui/Dialog.gd`）
+  - `DialogPlayer`（`ui/dialog_player.gd`）
+  - `Story`（`scripts/story.gd`）
+- `world.tscn` 側の初期値オーバーライドに注意:
+  - `use_event_dice = false`
+  - `weekly_report_on_morning = false`
+  - 各種 `log_* = false`
+  - スクリプトのexport初期値と実行時挙動が一致しない場合はシーン値を先に疑う
+
+5-2) 日次処理とイベントの接続点（副作用が出やすい）
+- `World.step_one_day()`:
+  - day++ -> effect tick -> weather tick -> 週報判定
+  - `use_event_dice=true` の場合は `day_advanced` をemitしてHUD側で可視ダイス解決
+  - `use_event_dice=false` の場合はWorld内で `daily/travel` を即解決して `finalize_day()`
+- そのため、イベント・演出改修時は `World` と `GameHUD` の両方確認が必須
+
+5-3) セーブ互換の基本ルール
+- セーブ生成: `World._make_save_payload()`
+- ロード適用: `World._apply_save_payload()`
+- Worldの永続状態を新規追加したら、以下をセットで実施:
+  1) `state` へ保存追加
+  2) 読込時の復元追加
+  3) 欠損キー時のデフォルト補完（旧セーブ互換）
+
+5-4) UI/会話/ストーリー改修時の注意
+- 会話進行は `Story` -> `DialogPlayer` -> `Dialog` の順で制御
+- `dialogs.csv` のDEV行コマンド（`beat`, `keyitem_grant` など）が進行に影響
+- モーダル入力/停止系変更時は、`Dialog` と `GameHUD` のポップアップ停止制御の干渉を確認
+- `save_load_window.gd` は slot1/slot2想定。slot増減時はUI/summary APIの双方を更新
+
+5-5) CSV駆動改修の注意
+- 主な読込起点は `World.load_data()`
+- 参照CSV:
+  - 経済: `cities/products/routes/route_hazards/city_stock/industries/product_consume_rule`
+  - イベント: `events_daily/events_travel/calendar_events`
+  - 会話・進行: `dialogs/key_items`
+  - 港湾: `city_ports/water_routes/port_categories`
+- CSV列追加/意味変更時は、該当読み込みコードと既存行の欠損耐性を確認すること
+
+6) 検証メモ
+- ログファイル: `others/prodlog*.txt`（過去2版保持）
+- 重点指標:
+  - `RE0020/RE0023` の `PR033/034/035` 推移
+  - `RE0003/RE0008/RE0011` の高級品貼り付き
+  - 優先品 `PR014/015/032/033/034/035` の `depart/sold`
+- エクスポート機能:
+  - `World.export_economy_snapshot_csv()` / `World.export_economy_report_txt()`
+  - 出力先は `user://exports`
+
+7) 補足
+- `others/patch.txt` は提案差分のメモとして保持（反映済み箇所あり）
+- この実行環境では Godot実行バイナリが見つからない場合があるため、headless再走可否は毎回先に確認すること

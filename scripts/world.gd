@@ -289,6 +289,21 @@ var _emergency_last_day: Dictionary = {}         # city_id -> pid -> int
 @export_range(0.0, 1.0, 0.01) var escort_bandit_layer_reduction_per_level: float = 0.15
 @export var route_hazard_map: Dictionary = {}
 @export var hazard_layer_weights: Dictionary = {"bandit":1.0,"terrain":0.8,"weather":0.8,"water":0.9,"politics":0.7}
+
+# --- Travel Dice (d100) ---
+@export_range(0, 20, 1) var travel_good_width_base: int = 5
+@export_range(1, 5, 1) var travel_great_max_roll: int = 2
+@export_range(1, 100, 1) var travel_fixed_misc_roll: int = 98
+@export_range(1, 100, 1) var travel_fixed_bad_roll: int = 99
+@export_range(1, 100, 1) var travel_fixed_worst_roll: int = 100
+
+# --- Weather ---
+@export var weather_system_enabled: bool = true
+@export_range(0, 10, 1) var weather_severity_start: int = 2
+@export_range(0.0, 1.0, 0.01) var weather_change_chance: float = 0.45
+@export_range(0.0, 1.0, 0.01) var weather_big_change_chance: float = 0.10
+var _weather_severity_today: int = 0
+
 var route_hazard_layers: Dictionary = {}    # key -> {kind:value}
 var route_hazard_deltas: Dictionary = {}    # key -> {kind: Array[Dictionary]}
 var route_id_to_key: Dictionary = {}        # "RT01" -> "RE0001-RE0002"
@@ -466,6 +481,7 @@ func step_one_day() -> void:
     # 日付を進め、イベント→（Dice可視化ならHUDへ委譲）→日次処理
     day += 1
     _effects_tick_down()
+    _tick_weather_daily()
     if weekly_report_on_morning and ((day - 1) % max(1, weekly_report_interval_days) == 0):
         _generate_weekly_reports()
     if use_event_dice:
@@ -694,6 +710,70 @@ func _dice_tier_from_roll(roll: int) -> String:
     else:
         return "critical"
 
+func _tick_weather_daily() -> void:
+    if not weather_system_enabled:
+        return
+    if _weather_severity_today <= 0 and day <= 1:
+        _weather_severity_today = clamp(weather_severity_start, 0, 10)
+
+    var delta: int = 0
+    if randf() < weather_change_chance:
+        if randf() < 0.5:
+            delta = 1
+        else:
+            delta = -1
+        if randf() < weather_big_change_chance:
+            delta *= 2
+    _weather_severity_today = clamp(_weather_severity_today + delta, 0, 10)
+
+func _layer_score10(layers: Dictionary, key: String) -> int:
+    return int(round(clamp(float(layers.get(key, 0.0)), 0.0, 1.0) * 10.0))
+
+func _effective_weather_layer(layers: Dictionary) -> float:
+    if not weather_system_enabled:
+        return 0.0
+    var exposure: float = clamp(float(layers.get("weather", 0.0)), 0.0, 1.0)
+    var sev: float = clamp(float(_weather_severity_today) / 10.0, 0.0, 1.0)
+    return exposure * sev
+
+func _travel_good_width() -> int:
+    return clamp(travel_good_width_base, 0, 40)
+
+func _travel_bad_width_from_layers(layers: Dictionary) -> int:
+    var s: int = 0
+    s += _layer_score10(layers, "water")
+    s += _layer_score10(layers, "bandit")
+    s += _layer_score10(layers, "terrain")
+    s += _layer_score10(layers, "weather")
+    return s
+
+func _travel_tier_from_roll_and_layers(roll: int, layers: Dictionary) -> String:
+    var r: int = clamp(roll, 1, 100)
+    var g_width: int = _travel_good_width()
+    var good_max: int = travel_great_max_roll + g_width
+
+    if r <= travel_great_max_roll:
+        return "great"
+    if r <= good_max:
+        return "good"
+    if r == travel_fixed_misc_roll:
+        return "misc"
+    if r == travel_fixed_bad_roll:
+        return "bad"
+    if r == travel_fixed_worst_roll:
+        return "worst"
+
+    var b: int = _travel_bad_width_from_layers(layers)
+    var bad_cap: int = 97 - good_max
+    if bad_cap < 0:
+        bad_cap = 0
+    b = clamp(b, 0, bad_cap)
+
+    var bad_min: int = 98 - b
+    if r >= bad_min and r <= 97:
+        return "bad"
+    return "normal"
+
 
 # ---- Event Dice API (d100 可視化前提) ----
 func begin_roll(kind: String) -> int:
@@ -724,28 +804,30 @@ func resolve_travel_with_roll(roll: int, q: float = -1.0) -> void:
 
     var origin := String(player.get("city", ""))
     var dest := String(player.get("dest", ""))
-
-    var escort: int = int(player.get("escort_level", 0))
     var key := _route_key(origin, dest)
 
     var layers: Dictionary = _get_current_route_layers(key)
-    layers = _apply_escort_to_layers(layers, escort)
-
-    var hazard_strength: float = _hazard_strength_for_travel_dice(layers)
-    var shift: int = int(round(hazard_strength * float(travel_roll_shift_max)))
-    var eff_roll: int = int(clamp(roll + shift, 1, 100))
-
-    var tier: String = _normalize_travel_tier(_dice_tier_from_roll(eff_roll))
+    layers["weather"] = _effective_weather_layer(layers)
+    layers["misc"] = 1.0
+    var tier: String = _travel_tier_from_roll_and_layers(roll, layers)
 
     if log_event_dice_verbose:
-        _dice_debug("TravelRoll: raw=%02d eff=%02d shift=%d hazard=%.2f escort=%d tier=%s" % [roll, eff_roll, shift, hazard_strength, escort, tier])
+        var s: int = _travel_bad_width_from_layers(layers)
+        _dice_debug("TravelDiceV2: roll=%02d tier=%s S=%d weather=%d" % [roll, tier, s, _weather_severity_today])
 
     if tier == "normal":
         return
 
     var ev: Dictionary = _pick_travel_event_for_tier_layers(tier, layers)
     if ev.is_empty():
-        # 対応tier/レイヤのイベントが無い場合は「何も起きない」扱い
+        if tier == "great":
+            ev = _pick_travel_event_for_tier_layers("good", layers)
+        elif tier == "worst":
+            ev = _pick_travel_event_for_tier_layers("bad", layers)
+        elif tier == "misc":
+            ev = _pick_travel_event_for_tier_layers("bad", layers)
+
+    if ev.is_empty():
         return
 
     _apply_travel_outcome(ev)
@@ -3760,6 +3842,7 @@ func _make_save_payload() -> Dictionary:
         "stock": stock,
         "_shortage_ema": _shortage_ema,
         "_effects_active": _effects_active,
+        "_weather_severity_today": _weather_severity_today,
 
         # --- emergency supply ---
         "_emergency_shortage_streak": _emergency_shortage_streak,
@@ -3805,6 +3888,7 @@ func _apply_save_payload(data: Dictionary) -> void:
         stock = state.get("stock") as Dictionary
     if state.has("_shortage_ema"):
         _shortage_ema = state.get("_shortage_ema") as Dictionary
+    _weather_severity_today = int(state.get("_weather_severity_today", _weather_severity_today))
 
     # --- emergency supply ---
     if state.has("_emergency_shortage_streak"):
@@ -3855,35 +3939,62 @@ func _pick_daily_event_for_tier(tier: String) -> Dictionary:
     return {}
 
 func _pick_travel_event_for_tier_layers(tier: String, layers: Dictionary) -> Dictionary:
-    var cand: Array[Dictionary] = []
-    var weights: Array[float] = []
-    var total: float = 0.0
-    var threshold: float = 0.05
-    for r in _events_travel:
+    var pools: Dictionary = {} # layer -> Array[Dictionary]
+    for r_any in _events_travel:
+        var r: Dictionary = r_any
         var row_tier: String = String(r.get("tier", "")).to_lower()
         if row_tier != tier:
             continue
-        var w: float = float(r.get("weight", 0.0))
-        if w <= 0.0:
-            continue
         var layer: String = String(r.get("layer", "")).to_lower()
-        if layer != "":
-            var lv: float = float(layers.get(layer, 0.0))
-            if lv <= threshold:
-                continue
-            w *= lv
-        cand.append(r)
-        weights.append(w)
-        total += w
-    if total <= 0.0:
+        if layer == "":
+            layer = "misc"
+        if not pools.has(layer):
+            pools[layer] = []
+        (pools[layer] as Array).append(r)
+
+    var layer_keys: Array[String] = []
+    var layer_weights: Array[float] = []
+    var total_layer: float = 0.0
+    for lk_any in pools.keys():
+        var lk: String = String(lk_any)
+        var lv: float = float(layers.get(lk, 0.0))
+        if lv <= 0.0:
+            continue
+        layer_keys.append(lk)
+        layer_weights.append(lv)
+        total_layer += lv
+
+    if total_layer <= 0.0:
         return {}
-    var pick := randf() * total
-    var acc := 0.0
-    for i in range(cand.size()):
-        acc += weights[i]
+
+    var pick_layer: float = randf() * total_layer
+    var acc_layer: float = 0.0
+    var chosen_layer: String = layer_keys[0]
+    for i in range(layer_keys.size()):
+        acc_layer += layer_weights[i]
+        if pick_layer <= acc_layer:
+            chosen_layer = layer_keys[i]
+            break
+
+    var arr: Array = pools.get(chosen_layer, [])
+    if arr.size() <= 0:
+        return {}
+
+    var total: float = 0.0
+    for r2_any in arr:
+        total += float((r2_any as Dictionary).get("weight", 0.0))
+
+    if total <= 0.0:
+        return arr[randi() % arr.size()] as Dictionary
+
+    var pick: float = randf() * total
+    var acc: float = 0.0
+    for r3_any in arr:
+        acc += float((r3_any as Dictionary).get("weight", 0.0))
         if pick <= acc:
-            return cand[i]
-    return {}
+            return r3_any as Dictionary
+
+    return arr[arr.size() - 1] as Dictionary
 
 
 # ---- Weekly Report (価格スナップショット) ----
