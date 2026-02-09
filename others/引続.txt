@@ -62,7 +62,7 @@
   - `RE0021,IND_SMOKEHOUSE`: `out 1.1 -> 1.0`, 入力 `PR023 1.65->1.75`, `PR006 0.28->0.30`
   - `RE0011,IND_SMOKEHOUSE`: 入力緩和 `PR023 1.90->1.80`, `PR006 0.35->0.32`
 
-2-3) Travel Dice V2 + Weather（`others/patch.txt` 反映）
+2-3) Travel Dice V2 + Weather（`others/patch.txt` 反映・2026-02-09更新）
 - 追加パラメータ:
   - `travel_good_width_base=5`
   - `travel_great_max_roll=2`
@@ -70,11 +70,16 @@
   - `travel_fixed_bad_roll=99`
   - `travel_fixed_worst_roll=100`
   - `weather_system_enabled=true`
-  - `weather_severity_start=2`
-  - `weather_change_chance=0.45`
-  - `weather_big_change_chance=0.10`
-  - `_weather_severity_today`（state保存対象）
+  - `weather_forecast_days=7`
+  - `weather_storm_chance=0.02`
+  - `WEATHER_SUNNY/CLOUDY/RAIN/STORM`
+  - `_weather_forecast_start_day`
+  - `_weather_forecast`（`{day,state,severity,known}`）
 - 追加関数:
+  - `_weather_init_forecast()` / `_weather_ensure_forecast()`
+  - `_weather_shift_one_day()` / `_weather_append_next_day()`
+  - `get_weather_today()` / `get_weather_forecast()`
+  - `reveal_weather_forecast()` / `override_weather_day_offset()`
   - `_tick_weather_daily()`
   - `_layer_score10()`
   - `_effective_weather_layer()`
@@ -82,15 +87,21 @@
   - `_travel_bad_width_from_layers()`
   - `_travel_tier_from_roll_and_layers()`
 - 日次進行:
+  - `_ready()` の `day` 確定後に `_weather_init_forecast()` を実行
   - `step_one_day()` で `_effects_tick_down()` 直後に `_tick_weather_daily()`
 - Travel解決:
   - `resolve_travel_with_roll()` をV2化
-  - `weather = exposure x severity_today`
+  - `weather = exposure x (get_weather_today().severity / 10)`
   - `misc` layer常時追加
   - イベント欠落時フォールバック:
     - `great -> good`
     - `worst -> bad`
     - `misc -> bad`
+- セーブ互換:
+  - 保存: `_weather = {start_day, forecast}` を `state` に保持
+  - 読込: `_weather` を復元、旧 `_weather_severity_today` セーブは day0 を近似復元
+- 実装修正メモ:
+  - 嵐化抽選は 1回に統一（「雨のうち2%」が二重抽選で増えないよう補正）
 - 抽選方式:
   - `_pick_travel_event_for_tier_layers()` を二段抽選（layer重み -> layer内weight）
   - layer内件数差で重みが歪む問題を抑制
@@ -177,5 +188,5 @@
   - 出力先は `user://exports`
 
 7) 補足
-- `others/patch.txt` は提案差分のメモとして保持（反映済み箇所あり）
+- `others/patch.txt` は提案差分メモとして保持。Weather差分は `scripts/world.gd` へ再反映済み（2026-02-09）
 - この実行環境では Godot実行バイナリが見つからない場合があるため、headless再走可否は毎回先に確認すること

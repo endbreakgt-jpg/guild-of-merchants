@@ -298,11 +298,17 @@ var _emergency_last_day: Dictionary = {}         # city_id -> pid -> int
 @export_range(1, 100, 1) var travel_fixed_worst_roll: int = 100
 
 # --- Weather ---
+const WEATHER_SUNNY: int = 0
+const WEATHER_CLOUDY: int = 1
+const WEATHER_RAIN: int = 2
+const WEATHER_STORM: int = 3
+
 @export var weather_system_enabled: bool = true
-@export_range(0, 10, 1) var weather_severity_start: int = 2
-@export_range(0.0, 1.0, 0.01) var weather_change_chance: float = 0.45
-@export_range(0.0, 1.0, 0.01) var weather_big_change_chance: float = 0.10
-var _weather_severity_today: int = 0
+@export_range(3, 14, 1) var weather_forecast_days: int = 7
+@export_range(0.0, 0.2, 0.001) var weather_storm_chance: float = 0.02  # 雨のうち2%は嵐
+
+var _weather_forecast_start_day: int = 0
+var _weather_forecast: Array[Dictionary] = []  # {day:int, state:int, severity:int, known:bool}
 
 var route_hazard_layers: Dictionary = {}    # key -> {kind:value}
 var route_hazard_deltas: Dictionary = {}    # key -> {kind: Array[Dictionary]}
@@ -451,6 +457,10 @@ func _ready() -> void:
     _paused = true
     _log("World ready. Cities=%d, Products=%d, Routes=%d" % [cities.size(), products.size(), routes.size()])
     day = _calc_day_index_for_start(start_month, start_dom)
+
+    # 天気の先読みは day 確定後に初期化する
+    _weather_init_forecast()
+
     world_updated.emit()
 
 
@@ -710,21 +720,280 @@ func _dice_tier_from_roll(roll: int) -> String:
     else:
         return "critical"
 
+func _weather_state_name_ja(state: int) -> String:
+    match state:
+        WEATHER_SUNNY:
+            return "晴れ"
+        WEATHER_CLOUDY:
+            return "曇り"
+        WEATHER_RAIN:
+            return "雨"
+        WEATHER_STORM:
+            return "嵐"
+        _:
+            return "不明"
+
+func _weather_group_from_month(month: int) -> int:
+    # 0: 3-6 / 1: 7-10 / 2: 11-2
+    var m: int = clampi(month, 1, 12)
+    if m >= 3 and m <= 6:
+        return 0
+    if m >= 7 and m <= 10:
+        return 1
+    return 2
+
+func _weather_roll_severity_for_state(state: int) -> int:
+    match state:
+        WEATHER_SUNNY:
+            return randi_range(0, 2)
+        WEATHER_CLOUDY:
+            return randi_range(3, 5)
+        WEATHER_RAIN:
+            return randi_range(6, 9)
+        WEATHER_STORM:
+            return 10
+        _:
+            return 0
+
+func _weather_next_base_state(from_state: int, month: int) -> int:
+    # STORM は RAIN として扱う
+    var s: int = from_state
+    if s == WEATHER_STORM:
+        s = WEATHER_RAIN
+
+    var g: int = _weather_group_from_month(month)
+    var roll: int = randi_range(1, 100)
+
+    # 係数（ユーザー提示の表を仮採用）
+    if s == WEATHER_SUNNY:
+        var p_rain: int = 0
+        var p_cloud: int = 0
+        if g == 0:
+            p_rain = 10
+            p_cloud = 20
+        elif g == 1:
+            p_rain = 12
+            p_cloud = 22
+        else:
+            p_rain = 15
+            p_cloud = 25
+
+        if roll <= p_rain:
+            return WEATHER_RAIN
+        if roll <= p_rain + p_cloud:
+            return WEATHER_CLOUDY
+        return WEATHER_SUNNY
+
+    if s == WEATHER_CLOUDY:
+        var p_sun: int = 0
+        var p_rain2: int = 0
+        if g == 0:
+            p_sun = 20
+            p_rain2 = 25
+        elif g == 1:
+            p_sun = 22
+            p_rain2 = 30
+        else:
+            p_sun = 25
+            p_rain2 = 35
+
+        if roll <= p_sun:
+            return WEATHER_SUNNY
+        if roll <= p_sun + p_rain2:
+            return WEATHER_RAIN
+        return WEATHER_CLOUDY
+
+    # RAIN
+    var p_sun2: int = 0
+    var p_cloud2: int = 0
+    if g == 0:
+        p_sun2 = 35
+        p_cloud2 = 35
+    elif g == 1:
+        p_sun2 = 30
+        p_cloud2 = 32
+    else:
+        p_sun2 = 25
+        p_cloud2 = 30
+
+    if roll <= p_sun2:
+        return WEATHER_SUNNY
+    if roll <= p_sun2 + p_cloud2:
+        return WEATHER_CLOUDY
+    return WEATHER_RAIN
+
+func _weather_apply_storm_if_needed(state: int) -> int:
+    if state == WEATHER_RAIN and randf() < weather_storm_chance:
+        return WEATHER_STORM
+    return state
+
+func _weather_pick_initial_state(month: int) -> int:
+    # 遷移表から概算した長期比率（目安）
+    # 3-6: 晴46/曇35/雨19
+    # 7-10: 晴43/曇33/雨24
+    # 11-2: 晴38/曇31/雨30
+    var g: int = _weather_group_from_month(month)
+    var w_sun: int = 0
+    var w_cloud: int = 0
+    if g == 0:
+        w_sun = 46
+        w_cloud = 35
+    elif g == 1:
+        w_sun = 43
+        w_cloud = 33
+    else:
+        w_sun = 38
+        w_cloud = 31
+
+    var r: int = randi_range(1, 100)
+    if r <= w_sun:
+        return WEATHER_SUNNY
+    if r <= w_sun + w_cloud:
+        return WEATHER_CLOUDY
+    return _weather_apply_storm_if_needed(WEATHER_RAIN)
+
+func _weather_make_entry(day_idx: int, state: int, known: bool) -> Dictionary:
+    var sev: int = _weather_roll_severity_for_state(state)
+    return {"day": day_idx, "state": state, "severity": sev, "known": known}
+
+func _weather_init_forecast() -> void:
+    if not weather_system_enabled:
+        _weather_forecast_start_day = day
+        _weather_forecast = []
+        return
+
+    _weather_forecast_start_day = day
+    _weather_forecast = []
+
+    var cal0 := get_calendar(day)
+    var st0: int = _weather_pick_initial_state(int(cal0.get("month", 1)))
+    _weather_forecast.append(_weather_make_entry(day, st0, true))
+
+    while _weather_forecast.size() < max(1, weather_forecast_days):
+        var last: Dictionary = _weather_forecast[_weather_forecast.size() - 1]
+        var prev_state: int = int(last.get("state", WEATHER_SUNNY))
+        var next_day: int = int(last.get("day", day)) + 1
+        var cal := get_calendar(next_day)
+        var next_state: int = _weather_next_base_state(prev_state, int(cal.get("month", 1)))
+        next_state = _weather_apply_storm_if_needed(next_state)
+        _weather_forecast.append(_weather_make_entry(next_day, next_state, false))
+
+func _weather_ensure_forecast() -> void:
+    if not weather_system_enabled:
+        return
+
+    if _weather_forecast.is_empty():
+        _weather_init_forecast()
+        return
+
+    # 何らかのズレがあれば作り直す（セーブ互換やday飛び対策）
+    if int(_weather_forecast[0].get("day", day)) != _weather_forecast_start_day:
+        _weather_forecast_start_day = int(_weather_forecast[0].get("day", day))
+
+    if day < _weather_forecast_start_day:
+        _weather_init_forecast()
+        return
+
+    # dayまで進める（通常は1日ずつだが、ロードやワープ対策）
+    while _weather_forecast_start_day < day:
+        _weather_shift_one_day()
+
+    # 先読みが足りなければ補充
+    while _weather_forecast.size() < max(1, weather_forecast_days):
+        _weather_append_next_day()
+
+func _weather_shift_one_day() -> void:
+    if _weather_forecast.is_empty():
+        _weather_forecast_start_day = day
+        return
+    _weather_forecast.pop_front()
+    _weather_forecast_start_day += 1
+    _weather_append_next_day()
+
+func _weather_append_next_day() -> void:
+    if _weather_forecast.is_empty():
+        _weather_forecast.append(_weather_make_entry(_weather_forecast_start_day, WEATHER_SUNNY, true))
+        return
+    var last: Dictionary = _weather_forecast[_weather_forecast.size() - 1]
+    var prev_state: int = int(last.get("state", WEATHER_SUNNY))
+    var next_day: int = int(last.get("day", _weather_forecast_start_day)) + 1
+    var cal := get_calendar(next_day)
+    var next_state: int = _weather_next_base_state(prev_state, int(cal.get("month", 1)))
+    next_state = _weather_apply_storm_if_needed(next_state)
+    _weather_forecast.append(_weather_make_entry(next_day, next_state, false))
+
+func get_weather_today() -> Dictionary:
+    _weather_ensure_forecast()
+    if _weather_forecast.is_empty():
+        return {"day": day, "state": WEATHER_SUNNY, "severity": 0, "known": true, "name_ja": "晴れ"}
+    var e: Dictionary = (_weather_forecast[0] as Dictionary).duplicate(true)
+    var s: int = int(e.get("state", WEATHER_SUNNY))
+    e["name_ja"] = _weather_state_name_ja(s)
+    return e
+
+func get_weather_forecast(max_days: int = 7, only_known: bool = false) -> Array[Dictionary]:
+    _weather_ensure_forecast()
+    var out: Array[Dictionary] = []
+    var n: int = min(max(1, max_days), _weather_forecast.size())
+    for i in range(n):
+        var e: Dictionary = (_weather_forecast[i] as Dictionary).duplicate(true)
+        if only_known and not bool(e.get("known", false)):
+            continue
+        e["name_ja"] = _weather_state_name_ja(int(e.get("state", WEATHER_SUNNY)))
+        out.append(e)
+    return out
+
+func reveal_weather_forecast(days_ahead: int) -> void:
+    _weather_ensure_forecast()
+    var n: int = min(_weather_forecast.size(), max(1, days_ahead + 1))
+    for i in range(n):
+        var e: Dictionary = _weather_forecast[i]
+        e["known"] = true
+        _weather_forecast[i] = e
+
+func _weather_recompute_from_index(idx: int) -> void:
+    # idx の日（idx自身）は保持し、以降を再抽選する
+    if idx < 0:
+        idx = 0
+    if idx >= _weather_forecast.size():
+        return
+
+    for i in range(idx + 1, _weather_forecast.size()):
+        var prev: Dictionary = _weather_forecast[i - 1]
+        var prev_state: int = int(prev.get("state", WEATHER_SUNNY))
+        var d: int = int(_weather_forecast_start_day) + i
+        var cal := get_calendar(d)
+        var next_state: int = _weather_next_base_state(prev_state, int(cal.get("month", 1)))
+        next_state = _weather_apply_storm_if_needed(next_state)
+
+        var known: bool = bool((_weather_forecast[i] as Dictionary).get("known", false))
+        _weather_forecast[i] = _weather_make_entry(d, next_state, known)
+
+func override_weather_day_offset(day_offset: int, state: int, severity: int = -1, known: bool = true, recompute_future: bool = true) -> void:
+    _weather_ensure_forecast()
+    if day_offset < 0:
+        day_offset = 0
+
+    # 先読み範囲外なら伸ばす（最低限、指定日まで）
+    while _weather_forecast.size() <= day_offset:
+        _weather_append_next_day()
+
+    var d: int = _weather_forecast_start_day + day_offset
+    var st: int = clampi(state, WEATHER_SUNNY, WEATHER_STORM)
+    var sev: int = severity
+    if sev < 0:
+        sev = _weather_roll_severity_for_state(st)
+    sev = clampi(sev, 0, 10)
+
+    _weather_forecast[day_offset] = {"day": d, "state": st, "severity": sev, "known": known}
+
+    if recompute_future:
+        _weather_recompute_from_index(day_offset)
+
 func _tick_weather_daily() -> void:
     if not weather_system_enabled:
         return
-    if _weather_severity_today <= 0 and day <= 1:
-        _weather_severity_today = clamp(weather_severity_start, 0, 10)
-
-    var delta: int = 0
-    if randf() < weather_change_chance:
-        if randf() < 0.5:
-            delta = 1
-        else:
-            delta = -1
-        if randf() < weather_big_change_chance:
-            delta *= 2
-    _weather_severity_today = clamp(_weather_severity_today + delta, 0, 10)
+    _weather_ensure_forecast()
 
 func _layer_score10(layers: Dictionary, key: String) -> int:
     return int(round(clamp(float(layers.get(key, 0.0)), 0.0, 1.0) * 10.0))
@@ -733,7 +1002,9 @@ func _effective_weather_layer(layers: Dictionary) -> float:
     if not weather_system_enabled:
         return 0.0
     var exposure: float = clamp(float(layers.get("weather", 0.0)), 0.0, 1.0)
-    var sev: float = clamp(float(_weather_severity_today) / 10.0, 0.0, 1.0)
+    var wt := get_weather_today()
+    var sev_i: int = int(wt.get("severity", 0))
+    var sev: float = clamp(float(sev_i) / 10.0, 0.0, 1.0)
     return exposure * sev
 
 func _travel_good_width() -> int:
@@ -813,7 +1084,10 @@ func resolve_travel_with_roll(roll: int, q: float = -1.0) -> void:
 
     if log_event_dice_verbose:
         var s: int = _travel_bad_width_from_layers(layers)
-        _dice_debug("TravelDiceV2: roll=%02d tier=%s S=%d weather=%d" % [roll, tier, s, _weather_severity_today])
+        var wt := get_weather_today()
+        _dice_debug("TravelDiceV2: roll=%02d tier=%s S=%d weather=%s(%d)" % [
+            roll, tier, s, String(wt.get("name_ja","?")), int(wt.get("severity",0))
+        ])
 
     if tier == "normal":
         return
@@ -3842,7 +4116,12 @@ func _make_save_payload() -> Dictionary:
         "stock": stock,
         "_shortage_ema": _shortage_ema,
         "_effects_active": _effects_active,
-        "_weather_severity_today": _weather_severity_today,
+
+        # 天候（先読み）
+        "_weather": {
+            "start_day": _weather_forecast_start_day,
+            "forecast": _weather_forecast
+        },
 
         # --- emergency supply ---
         "_emergency_shortage_streak": _emergency_shortage_streak,
@@ -3888,7 +4167,30 @@ func _apply_save_payload(data: Dictionary) -> void:
         stock = state.get("stock") as Dictionary
     if state.has("_shortage_ema"):
         _shortage_ema = state.get("_shortage_ema") as Dictionary
-    _weather_severity_today = int(state.get("_weather_severity_today", _weather_severity_today))
+    var legacy_weather_sev: int = -1
+    if state.has("_weather_severity_today"):
+        legacy_weather_sev = int(state.get("_weather_severity_today", -1))
+
+    # 天候（互換）
+    _weather_forecast_start_day = day
+    _weather_forecast = []
+    if state.has("_weather"):
+        var w: Dictionary = state.get("_weather") as Dictionary
+        _weather_forecast_start_day = int(w.get("start_day", day))
+        _weather_forecast = (w.get("forecast", []) as Array)
+    _weather_ensure_forecast()
+
+    # 旧セーブ（_weather_severity_todayのみ）を軽く救済
+    if not state.has("_weather") and legacy_weather_sev >= 0:
+        var legacy_sev: int = clampi(legacy_weather_sev, 0, 10)
+        var legacy_state: int = WEATHER_SUNNY
+        if legacy_sev >= 10:
+            legacy_state = WEATHER_STORM
+        elif legacy_sev >= 6:
+            legacy_state = WEATHER_RAIN
+        elif legacy_sev >= 3:
+            legacy_state = WEATHER_CLOUDY
+        override_weather_day_offset(0, legacy_state, legacy_sev, true, true)
 
     # --- emergency supply ---
     if state.has("_emergency_shortage_streak"):
