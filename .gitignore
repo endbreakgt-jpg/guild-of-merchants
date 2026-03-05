@@ -1,16 +1,84 @@
-# Godot 4 caches
+# ============================
+# Guild of Merchants (.gitignore)
+# Godot 4.x + Windows + VS Code
+# ============================
+
+# ----------------------------
+# Godot (keep *.import / *.uid in repo)
+# ----------------------------
+# Godot 4 editor cache (rebuildable)
 .godot/
-.import/
 
-# Exported builds / caches
+# Godot temporary files
+*.tmp
+
+# Auto-generated translations (if you import from CSV)
+*.translation
+
+# If you ever use C# / Mono (safe to keep even if unused)
+.mono/
+data_*/
+mono_crash.*.json
+
+# ----------------------------
+# Export / build artifacts
+# ----------------------------
+# Keep exports outside the repo, or under these ignored folders
 export/
+exports/
+build/
+dist/
+release/
+bin/
+out/
 
-# OS / IDE
-.DS_Store
-Thumbs.db
+# If export outputs leak outside those folders
+*.pck
+*.exe
+*.x86_64
+*.app
+*.dmg
+*.apk
+*.aab
+*.zip
+
+# Export credentials should never be committed
+export_credentials.cfg
+
+# ----------------------------
+# IDE / editor (VS Code only)
+# ----------------------------
+# VS Code workspace settings are usually personal; ignore by default
 .vscode/
+
+# If you want to SHARE only recommended VS Code files, use this instead:
+# .vscode/*
+# !.vscode/extensions.json
+# !.vscode/settings.json
+# !.vscode/tasks.json
+# !.vscode/launch.json
+
+# Visual Studio (not used, but can accidentally appear)
+.vs/
+*.sln
+*.csproj
+*.user
+*.suo
+
+# JetBrains
 .idea/
 
-# Python helpers
+# ----------------------------
+# OS / misc
+# ----------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# ----------------------------
+# Python helpers (if any)
+# ----------------------------
 __pycache__/
 *.pyc
+.pytest_cache/
