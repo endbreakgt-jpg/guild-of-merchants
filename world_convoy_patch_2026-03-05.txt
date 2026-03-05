@@ -1,0 +1,192 @@
+# world_convoy_patch_2026-03-05.txt
+# 対象: res://scripts/world.gd
+# 目的: convoy_condition（車両/家畜のコンディション）を実装。
+#       移動1日ごとに低下し、低下に応じて事故・遅延が増える方向へ寄せる（まずは遅延トラブル）。
+# 注意: world.gd は 1000行超のため「完成ファイル」は出しません。差分はコピペで適用できる形にしています。
+
+# ============================================================
+# 1) 追記：Inspector設定（convoy_condition）
+# ============================================================
+# world.gd 内で「Travel Dice」周辺の export 群の近くに追記してください。
+# 目安: `@export_range(0.0, 1.0, 0.01) var escort_bandit_layer_reduction_per_level` の直後あたり。
+
+@export var convoy_condition_enabled: bool = true
+@export_range(1, 100, 1) var convoy_condition_max: int = 100
+
+# 減少: wear = base + ceil(terrain10*k) + ceil(water10*k) + ceil(weather10*k)
+@export_range(0, 10, 1) var convoy_wear_base: int = 1
+@export_range(0.0, 2.0, 0.05) var convoy_wear_k_terrain: float = 0.60
+@export_range(0.0, 2.0, 0.05) var convoy_wear_k_water: float = 0.20
+@export_range(0.0, 2.0, 0.05) var convoy_wear_k_weather: float = 0.30
+
+# 低コンディション時の「遅延トラブル」発生（壊れて詰み、は避ける：時間ロス）
+@export var convoy_delay_enabled: bool = true
+@export_range(0.0, 0.25, 0.001) var convoy_delay_prob_40_69: float = 0.015
+@export_range(0.0, 0.25, 0.001) var convoy_delay_prob_20_39: float = 0.040
+@export_range(0.0, 0.25, 0.001) var convoy_delay_prob_0_19: float = 0.080
+
+@export_range(0, 3, 1) var convoy_delay_days_40_69: int = 1
+@export_range(0, 3, 1) var convoy_delay_days_20_39: int = 1
+@export_range(0, 5, 1) var convoy_delay_days_0_19: int = 2
+
+# ============================================================
+# 2) 追記：convoy_condition のヘルパー群（新規関数）
+# ============================================================
+# どこでも良いですが、目安として `func get_day_progress()` の後ろあたりに貼ると探しやすいです。
+
+func _ensure_player_convoy_state() -> void:
+  # 既存セーブ互換・初期化漏れ対策
+  if not player.has("convoy_condition"):
+    player["convoy_condition"] = convoy_condition_max
+  if not player.has("convoy_upgrade"):
+    player["convoy_upgrade"] = 0
+
+func get_convoy_condition() -> int:
+  _ensure_player_convoy_state()
+  return int(player.get("convoy_condition", convoy_condition_max))
+
+func get_convoy_upgrade_level() -> int:
+  _ensure_player_convoy_state()
+  return int(player.get("convoy_upgrade", 0))
+
+func set_convoy_upgrade_level(level: int) -> void:
+  _ensure_player_convoy_state()
+  player["convoy_upgrade"] = clampi(level, 0, 10)
+  world_updated.emit()
+
+func repair_convoy(amount: int) -> void:
+  _ensure_player_convoy_state()
+  var cur: int = get_convoy_condition()
+  player["convoy_condition"] = clampi(cur + amount, 0, convoy_condition_max)
+  world_updated.emit()
+
+func _convoy_condition_tier(cond: int) -> int:
+  # 70〜100: 0(良好) / 40〜69: 1(摩耗) / 20〜39: 2(不調) / 0〜19: 3(危険)
+  if cond >= 70:
+    return 0
+  if cond >= 40:
+    return 1
+  if cond >= 20:
+    return 2
+  return 3
+
+func _player_current_route_key_for_hazard() -> String:
+  # なるべく既存のプレイヤー移動データ構造に追随する
+  if player.has("route_key"):
+    return String(player.get("route_key", ""))
+
+  # route_id -> key 変換（World側に route_id_to_key がある前提）
+  if player.has("route_id"):
+    var rid: String = String(player.get("route_id", ""))
+    if route_id_to_key.has(rid):
+      return String(route_id_to_key[rid])
+
+  # multi-hop: route_keys + route_i
+  if player.has("route_keys") and player.has("route_i"):
+    var arr_any = player.get("route_keys", [])
+    var idx: int = int(player.get("route_i", 0))
+    if arr_any is Array and idx >= 0 and idx < (arr_any as Array).size():
+      return String((arr_any as Array)[idx])
+
+  # from/to 直指定（念のため複数候補）
+  var fkeys := ["from", "city_from", "src", "src_city", "city_src"]
+  var tkeys := ["to", "city_to", "dst", "dst_city", "city_dst"]
+  for fk in fkeys:
+    if player.has(fk):
+      for tk in tkeys:
+        if player.has(tk):
+          return "%s-%s" % [String(player.get(fk, "")), String(player.get(tk, ""))]
+
+  return ""
+
+func _convoy_route_layer10(kind: String) -> int:
+  var key: String = _player_current_route_key_for_hazard()
+  if key == "":
+    return 0
+  var layers: Dictionary = route_hazard_layers.get(key, {}) as Dictionary
+  var v: float = float(layers.get(kind, 0.0))
+  return clampi(int(round(v * 10.0)), 0, 10)
+
+func _convoy_weather10_exposure() -> int:
+  # 実効weather = exposure × (severity/10) → 0..10化
+  var exposure10: int = _convoy_route_layer10("weather")
+  if exposure10 <= 0:
+    return 0
+
+  var wt: Dictionary = get_weather_today()
+  var sev: int = clampi(int(wt.get("severity", 0)), 0, 10)
+
+  var eff: float = (float(exposure10) / 10.0) * float(sev)
+  return clampi(int(round(eff)), 0, 10)
+
+func _convoy_delay_prob(cond: int) -> float:
+  var tier: int = _convoy_condition_tier(cond)
+  if tier == 0:
+    return 0.0
+  if tier == 1:
+    return convoy_delay_prob_40_69
+  if tier == 2:
+    return convoy_delay_prob_20_39
+  return convoy_delay_prob_0_19
+
+func _convoy_delay_days(cond: int) -> int:
+  var tier: int = _convoy_condition_tier(cond)
+  if tier == 0:
+    return 0
+  if tier == 1:
+    return convoy_delay_days_40_69
+  if tier == 2:
+    return convoy_delay_days_20_39
+  return convoy_delay_days_0_19
+
+func _tick_player_convoy_condition_on_travel_day() -> void:
+  # travel 1日ごとの劣化＆低コンディション時の遅延トラブル
+  if not convoy_condition_enabled:
+    return
+  if not bool(player.get("enroute", false)):
+    return
+
+  _ensure_player_convoy_state()
+
+  var terrain10: int = _convoy_route_layer10("terrain")
+  var water10: int = _convoy_route_layer10("water")
+  var weather10: int = _convoy_weather10_exposure()
+
+  var upgrade: int = get_convoy_upgrade_level()
+  # upgradeが増えるほど劣化が抑えられる（0=等倍, 1=0.85倍, 2=0.72倍...）
+  var mult: float = pow(0.85, float(upgrade))
+
+  var wear: float = float(convoy_wear_base)
+  wear += ceil(float(terrain10) * convoy_wear_k_terrain)
+  wear += ceil(float(water10) * convoy_wear_k_water)
+  wear += ceil(float(weather10) * convoy_wear_k_weather)
+  wear *= mult
+
+  var dec: int = max(1, int(round(wear)))
+  var cur: int = get_convoy_condition()
+  var next: int = clampi(cur - dec, 0, convoy_condition_max)
+  player["convoy_condition"] = next
+
+  # 遅延トラブル
+  if convoy_delay_enabled:
+    var p: float = _convoy_delay_prob(next)
+    if p > 0.0 and randf() < p:
+      var delay: int = _convoy_delay_days(next)
+      if delay > 0:
+        var ad: int = int(player.get("arrival_day", day))
+        # 既に到着条件を満たしている日（ad<=day）に延長を入れると理不尽なので、到着直前はメッセージだけにする
+        if ad <= day:
+          _world_message("到着直前に荷車が軋んだが、なんとか持ちこたえた。")
+        else:
+          player["arrival_day"] = ad + delay
+          _world_message("荷車の整備に手間取り、到着が%d日遅れた。" % delay)
+
+# ============================================================
+# 3) 変更：finalize_day() に「移動中なら convoy_condition を進める」を挿入
+# ============================================================
+# world.gd の finalize_day() 末尾の、プレイヤー到着判定の直前に挿入してください。
+# 目印（この行の直前に入れる）:
+#   if bool(player.get("enroute", false)) and int(player.get("arrival_day", 0)) <= day:
+
+  # --- Convoy condition (travel wear) ---
+  _tick_player_convoy_condition_on_travel_day()

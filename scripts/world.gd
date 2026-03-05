@@ -287,6 +287,19 @@ var _emergency_last_day: Dictionary = {}         # city_id -> pid -> int
 @export var travel_good_weight_per_escort: float = 0.3     # 護衛で良イベントはやや増
 @export_range(0, 50, 1) var travel_roll_shift_max: int = 20
 @export_range(0.0, 1.0, 0.01) var escort_bandit_layer_reduction_per_level: float = 0.15
+@export var convoy_condition_enabled: bool = true
+@export_range(1, 100, 1) var convoy_condition_max: int = 100
+@export_range(0, 10, 1) var convoy_wear_base: int = 1
+@export_range(0.0, 2.0, 0.05) var convoy_wear_k_terrain: float = 0.60
+@export_range(0.0, 2.0, 0.05) var convoy_wear_k_water: float = 0.20
+@export_range(0.0, 2.0, 0.05) var convoy_wear_k_weather: float = 0.30
+@export var convoy_delay_enabled: bool = true
+@export_range(0.0, 0.25, 0.001) var convoy_delay_prob_40_69: float = 0.015
+@export_range(0.0, 0.25, 0.001) var convoy_delay_prob_20_39: float = 0.040
+@export_range(0.0, 0.25, 0.001) var convoy_delay_prob_0_19: float = 0.080
+@export_range(0, 3, 1) var convoy_delay_days_40_69: int = 1
+@export_range(0, 3, 1) var convoy_delay_days_20_39: int = 1
+@export_range(0, 5, 1) var convoy_delay_days_0_19: int = 2
 @export var route_hazard_map: Dictionary = {}
 @export var hazard_layer_weights: Dictionary = {"bandit":1.0,"terrain":0.8,"weather":0.8,"water":0.9,"politics":0.7}
 
@@ -589,6 +602,7 @@ func finalize_day() -> void:
                 var plan: Dictionary = _best_trade_from(city_id3, t)
                 _plan_and_depart(t, plan)
 
+    _tick_player_convoy_condition_on_travel_day()
     if bool(player.get("enroute", false)) and int(player.get("arrival_day", 0)) <= day:
         _player_arrive()
 
@@ -701,6 +715,140 @@ func get_day_progress() -> float:
     var wt: float = _timer.wait_time
     var prog: float = 1.0 - (tl / wt)
     return clamp(prog, 0.0, 1.0)
+
+func _ensure_player_convoy_state() -> void:
+    if not player.has("convoy_condition"):
+        player["convoy_condition"] = convoy_condition_max
+    if not player.has("convoy_upgrade"):
+        player["convoy_upgrade"] = 0
+
+func get_convoy_condition() -> int:
+    _ensure_player_convoy_state()
+    return int(player.get("convoy_condition", convoy_condition_max))
+
+func get_convoy_upgrade_level() -> int:
+    _ensure_player_convoy_state()
+    return int(player.get("convoy_upgrade", 0))
+
+func set_convoy_upgrade_level(level: int) -> void:
+    _ensure_player_convoy_state()
+    player["convoy_upgrade"] = clampi(level, 0, 10)
+    world_updated.emit()
+
+func repair_convoy(amount: int) -> void:
+    _ensure_player_convoy_state()
+    var cur: int = get_convoy_condition()
+    player["convoy_condition"] = clampi(cur + amount, 0, convoy_condition_max)
+    world_updated.emit()
+
+func _convoy_condition_tier(cond: int) -> int:
+    if cond >= 70:
+        return 0
+    if cond >= 40:
+        return 1
+    if cond >= 20:
+        return 2
+    return 3
+
+func _player_current_route_key_for_hazard() -> String:
+    if player.has("route_key"):
+        return String(player.get("route_key", ""))
+
+    if player.has("route_id"):
+        var rid: String = String(player.get("route_id", ""))
+        if route_id_to_key.has(rid):
+            return String(route_id_to_key[rid])
+
+    if player.has("route_keys") and player.has("route_i"):
+        var arr_any = player.get("route_keys", [])
+        var idx: int = int(player.get("route_i", 0))
+        if arr_any is Array and idx >= 0 and idx < (arr_any as Array).size():
+            return String((arr_any as Array)[idx])
+
+    var fkeys := ["from", "city_from", "src", "src_city", "city_src"]
+    var tkeys := ["to", "city_to", "dst", "dst_city", "city_dst"]
+    for fk in fkeys:
+        if player.has(fk):
+            for tk in tkeys:
+                if player.has(tk):
+                    return "%s-%s" % [String(player.get(fk, "")), String(player.get(tk, ""))]
+    return ""
+
+func _convoy_route_layer10(kind: String) -> int:
+    var key: String = _player_current_route_key_for_hazard()
+    if key == "":
+        return 0
+    var layers: Dictionary = route_hazard_layers.get(key, {}) as Dictionary
+    var v: float = float(layers.get(kind, 0.0))
+    return clampi(int(round(v * 10.0)), 0, 10)
+
+func _convoy_weather10_exposure() -> int:
+    var exposure10: int = _convoy_route_layer10("weather")
+    if exposure10 <= 0:
+        return 0
+
+    var wt: Dictionary = get_weather_today()
+    var sev: int = clampi(int(wt.get("severity", 0)), 0, 10)
+    var eff: float = (float(exposure10) / 10.0) * float(sev)
+    return clampi(int(round(eff)), 0, 10)
+
+func _convoy_delay_prob(cond: int) -> float:
+    var tier: int = _convoy_condition_tier(cond)
+    if tier == 0:
+        return 0.0
+    if tier == 1:
+        return convoy_delay_prob_40_69
+    if tier == 2:
+        return convoy_delay_prob_20_39
+    return convoy_delay_prob_0_19
+
+func _convoy_delay_days(cond: int) -> int:
+    var tier: int = _convoy_condition_tier(cond)
+    if tier == 0:
+        return 0
+    if tier == 1:
+        return convoy_delay_days_40_69
+    if tier == 2:
+        return convoy_delay_days_20_39
+    return convoy_delay_days_0_19
+
+func _tick_player_convoy_condition_on_travel_day() -> void:
+    if not convoy_condition_enabled:
+        return
+    if not bool(player.get("enroute", false)):
+        return
+
+    _ensure_player_convoy_state()
+
+    var terrain10: int = _convoy_route_layer10("terrain")
+    var water10: int = _convoy_route_layer10("water")
+    var weather10: int = _convoy_weather10_exposure()
+
+    var upgrade: int = get_convoy_upgrade_level()
+    var mult: float = pow(0.85, float(upgrade))
+
+    var wear: float = float(convoy_wear_base)
+    wear += ceil(float(terrain10) * convoy_wear_k_terrain)
+    wear += ceil(float(water10) * convoy_wear_k_water)
+    wear += ceil(float(weather10) * convoy_wear_k_weather)
+    wear *= mult
+
+    var dec: int = max(1, int(round(wear)))
+    var cur: int = get_convoy_condition()
+    var next: int = clampi(cur - dec, 0, convoy_condition_max)
+    player["convoy_condition"] = next
+
+    if convoy_delay_enabled:
+        var p: float = _convoy_delay_prob(next)
+        if p > 0.0 and randf() < p:
+            var delay: int = _convoy_delay_days(next)
+            if delay > 0:
+                var ad: int = int(player.get("arrival_day", day))
+                if ad <= day:
+                    _world_message("到着直前に荷車が軋んだが、なんとか持ちこたえた。")
+                else:
+                    player["arrival_day"] = ad + delay
+                    _world_message("荷車の整備に手間取り、到着が%d日遅れた。" % delay)
 
 func _dice_tier_from_roll(roll: int) -> String:
     # 1..100 を tier にマップ
