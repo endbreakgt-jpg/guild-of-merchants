@@ -772,6 +772,11 @@ func _player_current_route_key_for_hazard() -> String:
             for tk in tkeys:
                 if player.has(tk):
                     return "%s-%s" % [String(player.get(fk, "")), String(player.get(tk, ""))]
+
+    var c := String(player.get("city", ""))
+    var d := String(player.get("dest", ""))
+    if c != "" and d != "":
+        return _route_key(c, d)
     return ""
 
 func _convoy_route_layer10(kind: String) -> int:
@@ -849,6 +854,30 @@ func _tick_player_convoy_condition_on_travel_day() -> void:
                 else:
                     player["arrival_day"] = ad + delay
                     _world_message("荷車の整備に手間取り、到着が%d日遅れた。" % delay)
+
+func _apply_convoy_condition_to_layers(layers: Dictionary) -> Dictionary:
+    if not convoy_condition_enabled:
+        return layers
+
+    _ensure_player_convoy_state()
+    var cond: int = get_convoy_condition()
+    var tier: int = _convoy_condition_tier(cond)
+
+    var add: float = 0.0
+    if tier == 1:
+        add = 0.10
+    elif tier == 2:
+        add = 0.20
+    elif tier == 3:
+        add = 0.30
+
+    if add <= 0.0:
+        return layers
+
+    var out: Dictionary = layers.duplicate(true)
+    for k in ["terrain", "water", "weather"]:
+        out[k] = clamp(float(out.get(k, 0.0)) + add, 0.0, 1.0)
+    return out
 
 func _dice_tier_from_roll(roll: int) -> String:
     # 1..100 を tier にマップ
@@ -1227,14 +1256,22 @@ func resolve_travel_with_roll(roll: int, q: float = -1.0) -> void:
 
     var layers: Dictionary = _get_current_route_layers(key)
     layers["weather"] = _effective_weather_layer(layers)
-    layers["misc"] = 1.0
+
+    var escort_level: int = int(player.get("escort_level", 0))
+    layers = _apply_escort_to_layers(layers, escort_level)
+    layers = _apply_convoy_condition_to_layers(layers)
+
+    var hazard_strength: float = _hazard_strength_for_travel_dice(layers)
+    layers["misc"] = clamp(0.15 + (1.0 - hazard_strength) * 0.25, 0.15, 0.40)
+
     var tier: String = _travel_tier_from_roll_and_layers(roll, layers)
 
     if log_event_dice_verbose:
         var s: int = _travel_bad_width_from_layers(layers)
         var wt := get_weather_today()
-        _dice_debug("TravelDiceV2: roll=%02d tier=%s S=%d weather=%s(%d)" % [
-            roll, tier, s, String(wt.get("name_ja","?")), int(wt.get("severity",0))
+        _dice_debug("TravelDiceV2: roll=%02d tier=%s S=%d weather=%s(%d) escort=%d convoy=%d" % [
+            roll, tier, s, String(wt.get("name_ja","?")), int(wt.get("severity",0)),
+            escort_level, get_convoy_condition()
         ])
 
     if tier == "normal":

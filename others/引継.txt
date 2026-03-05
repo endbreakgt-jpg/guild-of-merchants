@@ -1,21 +1,19 @@
 新規チャット用 引き継ぎサマリ（更新: 2026-03-05）
-作業後必要に応じてこのファイルに内容を追記修正してください。
-このタスクは Local で実行。Cloudに委譲しないこと。
+作業後、必要に応じてこのファイルに追記・修正してください。
+このタスクは Local で実行（Cloud に委譲しない）。
 
 0) プロジェクト基本情報
 - プロジェクト: `guild-of-merchants`（Godot 4.3）
 - 実行ファイル: `C:\Godot_v4.3-stable_win64.exe\Godot_v4.3-stable_win64.exe`
 
 1) 進行手順
--ユーザーが提示したテキストファイルを確認し、内容に問題がなければ
-対象ファイルに変更を実施。
--具体的な変更指示がない場合、必要な変更内容について仕様を確認した後に
-変更作業を実施する。
+- ユーザーが提示したテキストファイル（パッチ）を確認し、内容に問題がなければ対象ファイルに変更を実施する。
+- 具体的な変更指示がない場合は、必要な仕様確認を行った後に変更作業を実施する。
 
 2) 2026-03-05 追加実装（convoy_condition）
 - 対象ファイル: `scripts/world.gd`
 - 追加内容:
-  - Inspector向け `convoy_condition` 設定値を追加（劣化係数・遅延確率/日数）
+  - Inspector 向け `convoy_condition` 設定値を追加（劣化係数・遅延確率/日数）
   - `convoy_condition` 状態管理関数を追加
     - `_ensure_player_convoy_state`
     - `get_convoy_condition`
@@ -24,8 +22,19 @@
     - `repair_convoy`
   - 日次劣化/遅延処理を追加
     - `_tick_player_convoy_condition_on_travel_day`
-  - `finalize_day()` に日次劣化呼び出しを追加
-    - プレイヤー到着判定の直前で実行
+  - `finalize_day()` に日次劣化呼び出しを追加（プレイヤー到着判定の直前で実行）
 - 補足:
-  - 既存セーブ互換として、`player["convoy_condition"]` / `player["convoy_upgrade"]` を欠損時に自動初期化
-  - この環境では `godot` コマンド未検出のため、CLI構文チェックは未実施
+  - 既存セーブ互換として `player["convoy_condition"]` / `player["convoy_upgrade"]` を欠損時に自動初期化する
+  - この環境では `godot` コマンド未検出のため、CLI 構文チェックは未実施
+
+route key 推定の保険を追加（city/dest から推定）: world.gd:779
+convoy_condition を TravelDiceV2 の layer に反映するヘルパーを追加: world.gd:858
+resolve_travel_with_roll を差し替え
+escort を bandit layer に適用
+convoy を terrain/water/weather に適用
+misc を固定 1.0 から危険度連動に変更
+verboseログに escort/convoy を追加
+変更箇所: world.gd:1249, world.gd:1265, world.gd:1272
+検証:
+
+Godot --headless --path . --check-only を実行し、終了コード 0（エラーなし）でした。
