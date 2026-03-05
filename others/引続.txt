@@ -1,7 +1,0 @@
-新規チャット用 引き継ぎサマリ（更新: 2026-03-05）
-作業後必要に応じてこのファイルに内容を追記修正してください。
-このタスクは Local で実行。Cloudに委譲しないこと。
-
-0) プロジェクト基本情報
-- プロジェクト: `guild-of-merchants`（Godot 4.3）
-- 実行ファイル: `C:\Godot_v4.3-stable_win64.exe\Godot_v4.3-stable_win64.exe`
