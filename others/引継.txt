@@ -1,4 +1,4 @@
-新規チャット用 引き継ぎサマリ（更新: 2026-03-05）
+新規チャット用 引き継ぎサマリ（更新: 2026-03-06）
 作業後、必要に応じてこのファイルに追記・修正してください。
 このタスクは Local で実行（Cloud に委譲しない）。
 
@@ -39,3 +39,18 @@ verboseログに escort/convoy を追加
 検証:
 
 Godot --headless --path . --check-only を実行し、終了コード 0（エラーなし）でした。
+
+3) 2026-03-06 追加実装（ui_city_action_bar_patch_2026-03-06）
+- 対象ファイル:
+  - `ui/game_hud.gd`
+  - `ui/menu_panel.gd`
+- 反映内容:
+  - 都市UIの主ボタン群を `GameHUD` 側 `CityActionBar` として動的生成
+  - `CityActionBar` の各ボタン押下で、`MenuPanel` の既存 `_on_*` を呼び出す方式で機能を再利用
+  - `MenuPanel` 側の `Row` / `Row2` は `visible = false` 化して二重導線を回避
+- パッチとの差分（実装上の調整）:
+  - 既存 `CityModeUI` 用に `city_trade_btn` などの変数が使用済みのため、`CityActionBar` 側は `city_action_*` 命名で追加（変数衝突回避）
+  - `CityModeUI` ノード自体は削除せず保持し、配置済みボタン群（`Center/Grid`）のみ `_hide_legacy_city_mode_buttons()` で非表示化
+  - `_get_menu_panel_for_city_actions()` は毎回強制 `visible = false` にせず、既存の初期非表示運用を維持（副作用回避）
+- 検証:
+  - `Godot --headless --path . --check-only` 実行済み、終了コード 0（エラーなし）
