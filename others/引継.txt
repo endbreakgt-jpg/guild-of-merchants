@@ -1,61 +1,12 @@
-新規チャット用 引き継ぎサマリ（更新: 2026-03-06）
-作業後、必要に応じてこのファイルに追記・修正してください。
+新規チャット用 引継サマリ（更新: 2026-03-06）
+作業後、必要に応じてこのファイルを上書き更新してください。
 このタスクは Local で実行（Cloud に委譲しない）。
 
 0) プロジェクト基本情報
-- プロジェクト: `guild-of-merchants`（Godot 4.3）
-- 実行ファイル: `C:\Godot_v4.3-stable_win64.exe\Godot_v4.3-stable_win64.exe`
+- プロジェクト: guild-of-merchants（Godot 4.3）
+- 実行ファイル: C:\Godot_v4.3-stable_win64.exe\Godot_v4.3-stable_win64.exe
 
-1) 進行手順
-- ユーザーが提示したテキストファイル（パッチ）を確認し、内容に問題がなければ対象ファイルに変更を実施する。
-- 具体的な変更指示がない場合は、必要な仕様確認を行った後に変更作業を実施する。
-- 作業実施後、引継事項があれば当ファイルに追記・修正を行う。
-
-2) 2026-03-05 追加実装（convoy_condition）
-- 対象ファイル: `scripts/world.gd`
-- 追加内容:
-  - Inspector 向け `convoy_condition` 設定値を追加（劣化係数・遅延確率/日数）
-  - `convoy_condition` 状態管理関数を追加
-    - `_ensure_player_convoy_state`
-    - `get_convoy_condition`
-    - `get_convoy_upgrade_level`
-    - `set_convoy_upgrade_level`
-    - `repair_convoy`
-  - 日次劣化/遅延処理を追加
-    - `_tick_player_convoy_condition_on_travel_day`
-  - `finalize_day()` に日次劣化呼び出しを追加（プレイヤー到着判定の直前で実行）
-- 補足:
-  - 既存セーブ互換として `player["convoy_condition"]` / `player["convoy_upgrade"]` を欠損時に自動初期化する
-  - この環境では `godot` コマンド未検出のため、CLI 構文チェックは未実施
-
-route key 推定の保険を追加（city/dest から推定）: world.gd:779
-convoy_condition を TravelDiceV2 の layer に反映するヘルパーを追加: world.gd:858
-resolve_travel_with_roll を差し替え
-escort を bandit layer に適用
-convoy を terrain/water/weather に適用
-misc を固定 1.0 から危険度連動に変更
-verboseログに escort/convoy を追加
-変更箇所: world.gd:1249, world.gd:1265, world.gd:1272
-検証:
-
-Godot --headless --path . --check-only を実行し、終了コード 0（エラーなし）でした。
-
-3) 2026-03-06 追加実装（ui_city_action_bar_patch_2026-03-06）
-- 対象ファイル:
-  - `ui/game_hud.gd`
-  - `ui/menu_panel.gd`
-- 反映内容:
-  - 都市UIの主ボタン群を `GameHUD` 側 `CityActionBar` として動的生成
-  - `CityActionBar` の各ボタン押下で、`MenuPanel` の既存 `_on_*` を呼び出す方式で機能を再利用
-  - `MenuPanel` 側の `Row` / `Row2` は `visible = false` 化して二重導線を回避
-- パッチとの差分（実装上の調整）:
-  - 既存 `CityModeUI` 用に `city_trade_btn` などの変数が使用済みのため、`CityActionBar` 側は `city_action_*` 命名で追加（変数衝突回避）
-  - `CityModeUI` ノード自体は削除せず保持し、配置済みボタン群（`Center/Grid`）のみ `_hide_legacy_city_mode_buttons()` で非表示化
-  - `_get_menu_panel_for_city_actions()` は毎回強制 `visible = false` にせず、既存の初期非表示運用を維持（副作用回避）
-- 検証:
-  - `Godot --headless --path . --check-only` 実行済み、終了コード 0（エラーなし）
-
-4) 現時点の確定方針（2026-03-06 時点）
+1) 現在の確定方針
 - convoy_condition は事故系リスク用の仕組みとして扱う
   - 主に terrain / water / weather に影響
 - escort は盗賊対策用の仕組みとして扱う
@@ -64,20 +15,103 @@ Godot --headless --path . --check-only を実行し、終了コード 0（エラ
   - route_hazards 側の危険度ベース調整が先
 - 次の主作業は escort の仮実装とする
 
-5) UI運用方針
-- 都市UIの主ボタン群は game_hud.gd 側に置く
-- TopBar の既存導線は残す
-- CityActionBar は不足分の都市操作を置く
-- menu_panel.gd は主に既存処理の再利用先として残す
+2) 現在の実装状態
+A. world.gd
+- convoy_condition 導入済み
+  - 0〜100
+  - 移動中に毎日減少
+  - 低コンディション時は遅延トラブルあり
+- convoy_condition を TravelDiceV2 に反映済み
+  - convoy は terrain / water / weather に効く
+  - escort は bandit に効く
+- misc は固定値ではなく危険度連動に変更済み
+- route key 推定の保険を追加済み
+
+B. UI
+- HUD に整備度表示あり
+- 都市UIに整備ボタンあり
+- 都市UIの主ボタン群は game_hud.gd 側に寄せた
+- TopBar の既存 Menu / Map / Trade は残す
+- CityActionBar には不足分だけ置く
+- menu_panel.gd は既存処理の再利用先として残す
 - MenuPanel 側の Row / Row2 は二重導線回避のため非表示運用
 
-6) 次チャット開始時の着手候補
-- escort 仮実装の最小仕様決め
+C. 動作確認済み
+- 移動で整備度が減少
+- 整備で整備度が回復
+- エラーなし
+
+3) convoy_condition の現仕様
+- 最大値: 100
+- 閾値:
+  - 70〜100: 良好
+  - 40〜69: 摩耗
+  - 20〜39: 不調
+  - 0〜19: 危険
+- 設計意図:
+  - 一気に移動してもよい
+  - ただし整備不足だと事故系リスクが上がる
+  - 道中破損で詰むのではなく、遅延・出費・事故率上昇で表現する
+- 世界観メモ:
+  - 修理道具や予備パーツは常備している前提
+  - 完全破損で進行不能にはしない
+
+4) 次タスク
+- escort 仮実装の最小仕様を決める
   - escort_level 型で行くか
-  - 候補提示型まで入れるか
-- escort の効果範囲整理
+  - 候補提示型まで先に入れるか
+- escort の効果整理
   - bandit layer 軽減
   - banditイベント被害軽減を入れるか
 - 雇用単位と費用整理
   - 旅ごと雇用
   - 出発地で雇って到着時解除
+  - 日数比例にするか
+- UI導線
+  - 移動前に選ぶ
+  - おすすめボタンを置くか
+
+5) 数値調整の扱い
+- まだ route_hazards 側の危険度ベースが固まっていない
+- よって以下は後回し
+  - convoy_condition の減少量
+  - 整備回復量
+  - 整備コスト
+  - 低コンディション時のペナルティ量
+
+6) 実装運用メモ
+- world.gd は長いので完成ファイルではなく関数差分またはパッチ形式を優先
+- Godot 4.3 / GDScript 前提
+- 三項演算子 ? は避ける
+- インデントはスペースで統一
+- ユーザーは VS Code で差分更新する運用
+
+7) 引継資料の圧縮ルール（運用案）
+- 引継.txt は「現在有効な情報だけ」を残す
+- 完了済みで今後参照頻度の低い実装ログは削る
+- 詳細な作業履歴が必要なら別ファイルへ退避する
+  - 例: others/archive/引継_2026-03.txt
+- 追記方式ではなく、節ごと上書き更新を基本にする
+- 目安:
+  - 150行を超えたら圧縮
+  - 直近3テーマ以外の完了ログは1〜2行に要約
+- 毎回残すのは以下だけ
+  - 現在の確定方針
+  - 現在の実装状態
+  - 次タスク
+  - 実装運用メモ
+
+8) 圧縮時の判断基準
+- 残す:
+  - 今後の設計判断に影響する前提
+  - まだ未完了の作業
+  - 実装の責務分担
+- 削る / 別ファイルへ送る:
+  - 完了済みで再利用しにくい逐次ログ
+  - 一度だけ使った検証メモ
+  - 過去の試行錯誤の細部
+
+9) 今回の一言メモ
+- convoy_condition は「導入・表示・回復・リスク反映」まで通った
+- 今は数値を詰めるより、システムの骨組みを広げる段階
+- 次は escort に戻ってよい
