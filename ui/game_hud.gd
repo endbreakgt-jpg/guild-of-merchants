@@ -55,6 +55,7 @@ var _wr_sections_cache: Dictionary = {}  # {basis:String, rise:String, fall:Stri
 
 # --- Header extras ---
 var cargo_label: Label = null
+var convoy_label: Label = null
 var header_settings_btn: Button = null
 
 # --- City mode UI ---
@@ -446,6 +447,9 @@ func _refresh() -> void:
 
     # ★ 追加: 積載表示
     _update_cargo_label()
+
+    # ★ 追加: 整備度（convoy_condition）表示
+    _update_convoy_label()
 
     # ★ 追加: チュートリアルロック反映（中央ボタン列）
     _apply_tutorial_city_button_states()
@@ -2802,6 +2806,17 @@ func _ensure_header_extras() -> void:
         if is_instance_valid(cash_label) and cash_label.get_parent() == topbar:
             topbar.move_child(cargo_label, cash_label.get_index() + 1)
 
+    convoy_label = topbar.get_node_or_null("ConvoyLabel") as Label
+    if convoy_label == null:
+        convoy_label = Label.new()
+        convoy_label.name = "ConvoyLabel"
+        convoy_label.text = "整備度: 100(良好)"
+        convoy_label.custom_minimum_size = Vector2(170, 0)
+        convoy_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        topbar.add_child(convoy_label)
+        if is_instance_valid(cargo_label) and cargo_label.get_parent() == topbar:
+            topbar.move_child(convoy_label, cargo_label.get_index() + 1)
+
     header_settings_btn = topbar.get_node_or_null("SettingsBtn") as Button
     if header_settings_btn == null:
         header_settings_btn = Button.new()
@@ -2827,6 +2842,47 @@ func _update_cargo_label() -> void:
     var cap := int(world.player.get("cap", 0))
 
     cargo_label.text = "積載量: %d/%d" % [used, cap]
+
+
+func _update_convoy_label() -> void:
+    if convoy_label == null or world == null:
+        return
+
+    var enabled := true
+    if world.get("convoy_condition_enabled") != null:
+        enabled = bool(world.get("convoy_condition_enabled"))
+    convoy_label.visible = enabled
+    if not enabled:
+        return
+
+    var cond: int = 100
+    if world.has_method("get_convoy_condition"):
+        cond = int(world.call("get_convoy_condition"))
+    else:
+        cond = int(world.player.get("convoy_condition", 100))
+
+    var tier: int = 0
+    if world.has_method("_convoy_condition_tier"):
+        tier = int(world.call("_convoy_condition_tier", cond))
+    else:
+        if cond >= 70:
+            tier = 0
+        elif cond >= 40:
+            tier = 1
+        elif cond >= 20:
+            tier = 2
+        else:
+            tier = 3
+
+    var tier_name := "良好"
+    if tier == 1:
+        tier_name = "摩耗"
+    elif tier == 2:
+        tier_name = "不調"
+    elif tier == 3:
+        tier_name = "危険"
+
+    convoy_label.text = "整備度: %d(%s)" % [cond, tier_name]
 
 
 # --- City mode center buttons ---

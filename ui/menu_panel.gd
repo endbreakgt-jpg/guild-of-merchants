@@ -18,6 +18,7 @@ var move_btn: Button
 
 var info_btn: Button
 var trust_btn: Button
+var maint_btn: Button
 
 # 情報（噂）ウィンドウ
 var rumor_win: Window = null
@@ -174,6 +175,17 @@ func _build_content_area(parent: VBoxContainer) -> void:
     info_btn = _ensure_button(row, "InfoBtn", "情報")
     inv_btn = _ensure_button(row, "InvBtn", "Inv")
     trust_btn = _ensure_button(row, "TrustBtn", "信用") 
+
+    # --- Maintenance (convoy) ---
+    var row2 := vb.get_node_or_null("Row2") as HBoxContainer
+    if row2 == null:
+        row2 = HBoxContainer.new()
+        row2.name = "Row2"
+        row2.alignment = BoxContainer.ALIGNMENT_CENTER
+        vb.add_child(row2)
+
+    maint_btn = _ensure_button(row2, "MaintBtn", "整備(+1 Day)")
+
     # --- Info Area ---
     var sep := vb.get_node_or_null("HSeparator") as HSeparator
     if sep == null:
@@ -330,6 +342,8 @@ func _connect_signals() -> void:
         step_turn_btn.pressed.connect(_on_step_turn)
     if move_btn and not move_btn.pressed.is_connected(Callable(self, "_on_move")):
         move_btn.pressed.connect(_on_move)
+    if maint_btn and not maint_btn.pressed.is_connected(Callable(self, "_on_maint")):
+        maint_btn.pressed.connect(_on_maint)
     if inv_btn and not inv_btn.pressed.is_connected(Callable(self, "_on_inv")):
         inv_btn.pressed.connect(_on_inv)
 
@@ -437,6 +451,52 @@ func _on_step() -> void:
         return
     if not _tutorial_guard(World.TUT_LOCK_STEP, "チュートリアル中は時間を進められません。"):
         return
+    if world.is_paused():
+        world.step_one_day()
+    else:
+        world.pause()
+        world.step_one_day()
+
+func _on_maint() -> void:
+    if world == null:
+        return
+    if not _tutorial_guard(World.TUT_LOCK_STEP, "チュートリアル中は時間を進められません。"):
+        return
+
+    if bool(world.player.get("enroute", false)):
+        _show_info("移動中は整備できません。到着後に実行してください。")
+        return
+
+    if world.get("convoy_condition_enabled") != null and not bool(world.get("convoy_condition_enabled")):
+        _show_info("このセーブでは convoy_condition が無効です。")
+        return
+
+    var cond: int = 100
+    if world.has_method("get_convoy_condition"):
+        cond = int(world.call("get_convoy_condition"))
+    else:
+        cond = int(world.player.get("convoy_condition", 100))
+
+    # 1日整備（最小実装）
+    var restore: int = 25
+    var cost: float = 0.5 + float(max(0, 100 - cond)) * 0.02  # だいたい 0.5〜2.5
+    cost = snapped(cost, 0.1)
+
+    var cash: float = float(world.player.get("cash", 0.0))
+    if cash < cost:
+        _show_info("所持金が足りません（必要: %.1f / 所持: %.1f）。" % [cost, cash])
+        return
+
+    world.player["cash"] = cash - cost
+    if world.has_method("repair_convoy"):
+        world.call("repair_convoy", restore)
+    else:
+        world.player["convoy_condition"] = clampi(cond + restore, 0, 100)
+
+    if world.has_method("_world_message"):
+        world.call("_world_message", "整備を行った（-%.1f cash / 整備度 +%d）。" % [cost, restore])
+
+    # 整備は1日分の滞在として扱う（経済・天候などが進む）
     if world.is_paused():
         world.step_one_day()
     else:

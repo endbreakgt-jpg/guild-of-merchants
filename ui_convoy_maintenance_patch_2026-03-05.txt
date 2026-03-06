@@ -1,0 +1,330 @@
+# ui_convoy_maintenance_patch_2026-03-05.txt
+# 目的:
+# - HUDヘッダーに「整備度（convoy_condition）」表示を追加（シーン編集なし、動的生成）
+# - 都市滞在中に「整備(+1 Day)」ボタンを追加（最小実装：1日・小額コスト・整備度+25）
+#
+# 対象ファイル:
+# - res://ui/game_hud.gd
+# - res://ui/menu_panel.gd
+#
+# 方針:
+# - 既存UIツリー編集を避け、スクリプト側で Label/Button を動的生成
+# - world.gd は既に convoy_condition 実装済みなので、UI側は get_convoy_condition / repair_convoy を呼ぶだけにする
+
+# ============================================================
+# A) res://ui/game_hud.gd
+# ============================================================
+
+# 1) 追加：ヘッダーextras変数
+# 既存:
+#   var cargo_label: Label = null
+#   var header_settings_btn: Button = null
+# の間に、以下を追加:
+#
+#   var convoy_label: Label = null
+
+# 2) 置換：func _ensure_header_extras() -> void
+# 下記へ丸ごと置換:
+
+func _ensure_header_extras() -> void:
+    if not is_instance_valid(topbar):
+        return
+
+    cargo_label = topbar.get_node_or_null("CargoLabel") as Label
+    if cargo_label == null:
+        cargo_label = Label.new()
+        cargo_label.name = "CargoLabel"
+        cargo_label.text = "積載量: 0/0"
+        cargo_label.custom_minimum_size = Vector2(150, 0)
+        cargo_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        topbar.add_child(cargo_label)
+        if is_instance_valid(cash_label) and cash_label.get_parent() == topbar:
+            topbar.move_child(cargo_label, cash_label.get_index() + 1)
+
+    convoy_label = topbar.get_node_or_null("ConvoyLabel") as Label
+    if convoy_label == null:
+        convoy_label = Label.new()
+        convoy_label.name = "ConvoyLabel"
+        convoy_label.text = "整備度: 100(良好)"
+        convoy_label.custom_minimum_size = Vector2(170, 0)
+        convoy_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        topbar.add_child(convoy_label)
+        if is_instance_valid(cargo_label) and cargo_label.get_parent() == topbar:
+            topbar.move_child(convoy_label, cargo_label.get_index() + 1)
+
+    header_settings_btn = topbar.get_node_or_null("SettingsBtn") as Button
+    if header_settings_btn == null:
+        header_settings_btn = Button.new()
+        header_settings_btn.name = "SettingsBtn"
+        header_settings_btn.text = "?"
+        header_settings_btn.custom_minimum_size = Vector2(44, 32)
+        header_settings_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        header_settings_btn.focus_mode = Control.FOCUS_NONE
+        header_settings_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+        topbar.add_child(header_settings_btn)
+
+    if header_settings_btn and not header_settings_btn.pressed.is_connected(Callable(self, "_on_city_settings")):
+        header_settings_btn.pressed.connect(_on_city_settings)
+
+# 3) 置換：func _refresh() -> void
+# 下記へ丸ごと置換（変更点は _update_convoy_label() 呼び出し追加）:
+
+func _refresh() -> void:
+    if world == null:
+        return
+
+    var _daytxt := "Day %d" % world.day
+    if world.has_method("format_date"):
+        _daytxt = world.format_date()
+
+    var _turn_now := 1
+    if world.get("turn") != null:
+        _turn_now = int(world.get("turn")) + 1
+
+    var _tpd := 2
+    if world.get("turns_per_day") != null:
+        _tpd = int(world.get("turns_per_day"))
+
+    day_label.text = "%s  T %d/%d" % [_daytxt, _turn_now, _tpd]
+
+    var cid: String = String(world.player.get("city", ""))
+    var moving := bool(world.player.get("enroute", false))
+    if moving:
+        var dest := String(world.player.get("dest", ""))
+        city_label.text = "%s → %s" % [_city_name(cid), _city_name(dest)]
+    else:
+        city_label.text = _city_name(cid)
+
+    cash_label.text = "Cash: %.1f" % float(world.player.get("cash", 0.0))
+
+    # ★ 追加: 積載表示
+    _update_cargo_label()
+
+    # ★ 追加: 整備度（convoy_condition）表示
+    _update_convoy_label()
+
+    # ★ 追加: チュートリアルロック反映（中央ボタン列）
+    _apply_tutorial_city_button_states()
+
+    _update_play_button()
+    _update_supply_label()
+    _refresh_event_log()
+
+# 4) 追加：func _update_convoy_label() -> void
+# func _update_cargo_label() の直後あたりに追記してください:
+
+func _update_convoy_label() -> void:
+    if convoy_label == null or world == null:
+        return
+
+    var enabled := true
+    if world.get("convoy_condition_enabled") != null:
+        enabled = bool(world.get("convoy_condition_enabled"))
+    convoy_label.visible = enabled
+    if not enabled:
+        return
+
+    var cond: int = 100
+    if world.has_method("get_convoy_condition"):
+        cond = int(world.call("get_convoy_condition"))
+    else:
+        cond = int(world.player.get("convoy_condition", 100))
+
+    var tier: int = 0
+    if world.has_method("_convoy_condition_tier"):
+        tier = int(world.call("_convoy_condition_tier", cond))
+    else:
+        if cond >= 70:
+            tier = 0
+        elif cond >= 40:
+            tier = 1
+        elif cond >= 20:
+            tier = 2
+        else:
+            tier = 3
+
+    var tier_name := "良好"
+    if tier == 1:
+        tier_name = "摩耗"
+    elif tier == 2:
+        tier_name = "不調"
+    elif tier == 3:
+        tier_name = "危険"
+
+    convoy_label.text = "整備度: %d(%s)" % [cond, tier_name]
+
+# ============================================================
+# B) res://ui/menu_panel.gd
+# ============================================================
+
+# 1) 追加：UI refs（動的生成/取得）に maint_btn を追加
+# 既存:
+#   var trust_btn: Button
+# の近くに、以下を追加:
+#
+#   var maint_btn: Button
+
+# 2) 置換：func _build_content_area(parent: VBoxContainer) -> void
+# 下記へ丸ごと置換（Row2 と MaintBtn を追加）:
+
+func _build_content_area(parent: VBoxContainer) -> void:
+    # コンテンツ部分（余白つき）
+    var margin := parent.get_node_or_null("Margin") as MarginContainer
+    if margin == null:
+        margin = MarginContainer.new()
+        margin.name = "Margin"
+        margin.add_theme_constant_override("margin_left", 12)
+        margin.add_theme_constant_override("margin_right", 12)
+        margin.add_theme_constant_override("margin_top", 8)
+        margin.add_theme_constant_override("margin_bottom", 12)
+        parent.add_child(margin)
+
+    var vb := margin.get_node_or_null("VBox") as VBoxContainer
+    if vb == null:
+        vb = VBoxContainer.new()
+        vb.name = "VBox"
+        margin.add_child(vb)
+
+    var row := vb.get_node_or_null("Row") as HBoxContainer
+    if row == null:
+        row = HBoxContainer.new()
+        row.name = "Row"
+        vb.add_child(row)
+
+    # --- Buttons ---
+    trade_btn = _ensure_button(row, "TradeBtn", "Trade")
+    map_btn = _ensure_button(row, "MapBtn", "Map")
+    step_btn = _ensure_button(row, "StepBtn", "+1 Day")
+    step_turn_btn = _ensure_button(row, "StepTurnBtn", "+1 Turn")
+    move_btn = _ensure_button(row, "MoveBtn", "Move")
+    # ★ 追加：契約
+    _ensure_button(row, "ContractBtn", "契約")
+    info_btn = _ensure_button(row, "InfoBtn", "情報")
+    inv_btn = _ensure_button(row, "InvBtn", "Inv")
+    trust_btn = _ensure_button(row, "TrustBtn", "信用") 
+
+    # --- Maintenance (convoy) ---
+    var row2 := vb.get_node_or_null("Row2") as HBoxContainer
+    if row2 == null:
+        row2 = HBoxContainer.new()
+        row2.name = "Row2"
+        row2.alignment = BoxContainer.ALIGNMENT_CENTER
+        vb.add_child(row2)
+
+    maint_btn = _ensure_button(row2, "MaintBtn", "整備(+1 Day)")
+
+    # --- Info Area ---
+    var sep := vb.get_node_or_null("HSeparator") as HSeparator
+    if sep == null:
+        sep = HSeparator.new()
+        sep.name = "HSeparator"
+        vb.add_child(sep)
+
+    var info := vb.get_node_or_null("Info") as VBoxContainer
+    if info == null:
+        info = VBoxContainer.new()
+        info.name = "Info"
+        vb.add_child(info)
+
+    # Info Labels
+    info_day = info.get_node_or_null("Day") as Label
+    if info_day == null:
+        info_day = _add_info_line(info, "日数", "Day")
+    info_city = info.get_node_or_null("City") as Label
+    if info_city == null:
+        info_city = _add_info_line(info, "現在地", "City")
+    info_cash = info.get_node_or_null("Cash") as Label
+    if info_cash == null:
+        info_cash = _add_info_line(info, "所持金", "Cash")
+    info_cargo = info.get_node_or_null("Cargo") as Label
+    if info_cargo == null:
+        info_cargo = _add_info_line(info, "積載", "Cargo")
+
+
+# ヘルパー関数: ボタン生成
+
+# 3) 置換：func _connect_signals() -> void
+# 下記へ丸ごと置換（maint_btn 接続を追加）:
+
+func _connect_signals() -> void:
+    # シグナル接続
+    if close_btn and not close_btn.pressed.is_connected(Callable(self, "_on_close")):
+        close_btn.pressed.connect(_on_close)
+    if trade_btn and not trade_btn.pressed.is_connected(Callable(self, "_on_trade")):
+        trade_btn.pressed.connect(_on_trade)
+    if map_btn and not map_btn.pressed.is_connected(Callable(self, "_on_map")):
+        map_btn.pressed.connect(_on_map)
+
+    # ★ 追加：契約
+    var contract_btn := panel.get_node("Frame/Margin/VBox/Row").get_node_or_null("ContractBtn") as Button
+    if contract_btn and not contract_btn.pressed.is_connected(Callable(self, "_on_contracts")):
+        contract_btn.pressed.connect(_on_contracts)
+
+    if info_btn and not info_btn.pressed.is_connected(Callable(self, "_on_info")):
+        info_btn.pressed.connect(_on_info)
+    if step_btn and not step_btn.pressed.is_connected(Callable(self, "_on_step")):
+        step_btn.pressed.connect(_on_step)
+    if step_turn_btn and not step_turn_btn.pressed.is_connected(Callable(self, "_on_step_turn")):
+        step_turn_btn.pressed.connect(_on_step_turn)
+    if move_btn and not move_btn.pressed.is_connected(Callable(self, "_on_move")):
+        move_btn.pressed.connect(_on_move)
+
+    if maint_btn and not maint_btn.pressed.is_connected(Callable(self, "_on_maint")):
+        maint_btn.pressed.connect(_on_maint)
+    if inv_btn and not inv_btn.pressed.is_connected(Callable(self, "_on_inv")):
+        inv_btn.pressed.connect(_on_inv)
+
+    # ★ 追加：信用
+    if trust_btn and not trust_btn.pressed.is_connected(Callable(self, "_on_trust")):
+        trust_btn.pressed.connect(_on_trust)
+
+# --- Info 更新 ---
+
+# 4) 追加：func _on_maint() -> void
+# 他の _on_* と同じ並び（例: _on_step の近く）に追記:
+
+func _on_maint() -> void:
+    if world == null:
+        return
+    if not _tutorial_guard(World.TUT_LOCK_STEP, "チュートリアル中は時間を進められません。"):
+        return
+
+    if bool(world.player.get("enroute", false)):
+        _show_info("移動中は整備できません。到着後に実行してください。")
+        return
+
+    if world.get("convoy_condition_enabled") != null and not bool(world.get("convoy_condition_enabled")):
+        _show_info("このセーブでは convoy_condition が無効です。")
+        return
+
+    var cond: int = 100
+    if world.has_method("get_convoy_condition"):
+        cond = int(world.call("get_convoy_condition"))
+    else:
+        cond = int(world.player.get("convoy_condition", 100))
+
+    # 1日整備（最小実装）
+    var restore: int = 25
+    var cost: float = 0.5 + float(max(0, 100 - cond)) * 0.02  # だいたい 0.5〜2.5
+    cost = snapped(cost, 0.1)
+
+    var cash: float = float(world.player.get("cash", 0.0))
+    if cash < cost:
+        _show_info("所持金が足りません（必要: %.1f / 所持: %.1f）。" % [cost, cash])
+        return
+
+    world.player["cash"] = cash - cost
+    if world.has_method("repair_convoy"):
+        world.call("repair_convoy", restore)
+    else:
+        world.player["convoy_condition"] = clampi(cond + restore, 0, 100)
+
+    if world.has_method("_world_message"):
+        world.call("_world_message", "整備を行った（-%.1f cash / 整備度 +%d）。" % [cost, restore])
+
+    # 整備は1日分の滞在として扱う（経済・天候などが進む）
+    if world.is_paused():
+        world.step_one_day()
+    else:
+        world.pause()
+        world.step_one_day()
