@@ -169,14 +169,6 @@ func _ready() -> void:
         _ensure_city_mode_ui()
         _hide_legacy_city_mode_buttons()
 
-        # 都市モードUIを前提にする場合は、旧TopBarのショートカットを隠す
-        if menu_btn:
-            menu_btn.visible = false
-        if map_btn:
-            map_btn.visible = false
-        if trade_btn:
-            trade_btn.visible = false
-
     _create_play_button()
     # Debugボタンはデバッグビルドのみ表示
     if OS.is_debug_build():
@@ -2962,8 +2954,8 @@ func _ensure_city_action_bar() -> void:
         if is_instance_valid(topbar) and city_action_bar.get_parent() == root_vb:
             root_vb.move_child(city_action_bar, topbar.get_index() + 1)
 
-    city_action_trade_btn = _ensure_city_action_button(city_action_bar, "CityTradeBtn", "Trade")
-    city_action_map_btn = _ensure_city_action_button(city_action_bar, "CityMapBtn", "Map")
+    # 既存TopBarの Menu / Map / Trade をそのまま使う。
+    # ここでは不足分だけを並べる。
     city_action_step_btn = _ensure_city_action_button(city_action_bar, "CityStepBtn", "+1 Day")
     city_action_step_turn_btn = _ensure_city_action_button(city_action_bar, "CityStepTurnBtn", "+1 Turn")
     city_action_move_btn = _ensure_city_action_button(city_action_bar, "CityMoveBtn", "Move")
@@ -2972,6 +2964,16 @@ func _ensure_city_action_bar() -> void:
     city_action_inv_btn = _ensure_city_action_button(city_action_bar, "CityInvBtn", "Inv")
     city_action_trust_btn = _ensure_city_action_button(city_action_bar, "CityTrustBtn", "信用")
     city_action_maint_btn = _ensure_city_action_button(city_action_bar, "CityMaintBtn", "整備")
+
+    # 以前のパッチで作られていた Trade / Map ボタンが残っていたら消す
+    var old_trade := city_action_bar.get_node_or_null("CityTradeBtn")
+    if old_trade:
+        old_trade.queue_free()
+    var old_map := city_action_bar.get_node_or_null("CityMapBtn")
+    if old_map:
+        old_map.queue_free()
+    city_action_trade_btn = null
+    city_action_map_btn = null
 
 func _ensure_city_action_button(parent: HBoxContainer, name: String, text: String) -> Button:
     var btn := parent.get_node_or_null(name) as Button
@@ -2987,10 +2989,6 @@ func _ensure_city_action_button(parent: HBoxContainer, name: String, text: Strin
     return btn
 
 func _wire_city_action_buttons() -> void:
-    if city_action_trade_btn and not city_action_trade_btn.pressed.is_connected(Callable(self, "_on_city_action_trade_btn")):
-        city_action_trade_btn.pressed.connect(_on_city_action_trade_btn)
-    if city_action_map_btn and not city_action_map_btn.pressed.is_connected(Callable(self, "_on_city_action_map_btn")):
-        city_action_map_btn.pressed.connect(_on_city_action_map_btn)
     if city_action_step_btn and not city_action_step_btn.pressed.is_connected(Callable(self, "_on_city_action_step_btn")):
         city_action_step_btn.pressed.connect(_on_city_action_step_btn)
     if city_action_step_turn_btn and not city_action_step_turn_btn.pressed.is_connected(Callable(self, "_on_city_action_step_turn_btn")):
@@ -3016,12 +3014,20 @@ func _refresh_city_action_bar() -> void:
         return
 
     var moving := bool(world.player.get("enroute", false))
-    if city_action_trade_btn:
-        city_action_trade_btn.disabled = city_action_trade_btn.disabled or moving
+    if city_action_step_btn:
+        city_action_step_btn.disabled = moving
+    if city_action_step_turn_btn:
+        city_action_step_turn_btn.disabled = moving
     if city_action_move_btn:
-        city_action_move_btn.disabled = city_action_move_btn.disabled or moving
+        city_action_move_btn.disabled = moving
+    if city_action_contract_btn:
+        city_action_contract_btn.disabled = moving
+    if city_action_inv_btn:
+        city_action_inv_btn.disabled = moving
+    if city_action_trust_btn:
+        city_action_trust_btn.disabled = moving
     if city_action_maint_btn:
-        city_action_maint_btn.disabled = city_action_maint_btn.disabled or moving
+        city_action_maint_btn.disabled = moving
 
     if city_action_maint_btn:
         var convoy_enabled := true

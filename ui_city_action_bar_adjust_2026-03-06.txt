@@ -1,0 +1,207 @@
+# ui_city_action_bar_adjust_2026-03-06.txt
+# 目的:
+# - 既存 TopBar の Menu / Map / Trade を再利用する
+# - GameHUD の CityActionBar には不足分だけを並べる
+# - 以前のパッチで生成された CityTradeBtn / CityMapBtn は削除する
+#
+# 背景:
+# - 現在の game_hud.gd は show_city_mode_ui 時に TopBar の Menu / Map / Trade を隠し、
+#   代わりに CityActionBar 側へ Trade / Map を再生成している
+# - 既存ボタン群との兼ね合いを考えると、TopBar 側の既存導線を残した方が自然
+#
+# 対象:
+# - res://ui/game_hud.gd
+
+# ============================================================
+# 1) 置換: func _ready() -> void
+# ============================================================
+func _ready() -> void:
+
+    if dialog_player_path != NodePath():
+        dialog_player = get_node_or_null(dialog_player_path)
+    _apply_full_rect(self)
+    _apply_full_rect($Margin)
+    _apply_full_rect($Margin/VBox)
+
+    var m := $Margin as MarginContainer
+    if m:
+        m.add_theme_constant_override("margin_left", 16)
+        m.add_theme_constant_override("margin_right", 16)
+        m.add_theme_constant_override("margin_top", 8)
+        m.add_theme_constant_override("margin_bottom", 8)
+
+    topbar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    topbar.custom_minimum_size = Vector2(0, 44)
+    topbar.mouse_filter = Control.MOUSE_FILTER_PASS
+
+    if day_label:
+        day_label.custom_minimum_size = Vector2(150, 0)
+    for b in [menu_btn, map_btn, trade_btn]:
+        b.mouse_filter = Control.MOUSE_FILTER_STOP
+        b.custom_minimum_size = Vector2(90, 32)
+        b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        b.disabled = false
+        b.visible = true
+
+    _ensure_spacer_before_buttons()
+
+    # ★ 追加: ヘッダー（積載表示＋歯車）
+    _ensure_header_extras()
+
+    # ★ 追加: 都市モード中央ボタン列
+    if show_city_mode_ui:
+        _ensure_city_mode_ui()
+        _hide_legacy_city_mode_buttons()
+
+    _create_play_button()
+    # Debugボタンはデバッグビルドのみ表示
+    if OS.is_debug_build():
+        _create_debug_button()
+    _create_supply_label()     # ★ 追加：当日供給数/今月累計の小さなピル
+    _update_play_button()
+
+    # World 取得
+    var _world_tmp: World = null
+    if world_path != NodePath(""):
+        _world_tmp = get_node_or_null(world_path) as World
+    else:
+        _world_tmp = get_parent() as World
+    world = _world_tmp
+    if world:
+        world.day_advanced.connect(_on_day)
+        world.world_updated.connect(_refresh)
+        if not world.world_updated.is_connected(Callable(self, "_on_world_updated_debug")):
+            world.world_updated.connect(_on_world_updated_debug)
+        if world.has_signal("supply_event"):
+            world.supply_event.connect(_on_supply_event)
+        if world.has_signal("weekly_report"):
+            world.weekly_report.connect(_on_weekly_report)
+
+        # 旧デバッグパネルがシーンに残っている場合は、起動時に隠す
+        # （都市モードUIと重なるのを防ぐ。必要なら Debug ボタンで再表示）
+        var dbg := world.get_node_or_null("DebugPanel")
+        if dbg and dbg is CanvasItem:
+            (dbg as CanvasItem).visible = false
+        var legacy_dbg := world.get_node_or_null("旧DebugPanel")
+        if legacy_dbg and legacy_dbg is CanvasItem:
+            (legacy_dbg as CanvasItem).visible = false
+
+    if world and world.has_signal("player_decay_event"):
+        world.player_decay_event.connect(_on_player_decay_event)
+
+    _wire_buttons()
+    if show_city_mode_ui:
+        _ensure_city_action_bar()
+        _wire_city_action_buttons()
+    _ensure_ui_cancel()
+    _ensure_debug_toggle()
+    _ensure_toast_layer()
+    _ensure_event_log_panel()  # ★ 追加：HUD右下のログ欄（非ポップアップ）
+    _refresh()
+    call_deferred("_place_popups")
+    get_tree().root.size_changed.connect(_place_popups)
+
+    if debug_open_on_start:
+        _spawn_debug_if_needed()
+        if debug_embed and is_instance_valid(debug_panel):
+            debug_panel.visible = true
+        elif is_instance_valid(debug_window):
+            debug_window.popup_centered()
+            debug_window.grab_focus()
+        set_process_input(true)
+
+    set_process_unhandled_input(true)
+    _ensure_dice_overlay()
+
+# ---- layout helpers ----
+
+# ============================================================
+# 2) 置換: func _ensure_city_action_bar() -> void
+# ============================================================
+func _ensure_city_action_bar() -> void:
+    var root_vb := $Margin/VBox as VBoxContainer
+    if root_vb == null:
+        return
+
+    city_action_bar = root_vb.get_node_or_null("CityActionBar") as HBoxContainer
+    if city_action_bar == null:
+        city_action_bar = HBoxContainer.new()
+        city_action_bar.name = "CityActionBar"
+        city_action_bar.alignment = BoxContainer.ALIGNMENT_BEGIN
+        city_action_bar.add_theme_constant_override("separation", 6)
+        city_action_bar.custom_minimum_size = Vector2(0, 38)
+        root_vb.add_child(city_action_bar)
+        if is_instance_valid(topbar) and city_action_bar.get_parent() == root_vb:
+            root_vb.move_child(city_action_bar, topbar.get_index() + 1)
+
+    # 既存TopBarの Menu / Map / Trade をそのまま使う。
+    # ここでは不足分だけを並べる。
+    city_action_step_btn = _ensure_city_action_button(city_action_bar, "CityStepBtn", "+1 Day")
+    city_action_step_turn_btn = _ensure_city_action_button(city_action_bar, "CityStepTurnBtn", "+1 Turn")
+    city_action_move_btn = _ensure_city_action_button(city_action_bar, "CityMoveBtn", "Move")
+    city_action_contract_btn = _ensure_city_action_button(city_action_bar, "CityContractBtn", "契約")
+    city_action_info_btn = _ensure_city_action_button(city_action_bar, "CityInfoBtn", "情報")
+    city_action_inv_btn = _ensure_city_action_button(city_action_bar, "CityInvBtn", "Inv")
+    city_action_trust_btn = _ensure_city_action_button(city_action_bar, "CityTrustBtn", "信用")
+    city_action_maint_btn = _ensure_city_action_button(city_action_bar, "CityMaintBtn", "整備")
+
+    # 以前のパッチで作られていた Trade / Map ボタンが残っていたら消す
+    var old_trade := city_action_bar.get_node_or_null("CityTradeBtn")
+    if old_trade:
+        old_trade.queue_free()
+    var old_map := city_action_bar.get_node_or_null("CityMapBtn")
+    if old_map:
+        old_map.queue_free()
+
+# ============================================================
+# 3) 置換: func _wire_city_action_buttons() -> void
+# ============================================================
+func _wire_city_action_buttons() -> void:
+    if city_action_step_btn and not city_action_step_btn.pressed.is_connected(Callable(self, "_on_city_action_step_btn")):
+        city_action_step_btn.pressed.connect(_on_city_action_step_btn)
+    if city_action_step_turn_btn and not city_action_step_turn_btn.pressed.is_connected(Callable(self, "_on_city_action_step_turn_btn")):
+        city_action_step_turn_btn.pressed.connect(_on_city_action_step_turn_btn)
+    if city_action_move_btn and not city_action_move_btn.pressed.is_connected(Callable(self, "_on_city_action_move_btn")):
+        city_action_move_btn.pressed.connect(_on_city_action_move_btn)
+    if city_action_contract_btn and not city_action_contract_btn.pressed.is_connected(Callable(self, "_on_city_action_contract_btn")):
+        city_action_contract_btn.pressed.connect(_on_city_action_contract_btn)
+    if city_action_info_btn and not city_action_info_btn.pressed.is_connected(Callable(self, "_on_city_action_info_btn")):
+        city_action_info_btn.pressed.connect(_on_city_action_info_btn)
+    if city_action_inv_btn and not city_action_inv_btn.pressed.is_connected(Callable(self, "_on_city_action_inv_btn")):
+        city_action_inv_btn.pressed.connect(_on_city_action_inv_btn)
+    if city_action_trust_btn and not city_action_trust_btn.pressed.is_connected(Callable(self, "_on_city_action_trust_btn")):
+        city_action_trust_btn.pressed.connect(_on_city_action_trust_btn)
+    if city_action_maint_btn and not city_action_maint_btn.pressed.is_connected(Callable(self, "_on_city_action_maint_btn")):
+        city_action_maint_btn.pressed.connect(_on_city_action_maint_btn)
+
+# ============================================================
+# 4) 置換: func _refresh_city_action_bar() -> void
+# ============================================================
+func _refresh_city_action_bar() -> void:
+    if city_action_bar == null or world == null:
+        return
+    city_action_bar.visible = show_city_mode_ui
+    if not city_action_bar.visible:
+        return
+
+    var moving := bool(world.player.get("enroute", false))
+    if city_action_step_btn:
+        city_action_step_btn.disabled = moving
+    if city_action_step_turn_btn:
+        city_action_step_turn_btn.disabled = moving
+    if city_action_move_btn:
+        city_action_move_btn.disabled = moving
+    if city_action_contract_btn:
+        city_action_contract_btn.disabled = moving
+    if city_action_inv_btn:
+        city_action_inv_btn.disabled = moving
+    if city_action_trust_btn:
+        city_action_trust_btn.disabled = moving
+    if city_action_maint_btn:
+        city_action_maint_btn.disabled = moving
+
+    if city_action_maint_btn:
+        var convoy_enabled := true
+        if world.get("convoy_condition_enabled") != null:
+            convoy_enabled = bool(world.get("convoy_condition_enabled"))
+        city_action_maint_btn.visible = convoy_enabled
