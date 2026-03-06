@@ -68,6 +68,19 @@ var city_info_btn: Button = null
 var city_save_btn: Button = null
 var city_settings_btn: Button = null
 
+# --- City action bar (HUD常設) ---
+var city_action_bar: HBoxContainer = null
+var city_action_trade_btn: Button = null
+var city_action_map_btn: Button = null
+var city_action_step_btn: Button = null
+var city_action_step_turn_btn: Button = null
+var city_action_move_btn: Button = null
+var city_action_contract_btn: Button = null
+var city_action_info_btn: Button = null
+var city_action_inv_btn: Button = null
+var city_action_trust_btn: Button = null
+var city_action_maint_btn: Button = null
+
 # --- Save/Load window ---
 var _save_load_win: Window = null
 
@@ -154,17 +167,7 @@ func _ready() -> void:
     # ★ 追加: 都市モード中央ボタン列
     if show_city_mode_ui:
         _ensure_city_mode_ui()
-        _wire_city_mode_buttons()
-
-        # --- city_move_btn は MAP ではなく Move を呼ぶ ---
-        if is_instance_valid(city_move_btn):
-            var cb_map := Callable(self, "_on_city_move")
-            if city_move_btn.pressed.is_connected(cb_map):
-                city_move_btn.pressed.disconnect(cb_map)
-
-            var cb_move := Callable(self, "_on_city_move_pressed")
-            if not city_move_btn.pressed.is_connected(cb_move):
-                city_move_btn.pressed.connect(cb_move)
+        _hide_legacy_city_mode_buttons()
 
         # 都市モードUIを前提にする場合は、旧TopBarのショートカットを隠す
         if menu_btn:
@@ -211,6 +214,9 @@ func _ready() -> void:
         world.player_decay_event.connect(_on_player_decay_event)
 
     _wire_buttons()
+    if show_city_mode_ui:
+        _ensure_city_action_bar()
+        _wire_city_action_buttons()
     _ensure_ui_cancel()
     _ensure_debug_toggle()
     _ensure_toast_layer()
@@ -453,6 +459,7 @@ func _refresh() -> void:
 
     # ★ 追加: チュートリアルロック反映（中央ボタン列）
     _apply_tutorial_city_button_states()
+    _refresh_city_action_bar()
 
     _update_play_button()
     _update_supply_label()
@@ -572,6 +579,37 @@ func _on_trade_btn() -> void:
 
 func _on_map_btn() -> void:
     _open_map_popup()
+
+func _on_city_action_trade_btn() -> void:
+    _call_menu_panel_action("_on_trade")
+
+func _on_city_action_map_btn() -> void:
+    _call_menu_panel_action("_on_map")
+
+func _on_city_action_step_btn() -> void:
+    _call_menu_panel_action("_on_step")
+
+func _on_city_action_step_turn_btn() -> void:
+    _call_menu_panel_action("_on_step_turn")
+
+func _on_city_action_move_btn() -> void:
+    _call_menu_panel_action("_on_move")
+
+func _on_city_action_contract_btn() -> void:
+    _call_menu_panel_action("_on_contracts")
+
+func _on_city_action_info_btn() -> void:
+    _call_menu_panel_action("_on_info")
+
+func _on_city_action_inv_btn() -> void:
+    _call_menu_panel_action("_on_inv")
+
+func _on_city_action_trust_btn() -> void:
+    _call_menu_panel_action("_on_trust")
+
+func _on_city_action_maint_btn() -> void:
+    _call_menu_panel_action("_on_maint")
+
 func _on_story_btn() -> void:
     var tree := get_tree()
     if tree == null:
@@ -925,6 +963,20 @@ func _spawn_menu_if_needed() -> void:
         mp.world = world
         mp.hud = self
         menu_win = mp
+
+func _get_menu_panel_for_city_actions() -> Node:
+    _spawn_menu_if_needed()
+    if menu_win == null:
+        push_warning("GameHUD: MenuPanel が生成できませんでした。")
+        return null
+    return menu_win
+
+func _call_menu_panel_action(method_name: String) -> void:
+    var mp := _get_menu_panel_for_city_actions()
+    if mp != null and mp.has_method(method_name):
+        mp.call(method_name)
+    else:
+        push_warning("GameHUD: MenuPanel method not found: %s" % method_name)
 
 func _spawn_trade_if_needed() -> void:
     if trade_win == null:
@@ -2886,6 +2938,97 @@ func _update_convoy_label() -> void:
 
 
 # --- City mode center buttons ---
+func _hide_legacy_city_mode_buttons() -> void:
+    if city_mode_ui == null:
+        return
+    var legacy_grid := city_mode_ui.get_node_or_null("Center/Grid") as Control
+    if legacy_grid:
+        legacy_grid.visible = false
+        legacy_grid.custom_minimum_size = Vector2.ZERO
+
+func _ensure_city_action_bar() -> void:
+    var root_vb := $Margin/VBox as VBoxContainer
+    if root_vb == null:
+        return
+
+    city_action_bar = root_vb.get_node_or_null("CityActionBar") as HBoxContainer
+    if city_action_bar == null:
+        city_action_bar = HBoxContainer.new()
+        city_action_bar.name = "CityActionBar"
+        city_action_bar.alignment = BoxContainer.ALIGNMENT_BEGIN
+        city_action_bar.add_theme_constant_override("separation", 6)
+        city_action_bar.custom_minimum_size = Vector2(0, 38)
+        root_vb.add_child(city_action_bar)
+        if is_instance_valid(topbar) and city_action_bar.get_parent() == root_vb:
+            root_vb.move_child(city_action_bar, topbar.get_index() + 1)
+
+    city_action_trade_btn = _ensure_city_action_button(city_action_bar, "CityTradeBtn", "Trade")
+    city_action_map_btn = _ensure_city_action_button(city_action_bar, "CityMapBtn", "Map")
+    city_action_step_btn = _ensure_city_action_button(city_action_bar, "CityStepBtn", "+1 Day")
+    city_action_step_turn_btn = _ensure_city_action_button(city_action_bar, "CityStepTurnBtn", "+1 Turn")
+    city_action_move_btn = _ensure_city_action_button(city_action_bar, "CityMoveBtn", "Move")
+    city_action_contract_btn = _ensure_city_action_button(city_action_bar, "CityContractBtn", "契約")
+    city_action_info_btn = _ensure_city_action_button(city_action_bar, "CityInfoBtn", "情報")
+    city_action_inv_btn = _ensure_city_action_button(city_action_bar, "CityInvBtn", "Inv")
+    city_action_trust_btn = _ensure_city_action_button(city_action_bar, "CityTrustBtn", "信用")
+    city_action_maint_btn = _ensure_city_action_button(city_action_bar, "CityMaintBtn", "整備")
+
+func _ensure_city_action_button(parent: HBoxContainer, name: String, text: String) -> Button:
+    var btn := parent.get_node_or_null(name) as Button
+    if btn == null:
+        btn = Button.new()
+        btn.name = name
+        btn.text = text
+        btn.custom_minimum_size = Vector2(92, 32)
+        btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+        btn.mouse_filter = Control.MOUSE_FILTER_STOP
+        btn.focus_mode = Control.FOCUS_NONE
+        parent.add_child(btn)
+    return btn
+
+func _wire_city_action_buttons() -> void:
+    if city_action_trade_btn and not city_action_trade_btn.pressed.is_connected(Callable(self, "_on_city_action_trade_btn")):
+        city_action_trade_btn.pressed.connect(_on_city_action_trade_btn)
+    if city_action_map_btn and not city_action_map_btn.pressed.is_connected(Callable(self, "_on_city_action_map_btn")):
+        city_action_map_btn.pressed.connect(_on_city_action_map_btn)
+    if city_action_step_btn and not city_action_step_btn.pressed.is_connected(Callable(self, "_on_city_action_step_btn")):
+        city_action_step_btn.pressed.connect(_on_city_action_step_btn)
+    if city_action_step_turn_btn and not city_action_step_turn_btn.pressed.is_connected(Callable(self, "_on_city_action_step_turn_btn")):
+        city_action_step_turn_btn.pressed.connect(_on_city_action_step_turn_btn)
+    if city_action_move_btn and not city_action_move_btn.pressed.is_connected(Callable(self, "_on_city_action_move_btn")):
+        city_action_move_btn.pressed.connect(_on_city_action_move_btn)
+    if city_action_contract_btn and not city_action_contract_btn.pressed.is_connected(Callable(self, "_on_city_action_contract_btn")):
+        city_action_contract_btn.pressed.connect(_on_city_action_contract_btn)
+    if city_action_info_btn and not city_action_info_btn.pressed.is_connected(Callable(self, "_on_city_action_info_btn")):
+        city_action_info_btn.pressed.connect(_on_city_action_info_btn)
+    if city_action_inv_btn and not city_action_inv_btn.pressed.is_connected(Callable(self, "_on_city_action_inv_btn")):
+        city_action_inv_btn.pressed.connect(_on_city_action_inv_btn)
+    if city_action_trust_btn and not city_action_trust_btn.pressed.is_connected(Callable(self, "_on_city_action_trust_btn")):
+        city_action_trust_btn.pressed.connect(_on_city_action_trust_btn)
+    if city_action_maint_btn and not city_action_maint_btn.pressed.is_connected(Callable(self, "_on_city_action_maint_btn")):
+        city_action_maint_btn.pressed.connect(_on_city_action_maint_btn)
+
+func _refresh_city_action_bar() -> void:
+    if city_action_bar == null or world == null:
+        return
+    city_action_bar.visible = show_city_mode_ui
+    if not city_action_bar.visible:
+        return
+
+    var moving := bool(world.player.get("enroute", false))
+    if city_action_trade_btn:
+        city_action_trade_btn.disabled = city_action_trade_btn.disabled or moving
+    if city_action_move_btn:
+        city_action_move_btn.disabled = city_action_move_btn.disabled or moving
+    if city_action_maint_btn:
+        city_action_maint_btn.disabled = city_action_maint_btn.disabled or moving
+
+    if city_action_maint_btn:
+        var convoy_enabled := true
+        if world.get("convoy_condition_enabled") != null:
+            convoy_enabled = bool(world.get("convoy_condition_enabled"))
+        city_action_maint_btn.visible = convoy_enabled
+
 func _ensure_city_mode_ui() -> void:
     var vb := $Margin/VBox as VBoxContainer
     if vb == null:
@@ -2956,6 +3099,27 @@ func _apply_tutorial_city_button_states() -> void:
         city_move_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_MAP)
     if city_info_btn:
         city_info_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_INFO)
+
+    if city_action_trade_btn:
+        city_action_trade_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_TRADE)
+    if city_action_map_btn:
+        city_action_map_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_MAP)
+    if city_action_step_btn:
+        city_action_step_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_STEP)
+    if city_action_step_turn_btn:
+        city_action_step_turn_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_STEP_TURN)
+    if city_action_move_btn:
+        city_action_move_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_MOVE)
+    if city_action_contract_btn:
+        city_action_contract_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_CONTRACT)
+    if city_action_info_btn:
+        city_action_info_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_INFO)
+    if city_action_inv_btn:
+        city_action_inv_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_INV)
+    if city_action_trust_btn:
+        city_action_trust_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_TRUST)
+    if city_action_maint_btn:
+        city_action_maint_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_STEP)
 
 
 func _tutorial_guard(lock_key: String, fallback_msg: String) -> bool:

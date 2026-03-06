@@ -176,6 +176,10 @@ func _build_content_area(parent: VBoxContainer) -> void:
     inv_btn = _ensure_button(row, "InvBtn", "Inv")
     trust_btn = _ensure_button(row, "TrustBtn", "信用") 
 
+    # 都市UIの主ボタン群は GameHUD に常設するため、MenuPanel 側は隠す
+    row.visible = false
+    row.custom_minimum_size = Vector2.ZERO
+
     # --- Maintenance (convoy) ---
     var row2 := vb.get_node_or_null("Row2") as HBoxContainer
     if row2 == null:
@@ -185,6 +189,8 @@ func _build_content_area(parent: VBoxContainer) -> void:
         vb.add_child(row2)
 
     maint_btn = _ensure_button(row2, "MaintBtn", "整備(+1 Day)")
+    row2.visible = false
+    row2.custom_minimum_size = Vector2.ZERO
 
     # --- Info Area ---
     var sep := vb.get_node_or_null("HSeparator") as HSeparator
