@@ -115,3 +115,63 @@ C. 動作確認済み
 - convoy_condition は「導入・表示・回復・リスク反映」まで通った
 - 今は数値を詰めるより、システムの骨組みを広げる段階
 - 次は escort に戻ってよい
+
+==================================================
+【追記 2026-03-16】別タスク: price_reason_visualization_patch_2026-03-16
+==================================================
+
+※この追記は、上記の「次タスク（convoy_condition / escort系）」とは別系統。
+  実装・レビュー・マージは分岐して扱うこと。
+
+0) タスク種別
+- デバッグ可視化改善（価格決定理由の見える化）
+- 対象:
+  - scripts/world.gd
+  - ui/debug_panel.gd
+
+1) 実装サマリ
+A. world.gd
+- 価格理由キャッシュを追加
+  - _price_reason_today: city_id -> pid -> reason
+  - _price_reason_last_day
+- 価格理由のヘルパーを追加
+  - _clear_price_reason_today()
+  - _ensure_price_reason_cell()
+  - _record_price_reason()
+  - debug_get_price_reason(city_id, pid)
+- update_prices() を _update_price_for() 集約に変更
+  - 日次更新の先頭で _clear_price_reason_today() を実行
+- _update_price_for() で reason payload を構築・記録
+  - base/qty/target/diff/mult_stock/effect_mult
+  - local_target_mid/neighbor_mid/external_delta/beta/alpha
+  - shortage_now/shortage_ema
+  - prod_per_day/cons_per_day
+  - base_target/target_eff/effective_target/backlog/export_target/cons_port
+  - rec にあれば water_in/out, industry_in/out, emergency_supply も記録
+- 日付跨ぎで単体更新が走るケース対策
+  - _record_price_reason() 内で day 変化を検知して自動クリア
+
+B. ui/debug_panel.gd
+- Price Reason セクションを追加
+  - _rt_price_reason: RichTextLabel
+- _build_ui() に Price Reason 表示エリアを追加
+- _update_price_reason(cid, pid) を新規追加
+  - world.debug_get_price_reason() の結果を行単位で表示
+- _update_stats() から _update_price_reason() を呼び出し
+  - pid未選択/World選択/データ未取得時の表示も実装
+
+2) 確認状況
+- 静的差分確認: 実施済み
+- 実行確認: 未実施
+  - この環境では godot コマンドが見つからず、起動検証は未実行
+
+3) 分岐運用（今回の依頼対応）
+- 本件は次タスクと別ブランチで扱う
+- 推奨ブランチ名:
+  - feature/price-reason-visualization-20260316
+- 既存の convoy_condition 系ブランチとは混在させない
+
+4) 引継ぎメモ
+- DebugPanel で City を個別都市にすると Price Reason が表示される
+- World(ALL) 選択時は意図的に非表示メッセージを返す
+- 将来、永続化が必要になった場合は save/load 対象に _price_reason_today を追加検討

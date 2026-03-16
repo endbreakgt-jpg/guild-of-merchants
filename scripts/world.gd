@@ -418,6 +418,8 @@ var supply_count_total: int = 0
 var supply_count_by_month: Dictionary = {}   # "YYYY-MM" -> int
 var supply_count_by_city: Dictionary = {}    # city_id -> int
 var supply_count_by_pid: Dictionary = {}     # pid -> int
+var _price_reason_today: Dictionary = {}     # city_id -> pid -> reason
+var _price_reason_last_day: int = -1
 
 
 var _loader: CsvLoader
@@ -2534,55 +2536,50 @@ func build_graph() -> void:
         var la: Array = adj[a]; if not la.has(b): la.append(b)
         var lb: Array = adj[b]; if not lb.has(a): lb.append(a)
 
+func _clear_price_reason_today() -> void:
+    _price_reason_today.clear()
+    _price_reason_last_day = day
+
+func _ensure_price_reason_cell(city_id: String, pid: String) -> Dictionary:
+    if not _price_reason_today.has(city_id):
+        _price_reason_today[city_id] = {}
+    var by_pid_val = _price_reason_today.get(city_id)
+    var by_pid: Dictionary = by_pid_val if by_pid_val is Dictionary else {}
+    if not by_pid.has(pid):
+        by_pid[pid] = {}
+    _price_reason_today[city_id] = by_pid
+    var cell_val = by_pid.get(pid)
+    if cell_val is Dictionary:
+        return cell_val
+    by_pid[pid] = {}
+    return by_pid[pid]
+
+func _record_price_reason(city_id: String, pid: String, payload: Dictionary) -> void:
+    if _price_reason_last_day != day:
+        _clear_price_reason_today()
+    var cell: Dictionary = _ensure_price_reason_cell(city_id, pid)
+    for key_any in payload.keys():
+        var key: String = String(key_any)
+        cell[key] = payload[key_any]
+
+func debug_get_price_reason(city_id: String, pid: String) -> Dictionary:
+    if city_id == "" or pid == "":
+        return {}
+    if _price_reason_today.has(city_id):
+        var by_pid_val = _price_reason_today.get(city_id)
+        if by_pid_val is Dictionary:
+            var by_pid: Dictionary = by_pid_val
+            var cell_val = by_pid.get(pid)
+            if cell_val is Dictionary:
+                return (cell_val as Dictionary).duplicate(true)
+    return {}
+
 func update_prices() -> void:
+    _clear_price_reason_today()
     for c_any in cities.keys():
         var c: String = String(c_any)
-
-        if not price.has(c):
-            price[c] = {}
-        if not history.has(c):
-            history[c] = {}
-
         for pid_any in products.keys():
-            var pid: String = String(pid_any)
-            var base_price: float = float(products[pid]["base"])
-            var rec_any: Variant = null
-            if stock.has(c):
-                rec_any = (stock[c] as Dictionary).get(pid, null)
-
-            if rec_any == null:
-                price[c][pid] = base_price
-                _update_shortage_ema(c, pid, 0.0)
-            else:
-                var rd: Dictionary = rec_any
-                var raw_target: float = max(1.0, float(rd.get("target", 1.0)))
-                var target_eff: float = max(1.0, _target_eff(c, pid, raw_target))
-                var qty: float = max(0.0, float(rd.get("qty", 0.0)))
-
-                var b: float = 0.0
-                if use_backlog_absorption and backlog.has(c):
-                    var bd: Dictionary = backlog[c]
-                    if bd.has(pid):
-                        b = float(bd[pid])
-
-                var virt_target: float = max(1.0, target_eff + backlog_target_weight * b)
-                var diff: float = virt_target - qty
-                var mult: float = 1.0 + price_k * (diff / virt_target)
-                mult = clamp(mult, min_mult, max_mult)
-
-                var eff := _price_mult_for(c, pid)
-                price[c][pid] = max(1.0, base_price * mult * eff)
-
-                var s_tmp: float = 0.0
-                if virt_target > 0.0:
-                    s_tmp = max(0.0, 1.0 - (qty / virt_target))
-                _update_shortage_ema(c, pid, s_tmp)
-
-            var arr: Array = (history[c] as Dictionary).get(pid, [])
-            arr.append(price[c][pid])
-            if arr.size() > history_days:
-                arr.pop_front()
-            history[c][pid] = arr
+            _update_price_for(c, String(pid_any))
 
 func init_traders() -> void:
     traders.clear()
@@ -3301,35 +3298,67 @@ func _update_price_for(c: String, pid: String) -> void:
         return
     if not price.has(c):
         price[c] = {}
-    var base: float = float(products[pid]["base"])
+
+    var base: float = float(products[pid].get("base", 0.0))
     var eff_mult: float = _price_mult_for(c, pid)
-    var local_target: float = max(1.0, base * eff_mult)
+    var local_target_mid: float = max(1.0, base * eff_mult)
     var s_for_spread: float = 0.0
+
+    var qty: float = 0.0
+    var target: float = 1.0
+    var diff: float = 0.0
+    var mult_stock: float = 1.0
+    var prod_per_day: float = 0.0
+    var cons_per_day: float = 0.0
+    var base_target: float = 1.0
+    var target_eff: float = 1.0
+    var backlog_amt: float = 0.0
+    var export_target: float = 0.0
+    var cons_port: float = 0.0
+
     var rec: Variant = null
     if stock.has(c):
         rec = (stock[c] as Dictionary).get(pid, null)
     if rec != null:
         var rd: Dictionary = rec
-        var raw_target: float = max(1.0, float(rd.get("target", 1.0)))
-        var target_eff: float = max(1.0, _target_eff(c, pid, raw_target))
-        var qty: float = max(0.0, float(rd.get("qty", 0.0)))
-        var diff: float = target_eff - qty
-        var mult: float = clamp(1.0 + price_k * (diff / target_eff), min_mult, max_mult)
-        local_target = max(1.0, base * mult * eff_mult)
-        s_for_spread = max(0.0, 1.0 - (qty / target_eff))
+        base_target = max(1.0, float(rd.get("target", 1.0)))
+        target_eff = max(1.0, _target_eff(c, pid, base_target))
+        if use_backlog_absorption and backlog.has(c):
+            var bd: Dictionary = backlog[c] as Dictionary
+            backlog_amt = max(0.0, float(bd.get(pid, 0.0)))
+        target = max(1.0, target_eff + backlog_target_weight * backlog_amt)
+
+        qty = max(0.0, float(rd.get("qty", 0.0)))
+        diff = target - qty
+        mult_stock = clamp(1.0 + price_k * (diff / target), min_mult, max_mult)
+        local_target_mid = max(1.0, base * mult_stock * eff_mult)
+        s_for_spread = max(0.0, 1.0 - (qty / target))
+        prod_per_day = float(rd.get("prod", 0.0))
+        cons_per_day = float(rd.get("cons", 0.0))
+        export_target = _export_target_for(c, pid)
+        cons_port = _cons_port_for(c, pid)
+
     # external signal + inertia
-    var prev: float = float((price[c] as Dictionary).get(pid, local_target))
-    var target_mid: float = local_target
+    var prev_mid: float = float(price.get(c, {}).get(pid, local_target_mid))
+    var neighbor_mid: float = local_target_mid
+    var external_delta: float = 0.0
+    var beta_used: float = 0.0
+    var target_mid_after_external: float = local_target_mid
     if enable_external_signal:
-        var best_nb := _best_neighbor_mid_with_delay_minus_cost(c, pid)
-        var ext_diff := best_nb - local_target
-        target_mid = max(1.0, local_target + _beta_for(pid) * ext_diff)
+        neighbor_mid = _best_neighbor_mid_with_delay_minus_cost(c, pid)
+        external_delta = neighbor_mid - local_target_mid
+        beta_used = _beta_for(pid)
+        target_mid_after_external = max(1.0, local_target_mid + beta_used * external_delta)
+
+    var alpha_used: float = 1.0
     if enable_price_inertia:
-        var a: float = clamp(_alpha_for(pid), 0.0, 1.0)
-        price[c][pid] = prev + (target_mid - prev) * a
+        alpha_used = clamp(_alpha_for(pid), 0.0, 1.0)
+        price[c][pid] = prev_mid + (target_mid_after_external - prev_mid) * alpha_used
     else:
-        price[c][pid] = target_mid
+        price[c][pid] = target_mid_after_external
+
     _update_shortage_ema(c, pid, s_for_spread)
+
     # history append for delayed references
     if not history.has(c):
         history[c] = {}
@@ -3338,6 +3367,66 @@ func _update_price_for(c: String, pid: String) -> void:
     if arr.size() > history_days:
         arr.pop_front()
     history[c][pid] = arr
+
+    var shortage_ema_val: float = s_for_spread
+    if _shortage_ema.has(c):
+        var se_city_val = _shortage_ema.get(c)
+        if se_city_val is Dictionary:
+            var se_city: Dictionary = se_city_val
+            shortage_ema_val = float(se_city.get(pid, shortage_ema_val))
+
+    var reason := {
+        "day": day,
+        "base_price": base,
+        "qty": qty,
+        "target": target,
+        "diff": diff,
+        "mult_stock": mult_stock,
+        "effect_mult": eff_mult,
+        "local_target_mid": local_target_mid,
+        "neighbor_mid": neighbor_mid,
+        "external_delta": external_delta,
+        "beta_used": beta_used,
+        "target_mid_after_external": target_mid_after_external,
+        "prev_mid": prev_mid,
+        "alpha_used": alpha_used,
+        "mid_price": float(price[c][pid]),
+        "shortage_now": s_for_spread,
+        "shortage_ema": shortage_ema_val,
+        "prod_per_day": prod_per_day,
+        "cons_per_day": cons_per_day,
+        "base_target": base_target,
+        "target_eff": target_eff,
+        "backlog": backlog_amt,
+        "effective_target": target,
+        "export_target": export_target,
+        "cons_port": cons_port,
+    }
+
+    if rec != null:
+        var rd2: Dictionary = rec
+        if rd2.has("water_in"):
+            reason["water_in"] = float(rd2.get("water_in", 0.0))
+        if rd2.has("water_out"):
+            reason["water_out"] = float(rd2.get("water_out", 0.0))
+        if rd2.has("industry_in"):
+            reason["industry_in"] = float(rd2.get("industry_in", 0.0))
+        if rd2.has("industry_out"):
+            reason["industry_out"] = float(rd2.get("industry_out", 0.0))
+        if rd2.has("emergency_supply"):
+            reason["emergency_supply"] = float(rd2.get("emergency_supply", 0.0))
+        if rd2.has("effective_target"):
+            reason["effective_target"] = float(rd2.get("effective_target", reason.get("effective_target", 0.0)))
+        if rd2.has("target_eff"):
+            reason["target_eff"] = float(rd2.get("target_eff", reason.get("target_eff", 0.0)))
+        if rd2.has("export_target"):
+            reason["export_target"] = float(rd2.get("export_target", reason.get("export_target", 0.0)))
+        if rd2.has("cons_port"):
+            reason["cons_port"] = float(rd2.get("cons_port", reason.get("cons_port", 0.0)))
+        if rd2.has("backlog"):
+            reason["backlog"] = float(rd2.get("backlog", reason.get("backlog", 0.0)))
+
+    _record_price_reason(c, pid, reason)
 func _ensure_stock_record(c: String, pid: String) -> void:
     if not stock.has(c):
         stock[c] = {}

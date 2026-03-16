@@ -24,6 +24,7 @@ var _val_supply_month: Label
 var _val_supply_total: Label
 var _rt_supply_city: RichTextLabel
 var _rt_supply_product: RichTextLabel
+var _rt_price_reason: RichTextLabel
 
 func _ready() -> void:
     _setup_anchor()
@@ -58,44 +59,58 @@ func _setup_anchor() -> void:
 
 func _build_ui() -> void:
     add_theme_constant_override("panel", 8)
+
     var vb := VBoxContainer.new()
     vb.custom_minimum_size = Vector2(360, 0)
+    vb.add_theme_constant_override("separation", 6)
     add_child(vb)
 
     var title := Label.new()
-    title.text = "Debug: Price/Spread/Shortage"
+    title.text = "Debug: Price / Spread / Shortage"
     title.add_theme_font_size_override("font_size", 14)
     vb.add_child(title)
 
     var sel := HBoxContainer.new()
+    sel.add_theme_constant_override("separation", 8)
     vb.add_child(sel)
 
-    sel.add_child(_mk_label("City", 10, 70))
+    sel.add_child(_mk_label("City", 12, 48))
     _ob_city = OptionButton.new()
     _ob_city.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    _ob_city.item_selected.connect(_on_any_changed)
     sel.add_child(_ob_city)
 
-    sel.add_child(_mk_label("Product", 10, 70))
+    sel.add_child(_mk_label("Product", 12, 64))
     _ob_prod = OptionButton.new()
     _ob_prod.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    _ob_prod.item_selected.connect(_on_any_changed)
     sel.add_child(_ob_prod)
 
-    var grid := GridContainer.new()
-    grid.columns = 2
-    grid.add_theme_constant_override("h_separation", 8)
-    grid.add_theme_constant_override("v_separation", 4)
-    vb.add_child(grid)
+    _ob_city.item_selected.connect(_on_any_changed)
+    _ob_prod.item_selected.connect(_on_any_changed)
 
-    grid.add_child(_mk_label("Mid", 12, 120))
-    _val_mid = _mk_value_label(); grid.add_child(_val_mid)
+    vb.add_child(HSeparator.new())
 
-    grid.add_child(_mk_label("Spread", 12, 120))
-    _val_spread = _mk_value_label(); grid.add_child(_val_spread)
+    var title_price := Label.new()
+    title_price.text = "Price"
+    title_price.add_theme_font_size_override("font_size", 14)
+    vb.add_child(title_price)
 
-    grid.add_child(_mk_label("Shortage (EMA)", 12, 120))
-    _val_shortage = _mk_value_label(); grid.add_child(_val_shortage)
+    var price_grid := GridContainer.new()
+    price_grid.columns = 2
+    price_grid.add_theme_constant_override("h_separation", 8)
+    price_grid.add_theme_constant_override("v_separation", 4)
+    vb.add_child(price_grid)
+
+    price_grid.add_child(_mk_label("Mid", 12, 120))
+    _val_mid = _mk_value_label()
+    price_grid.add_child(_val_mid)
+
+    price_grid.add_child(_mk_label("Spread", 12, 120))
+    _val_spread = _mk_value_label()
+    price_grid.add_child(_val_spread)
+
+    price_grid.add_child(_mk_label("Shortage EMA", 12, 120))
+    _val_shortage = _mk_value_label()
+    price_grid.add_child(_val_shortage)
 
     vb.add_child(HSeparator.new())
 
@@ -111,13 +126,31 @@ func _build_ui() -> void:
     vb.add_child(stock_grid)
 
     stock_grid.add_child(_mk_label("Stock Qty", 12, 120))
-    _val_stock_qty = _mk_value_label(); stock_grid.add_child(_val_stock_qty)
+    _val_stock_qty = _mk_value_label()
+    stock_grid.add_child(_val_stock_qty)
 
     stock_grid.add_child(_mk_label("Target", 12, 120))
-    _val_stock_target = _mk_value_label(); stock_grid.add_child(_val_stock_target)
+    _val_stock_target = _mk_value_label()
+    stock_grid.add_child(_val_stock_target)
 
     stock_grid.add_child(_mk_label("Prod / Cons /day", 12, 120))
-    _val_stock_flow = _mk_value_label(); stock_grid.add_child(_val_stock_flow)
+    _val_stock_flow = _mk_value_label()
+    stock_grid.add_child(_val_stock_flow)
+
+    vb.add_child(HSeparator.new())
+
+    var title_reason := Label.new()
+    title_reason.text = "Price Reason"
+    title_reason.add_theme_font_size_override("font_size", 14)
+    vb.add_child(title_reason)
+
+    _rt_price_reason = RichTextLabel.new()
+    _rt_price_reason.bbcode_enabled = false
+    _rt_price_reason.scroll_active = true
+    _rt_price_reason.custom_minimum_size = Vector2(0, 150)
+    _rt_price_reason.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _rt_price_reason.text = "-"
+    vb.add_child(_rt_price_reason)
 
     vb.add_child(HSeparator.new())
 
@@ -133,16 +166,20 @@ func _build_ui() -> void:
     vb.add_child(supply_grid)
 
     supply_grid.add_child(_mk_label("Date", 12, 120))
-    _val_day = _mk_value_label(180, false); supply_grid.add_child(_val_day)
+    _val_day = _mk_value_label(180, false)
+    supply_grid.add_child(_val_day)
 
     supply_grid.add_child(_mk_label("Today", 12, 120))
-    _val_supply_today = _mk_value_label(); supply_grid.add_child(_val_supply_today)
+    _val_supply_today = _mk_value_label()
+    supply_grid.add_child(_val_supply_today)
 
     supply_grid.add_child(_mk_label("Month Total", 12, 120))
-    _val_supply_month = _mk_value_label(); supply_grid.add_child(_val_supply_month)
+    _val_supply_month = _mk_value_label()
+    supply_grid.add_child(_val_supply_month)
 
     supply_grid.add_child(_mk_label("All-Time", 12, 120))
-    _val_supply_total = _mk_value_label(); supply_grid.add_child(_val_supply_total)
+    _val_supply_total = _mk_value_label()
+    supply_grid.add_child(_val_supply_total)
 
     var list_row := HBoxContainer.new()
     list_row.add_theme_constant_override("separation", 12)
@@ -152,13 +189,15 @@ func _build_ui() -> void:
     vb_city.custom_minimum_size = Vector2(0, 120)
     list_row.add_child(vb_city)
     vb_city.add_child(_mk_label("Top Cities", 12, 160))
-    _rt_supply_city = _mk_richlist(); vb_city.add_child(_rt_supply_city)
+    _rt_supply_city = _mk_richlist()
+    vb_city.add_child(_rt_supply_city)
 
     var vb_prod := VBoxContainer.new()
     vb_prod.custom_minimum_size = Vector2(0, 120)
     list_row.add_child(vb_prod)
     vb_prod.add_child(_mk_label("Top Products", 12, 160))
-    _rt_supply_product = _mk_richlist(); vb_prod.add_child(_rt_supply_product)
+    _rt_supply_product = _mk_richlist()
+    vb_prod.add_child(_rt_supply_product)
 
 func _mk_label(t: String, size: int, minw: int) -> Label:
     var l := Label.new()
@@ -285,6 +324,7 @@ func _update_stats() -> void:
         _val_shortage.text = "-"
         _update_supply_stats()
         _update_city_stock("", "")
+        _update_price_reason("", "")
         return
 
     var mid: float = 0.0
@@ -336,6 +376,7 @@ func _update_stats() -> void:
 
     _update_supply_stats()
     _update_city_stock(cid, pid)
+    _update_price_reason(cid, pid)
 
 func _world_mid(pid: String) -> float:
     if world == null: return 0.0
@@ -424,6 +465,80 @@ func _update_city_stock(cid: String, pid: String) -> void:
     _val_stock_qty.text = "-"
     _val_stock_target.text = "-"
     _val_stock_flow.text = "-"
+
+func _update_price_reason(cid: String, pid: String) -> void:
+    if _rt_price_reason == null:
+        return
+    if world == null or pid == "":
+        _rt_price_reason.text = "-"
+        return
+    if _is_world(cid):
+        _rt_price_reason.text = "Select a city to inspect per-city reason."
+        return
+    if not world.has_method("debug_get_price_reason"):
+        _rt_price_reason.text = "World has no debug_get_price_reason()."
+        return
+
+    var raw_any = world.debug_get_price_reason(cid, pid)
+    if not (raw_any is Dictionary):
+        _rt_price_reason.text = "-"
+        return
+
+    var d: Dictionary = raw_any
+    if d.is_empty():
+        _rt_price_reason.text = "No price reason data for current day."
+        return
+
+    var lines: Array[String] = []
+    lines.append("mid: %.2f" % float(d.get("mid_price", 0.0)))
+    lines.append("base: %.2f" % float(d.get("base_price", 0.0)))
+    lines.append("qty / target: %.1f / %.1f" % [float(d.get("qty", 0.0)), float(d.get("target", 0.0))])
+    lines.append("diff(target-qty): %.1f" % float(d.get("diff", 0.0)))
+    lines.append("mult_stock: %.3f" % float(d.get("mult_stock", 1.0)))
+    lines.append("effect_mult: %.3f" % float(d.get("effect_mult", 1.0)))
+    lines.append("local_target_mid: %.2f" % float(d.get("local_target_mid", 0.0)))
+
+    if d.has("neighbor_mid"):
+        lines.append("neighbor_mid: %.2f" % float(d.get("neighbor_mid", 0.0)))
+    if d.has("external_delta"):
+        lines.append("external_delta: %.2f" % float(d.get("external_delta", 0.0)))
+    if d.has("beta_used"):
+        lines.append("beta_used: %.3f" % float(d.get("beta_used", 0.0)))
+    if d.has("target_mid_after_external"):
+        lines.append("target_mid_after_external: %.2f" % float(d.get("target_mid_after_external", 0.0)))
+    if d.has("prev_mid"):
+        lines.append("prev_mid: %.2f" % float(d.get("prev_mid", 0.0)))
+    if d.has("alpha_used"):
+        lines.append("alpha_used: %.3f" % float(d.get("alpha_used", 1.0)))
+
+    lines.append("shortage_now: %.3f" % float(d.get("shortage_now", 0.0)))
+    lines.append("shortage_ema: %.3f" % float(d.get("shortage_ema", 0.0)))
+    lines.append("prod / cons: +%.2f / -%.2f" % [float(d.get("prod_per_day", 0.0)), float(d.get("cons_per_day", 0.0))])
+
+    if d.has("base_target"):
+        lines.append("base_target: %.2f" % float(d.get("base_target", 0.0)))
+    if d.has("export_target"):
+        lines.append("export_target: %.2f" % float(d.get("export_target", 0.0)))
+    if d.has("target_eff"):
+        lines.append("target_eff: %.2f" % float(d.get("target_eff", 0.0)))
+    if d.has("effective_target"):
+        lines.append("effective_target: %.2f" % float(d.get("effective_target", 0.0)))
+    if d.has("backlog"):
+        lines.append("backlog: %.2f" % float(d.get("backlog", 0.0)))
+    if d.has("cons_port"):
+        lines.append("cons_port: %.2f" % float(d.get("cons_port", 0.0)))
+    if d.has("water_in"):
+        lines.append("water_in: %.2f" % float(d.get("water_in", 0.0)))
+    if d.has("water_out"):
+        lines.append("water_out: %.2f" % float(d.get("water_out", 0.0)))
+    if d.has("industry_in"):
+        lines.append("industry_in: %.2f" % float(d.get("industry_in", 0.0)))
+    if d.has("industry_out"):
+        lines.append("industry_out: %.2f" % float(d.get("industry_out", 0.0)))
+    if d.has("emergency_supply"):
+        lines.append("emergency_supply: %.2f" % float(d.get("emergency_supply", 0.0)))
+
+    _rt_price_reason.text = "\n".join(lines)
 
 func _update_supply_stats() -> void:
     if world == null:
