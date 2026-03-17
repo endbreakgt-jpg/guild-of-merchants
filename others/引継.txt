@@ -1,4 +1,4 @@
-新規チャット用 引継サマリ（更新: 2026-03-06）
+新規チャット用 引継サマリ（更新: 2026-03-17）
 作業後、必要に応じてこのファイルを上書き更新してください。
 このタスクは Local で実行（Cloud に委譲しない）。
 
@@ -117,30 +117,28 @@ C. 動作確認済み
 - 次は escort に戻ってよい
 
 ==================================================
-【追記 2026-03-16】別タスク: price_reason_visualization_patch_2026-03-16
+【追記 2026-03-16/17】別タスク: debug_ui_price_reason
 ==================================================
 
 ※この追記は、上記の「次タスク（convoy_condition / escort系）」とは別系統。
-  実装・レビュー・マージは分岐して扱うこと。
+  convoy/escort 系とは分けて扱うこと。
 
-0) タスク種別
-- デバッグ可視化改善（価格決定理由の見える化）
-- 対象:
-  - scripts/world.gd
-  - ui/debug_panel.gd
+0) 対象
+- scripts/world.gd
+- ui/debug_panel.gd
+- ui/game_hud.gd
 
 1) 実装サマリ
 A. world.gd
 - 価格理由キャッシュを追加
   - _price_reason_today: city_id -> pid -> reason
   - _price_reason_last_day
-- 価格理由のヘルパーを追加
+- 価格理由ヘルパーを追加
   - _clear_price_reason_today()
   - _ensure_price_reason_cell()
   - _record_price_reason()
   - debug_get_price_reason(city_id, pid)
 - update_prices() を _update_price_for() 集約に変更
-  - 日次更新の先頭で _clear_price_reason_today() を実行
 - _update_price_for() で reason payload を構築・記録
   - base/qty/target/diff/mult_stock/effect_mult
   - local_target_mid/neighbor_mid/external_delta/beta/alpha
@@ -148,57 +146,32 @@ A. world.gd
   - prod_per_day/cons_per_day
   - base_target/target_eff/effective_target/backlog/export_target/cons_port
   - rec にあれば water_in/out, industry_in/out, emergency_supply も記録
-- 日付跨ぎで単体更新が走るケース対策
-  - _record_price_reason() 内で day 変化を検知して自動クリア
+- day 跨ぎの単体更新でも _record_price_reason() 側で自動クリア
 
 B. ui/debug_panel.gd
 - Price Reason セクションを追加
-  - _rt_price_reason: RichTextLabel
-- _build_ui() に Price Reason 表示エリアを追加
-- _update_price_reason(cid, pid) を新規追加
-  - world.debug_get_price_reason() の結果を行単位で表示
-- _update_stats() から _update_price_reason() を呼び出し
-  - pid未選択/World選択/データ未取得時の表示も実装
+- world.debug_get_price_reason() を元に個別都市の価格理由を表示
+- 3/17 時点で表示を整理済み
+  - [基礎] / [外部] / [物流 / 需要] の3ブロック表示
+  - 0 または未設定の行を極力省略
+  - 数値桁を整理
+  - 先頭で「最新再計算スナップショット」と明示
+- World(ALL) / 品目未選択 / データなし時のメッセージ分岐あり
 
-2) 確認状況
-- 静的差分確認: 実施済み
-- 実行確認: 未実施
-  - この環境では godot コマンドが見つからず、起動検証は未実行
-
-3) 分岐運用（今回の依頼対応）
-- 本件は次タスクと別ブランチで扱う
-- 推奨ブランチ名:
-  - feature/price-reason-visualization-20260316
-- 既存の convoy_condition 系ブランチとは混在させない
-
-4) 引継ぎメモ
-- DebugPanel で City を個別都市にすると Price Reason が表示される
-- World(ALL) 選択時は意図的に非表示メッセージを返す
-- 将来、永続化が必要になった場合は save/load 対象に _price_reason_today を追加検討
-
-==================================================
-【追記 2026-03-17】別タスク: debug_ui_followups_2026-03-17
-==================================================
-
-0) 対象
-- ui/game_hud.gd
-- ui/debug_panel.gd
-
-1) 実装サマリ
-- f3_debug_toggle_fix_patch_2026-03-17
-  - F3 は game_hud.gd の _input() のみで処理
+C. ui/game_hud.gd
+- F3 デバッグトグルを修正
+  - _input() のみで処理
   - handled 化して二重トグルを防止
   - debug_open_on_start 時に _debug_user_open を同期
-- price_reason_readability_patch_2026-03-17
-  - Price Reason を [基礎] / [外部] / [物流 / 需要] の3ブロックに整理
-  - 0 または未設定の行を極力省略
-  - 数値桁を整理し、先頭で「最新再計算スナップショット」と明示
-  - world.gd の reason payload 構造は変更なし
 
 2) 確認メモ
 - 静的差分確認: 実施済み
 - headless 起動: World ready までは到達
+- 今回の対象ファイルに対する parse error は未観測
 - 終了時に環境依存のエラーあり
   - root certificate store 読み取り失敗
   - Dialog.gd 側の deferred raise エラー
-- 少なくとも今回の対象ファイルに対する parse error は観測していない
+
+3) 引継ぎメモ
+- DebugPanel で City を個別都市にすると Price Reason が表示される
+- 将来、永続化が必要になった場合は save/load 対象に _price_reason_today を追加検討
