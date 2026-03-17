@@ -1,0 +1,179 @@
+[責務]
+DebugPanel の表示整理（観測性向上）
+
+[仕様]
+暫定仕様。
+Price Reason の内容は変えず、表示の読みやすさだけを改善する。
+world.gd のデータ構造は変更しない。
+
+[対象]
+res://ui/debug_panel.gd
+
+[方針]
+- Price Reason を「基礎」「外部」「物流/需要」の3ブロックに整理する
+- 値が 0 または未設定の行は極力省略する
+- 数値の桁数を揃えて視認性を上げる
+- 現在の reason は「その時点の最新スナップショット」であることを先頭で明示する
+
+────────────────────────────────
+1) 追加関数
+────────────────────────────────
+以下の関数を debug_panel.gd に追加してください。
+
+func _fmt_reason_num(value: Variant, digits: int = 2) -> String:
+    if value == null:
+        return "-"
+    if value is float:
+        return ("%0." + str(digits) + "f") % float(value)
+    if value is int:
+        return str(value)
+    return str(value)
+
+func _reason_value(d: Dictionary, key: String, default_value: Variant = null) -> Variant:
+    return d.get(key, default_value)
+
+func _reason_nonzero(d: Dictionary, key: String, eps: float = 0.0001) -> bool:
+    var v: Variant = d.get(key, null)
+    if v == null:
+        return false
+    if v is int:
+        return int(v) != 0
+    if v is float:
+        return abs(float(v)) > eps
+    return true
+
+func _append_reason_line(lines: PackedStringArray, label: String, value: Variant, digits: int = 2) -> void:
+    lines.append("%s: %s" % [label, _fmt_reason_num(value, digits)])
+
+func _append_reason_line_if_present(lines: PackedStringArray, d: Dictionary, key: String, label: String, digits: int = 2) -> void:
+    if d.has(key):
+        _append_reason_line(lines, label, d[key], digits)
+
+func _append_reason_line_if_nonzero(lines: PackedStringArray, d: Dictionary, key: String, label: String, digits: int = 2, eps: float = 0.0001) -> void:
+    if _reason_nonzero(d, key, eps):
+        _append_reason_line(lines, label, d[key], digits)
+
+func _build_price_reason_text(reason: Dictionary) -> String:
+    if reason.is_empty():
+        return "reason なし"
+
+    var lines: PackedStringArray = []
+    lines.append("最新再計算スナップショット")
+    lines.append("")
+
+    lines.append("[基礎]")
+    _append_reason_line_if_present(lines, reason, "mid", "mid")
+    _append_reason_line_if_present(lines, reason, "base", "base")
+
+    var qty: Variant = _reason_value(reason, "qty", null)
+    var target: Variant = _reason_value(reason, "target", null)
+    if qty != null or target != null:
+        lines.append("qty / target: %s / %s" % [_fmt_reason_num(qty), _fmt_reason_num(target)])
+
+    _append_reason_line_if_present(lines, reason, "diff", "diff(target-qty)")
+    _append_reason_line_if_present(lines, reason, "mult_stock", "stock mult", 3)
+    _append_reason_line_if_present(lines, reason, "effect_mult", "effect mult", 3)
+    _append_reason_line_if_present(lines, reason, "shortage_now", "shortage now", 3)
+    _append_reason_line_if_present(lines, reason, "shortage_ema", "shortage EMA", 3)
+
+    var has_external: bool = false
+    for k in ["local_target_mid", "neighbor_mid", "external_delta", "beta_used", "alpha_used", "target_mid_after_external"]:
+        if reason.has(k):
+            has_external = true
+            break
+    if has_external:
+        lines.append("")
+        lines.append("[外部]")
+        _append_reason_line_if_present(lines, reason, "local_target_mid", "local target mid")
+        _append_reason_line_if_present(lines, reason, "neighbor_mid", "neighbor mid")
+        _append_reason_line_if_nonzero(lines, reason, "external_delta", "external delta")
+        _append_reason_line_if_nonzero(lines, reason, "beta_used", "beta", 3)
+        _append_reason_line_if_nonzero(lines, reason, "alpha_used", "alpha", 3)
+        _append_reason_line_if_present(lines, reason, "target_mid_after_external", "target mid")
+
+    var has_flow: bool = false
+    for k in ["base_target", "target_eff", "effective_target", "backlog", "export_target", "cons_port"]:
+        if reason.has(k) and _reason_nonzero(reason, k, 0.0):
+            has_flow = true
+            break
+    if has_flow:
+        lines.append("")
+        lines.append("[物流 / 需要]")
+        _append_reason_line_if_present(lines, reason, "base_target", "base target")
+        _append_reason_line_if_nonzero(lines, reason, "export_target", "export target")
+        if reason.has("target_eff"):
+            _append_reason_line(lines, "target eff", reason["target_eff"])
+        elif reason.has("effective_target"):
+            _append_reason_line(lines, "target eff", reason["effective_target"])
+        _append_reason_line_if_nonzero(lines, reason, "backlog", "backlog")
+        _append_reason_line_if_nonzero(lines, reason, "cons_port", "port cons")
+
+    return "\n".join(lines)
+
+────────────────────────────────
+2) 置換関数
+────────────────────────────────
+既存の _update_price_reason() を以下で置き換えてください。
+
+func _update_price_reason() -> void:
+    if not is_instance_valid(world):
+        if is_instance_valid(price_reason_label):
+            price_reason_label.text = "world なし"
+        return
+
+    if not is_instance_valid(price_reason_label):
+        return
+
+    var cid := _selected_city_id()
+    if cid == "" or cid == "ALL":
+        price_reason_label.text = "都市個別選択時のみ表示"
+        return
+
+    var pid := _selected_product_id()
+    if pid == "":
+        price_reason_label.text = "品目未選択"
+        return
+
+    var reason: Dictionary = {}
+    if world.has_method("debug_get_price_reason"):
+        reason = world.debug_get_price_reason(cid, pid)
+
+    price_reason_label.text = _build_price_reason_text(reason)
+
+────────────────────────────────
+3) 期待される表示例
+────────────────────────────────
+最新再計算スナップショット
+
+[基礎]
+mid: 10.42
+base: 10.00
+qty / target: 5.00 / 6.00
+diff(target-qty): 1.00
+stock mult: 1.042
+effect mult: 1.000
+shortage now: 0.167
+shortage EMA: 0.170
+
+[外部]
+local target mid: 10.42
+neighbor mid: 10.35
+external delta: 0.07
+beta: 0.200
+alpha: 0.600
+target mid: 10.43
+
+[物流 / 需要]
+base target: 6.00
+export target: 0.80
+target eff: 6.80
+backlog: 0.20
+port cons: 0.00
+
+────────────────────────────────
+4) 補足
+────────────────────────────────
+- これは debug_panel.gd 側だけの修正です。
+- world.gd の reason キー追加は不要です。
+- 0 の行を省略するので、港や背景物流が効いていない品目では表示がかなり短くなります。
+- 将来的に「基本表示 / 詳細表示」の2段階にする場合も、この _build_price_reason_text() を分けるだけで対応できます。

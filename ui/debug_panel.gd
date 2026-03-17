@@ -315,16 +315,132 @@ func _sel_prod() -> String:
         return String(_ob_prod.get_item_metadata(idx))
     return ""
 
+func _selected_city_id() -> String:
+    return _sel_city()
+
+func _selected_product_id() -> String:
+    return _sel_prod()
+
+func _fmt_reason_num(value: Variant, digits: int = 2) -> String:
+    if value == null:
+        return "-"
+    if value is float:
+        return ("%0." + str(digits) + "f") % float(value)
+    if value is int:
+        return str(value)
+    return str(value)
+
+func _reason_value(d: Dictionary, key: String, default_value: Variant = null) -> Variant:
+    return d.get(key, default_value)
+
+func _reason_nonzero(d: Dictionary, key: String, eps: float = 0.0001) -> bool:
+    var v: Variant = d.get(key, null)
+    if v == null:
+        return false
+    if v is int:
+        return int(v) != 0
+    if v is float:
+        return abs(float(v)) > eps
+    return true
+
+func _append_reason_line(lines: PackedStringArray, label: String, value: Variant, digits: int = 2) -> void:
+    lines.append("%s: %s" % [label, _fmt_reason_num(value, digits)])
+
+func _append_reason_line_if_present(lines: PackedStringArray, d: Dictionary, key: String, label: String, digits: int = 2) -> void:
+    if d.has(key):
+        _append_reason_line(lines, label, d[key], digits)
+
+func _append_reason_line_if_nonzero(lines: PackedStringArray, d: Dictionary, key: String, label: String, digits: int = 2, eps: float = 0.0001) -> void:
+    if _reason_nonzero(d, key, eps):
+        _append_reason_line(lines, label, d[key], digits)
+
+func _build_price_reason_text(reason: Dictionary) -> String:
+    if reason.is_empty():
+        return "reason なし"
+
+    var lines: PackedStringArray = []
+    lines.append("最新再計算スナップショット")
+    lines.append("")
+
+    lines.append("[基礎]")
+    var mid: Variant = _reason_value(reason, "mid", null)
+    if mid == null:
+        mid = _reason_value(reason, "mid_price", null)
+    if mid != null:
+        _append_reason_line(lines, "mid", mid)
+
+    var base: Variant = _reason_value(reason, "base", null)
+    if base == null:
+        base = _reason_value(reason, "base_price", null)
+    if base != null:
+        _append_reason_line(lines, "base", base)
+
+    var qty: Variant = _reason_value(reason, "qty", null)
+    var target: Variant = _reason_value(reason, "target", null)
+    if qty != null or target != null:
+        lines.append("qty / target: %s / %s" % [_fmt_reason_num(qty), _fmt_reason_num(target)])
+
+    _append_reason_line_if_present(lines, reason, "diff", "diff(target-qty)")
+    _append_reason_line_if_present(lines, reason, "mult_stock", "stock mult", 3)
+    _append_reason_line_if_present(lines, reason, "effect_mult", "effect mult", 3)
+    _append_reason_line_if_present(lines, reason, "shortage_now", "shortage now", 3)
+    _append_reason_line_if_present(lines, reason, "shortage_ema", "shortage EMA", 3)
+
+    var has_external: bool = false
+    for k in ["local_target_mid", "neighbor_mid", "external_delta", "beta_used", "alpha_used", "target_mid_after_external"]:
+        if reason.has(k):
+            has_external = true
+            break
+    if has_external:
+        lines.append("")
+        lines.append("[外部]")
+        _append_reason_line_if_present(lines, reason, "local_target_mid", "local target mid")
+        _append_reason_line_if_present(lines, reason, "neighbor_mid", "neighbor mid")
+        _append_reason_line_if_nonzero(lines, reason, "external_delta", "external delta")
+        _append_reason_line_if_nonzero(lines, reason, "beta_used", "beta", 3)
+        _append_reason_line_if_nonzero(lines, reason, "alpha_used", "alpha", 3)
+        _append_reason_line_if_present(lines, reason, "target_mid_after_external", "target mid")
+
+    var has_flow: bool = false
+    for k in ["base_target", "target_eff", "effective_target", "backlog", "export_target", "cons_port", "prod_per_day", "cons_per_day", "water_in", "water_out", "industry_in", "industry_out", "emergency_supply"]:
+        if reason.has(k) and _reason_nonzero(reason, k, 0.0):
+            has_flow = true
+            break
+    if has_flow:
+        lines.append("")
+        lines.append("[物流 / 需要]")
+        _append_reason_line_if_present(lines, reason, "base_target", "base target")
+        _append_reason_line_if_nonzero(lines, reason, "export_target", "export target")
+        if reason.has("target_eff"):
+            _append_reason_line(lines, "target eff", reason["target_eff"])
+        elif reason.has("effective_target"):
+            _append_reason_line(lines, "target eff", reason["effective_target"])
+        _append_reason_line_if_nonzero(lines, reason, "backlog", "backlog")
+        _append_reason_line_if_nonzero(lines, reason, "cons_port", "port cons")
+
+        var prod_per_day: Variant = _reason_value(reason, "prod_per_day", null)
+        var cons_per_day: Variant = _reason_value(reason, "cons_per_day", null)
+        if prod_per_day != null or cons_per_day != null:
+            lines.append("prod / cons: %s / %s" % [_fmt_reason_num(prod_per_day), _fmt_reason_num(cons_per_day)])
+
+        _append_reason_line_if_nonzero(lines, reason, "water_in", "water in")
+        _append_reason_line_if_nonzero(lines, reason, "water_out", "water out")
+        _append_reason_line_if_nonzero(lines, reason, "industry_in", "industry in")
+        _append_reason_line_if_nonzero(lines, reason, "industry_out", "industry out")
+        _append_reason_line_if_nonzero(lines, reason, "emergency_supply", "emergency supply")
+
+    return "\n".join(lines)
+
 func _update_stats() -> void:
-    var cid: String = _sel_city()
-    var pid: String = _sel_prod()
+    var cid: String = _selected_city_id()
+    var pid: String = _selected_product_id()
     if pid == "" or world == null:
         _val_mid.text = "-"
         _val_spread.text = "-"
         _val_shortage.text = "-"
         _update_supply_stats()
         _update_city_stock("", "")
-        _update_price_reason("", "")
+        _update_price_reason()
         return
 
     var mid: float = 0.0
@@ -376,7 +492,7 @@ func _update_stats() -> void:
 
     _update_supply_stats()
     _update_city_stock(cid, pid)
-    _update_price_reason(cid, pid)
+    _update_price_reason()
 
 func _world_mid(pid: String) -> float:
     if world == null: return 0.0
@@ -466,79 +582,32 @@ func _update_city_stock(cid: String, pid: String) -> void:
     _val_stock_target.text = "-"
     _val_stock_flow.text = "-"
 
-func _update_price_reason(cid: String, pid: String) -> void:
-    if _rt_price_reason == null:
-        return
-    if world == null or pid == "":
-        _rt_price_reason.text = "-"
-        return
-    if _is_world(cid):
-        _rt_price_reason.text = "Select a city to inspect per-city reason."
-        return
-    if not world.has_method("debug_get_price_reason"):
-        _rt_price_reason.text = "World has no debug_get_price_reason()."
+func _update_price_reason() -> void:
+    if not is_instance_valid(world):
+        if is_instance_valid(_rt_price_reason):
+            _rt_price_reason.text = "world なし"
         return
 
-    var raw_any = world.debug_get_price_reason(cid, pid)
-    if not (raw_any is Dictionary):
-        _rt_price_reason.text = "-"
+    if not is_instance_valid(_rt_price_reason):
         return
 
-    var d: Dictionary = raw_any
-    if d.is_empty():
-        _rt_price_reason.text = "No price reason data for current day."
+    var cid := _selected_city_id()
+    if cid == "" or _is_world(cid):
+        _rt_price_reason.text = "都市個別選択時のみ表示"
         return
 
-    var lines: Array[String] = []
-    lines.append("mid: %.2f" % float(d.get("mid_price", 0.0)))
-    lines.append("base: %.2f" % float(d.get("base_price", 0.0)))
-    lines.append("qty / target: %.1f / %.1f" % [float(d.get("qty", 0.0)), float(d.get("target", 0.0))])
-    lines.append("diff(target-qty): %.1f" % float(d.get("diff", 0.0)))
-    lines.append("mult_stock: %.3f" % float(d.get("mult_stock", 1.0)))
-    lines.append("effect_mult: %.3f" % float(d.get("effect_mult", 1.0)))
-    lines.append("local_target_mid: %.2f" % float(d.get("local_target_mid", 0.0)))
+    var pid := _selected_product_id()
+    if pid == "":
+        _rt_price_reason.text = "品目未選択"
+        return
 
-    if d.has("neighbor_mid"):
-        lines.append("neighbor_mid: %.2f" % float(d.get("neighbor_mid", 0.0)))
-    if d.has("external_delta"):
-        lines.append("external_delta: %.2f" % float(d.get("external_delta", 0.0)))
-    if d.has("beta_used"):
-        lines.append("beta_used: %.3f" % float(d.get("beta_used", 0.0)))
-    if d.has("target_mid_after_external"):
-        lines.append("target_mid_after_external: %.2f" % float(d.get("target_mid_after_external", 0.0)))
-    if d.has("prev_mid"):
-        lines.append("prev_mid: %.2f" % float(d.get("prev_mid", 0.0)))
-    if d.has("alpha_used"):
-        lines.append("alpha_used: %.3f" % float(d.get("alpha_used", 1.0)))
+    var reason: Dictionary = {}
+    if world.has_method("debug_get_price_reason"):
+        var raw_any: Variant = world.debug_get_price_reason(cid, pid)
+        if raw_any is Dictionary:
+            reason = raw_any
 
-    lines.append("shortage_now: %.3f" % float(d.get("shortage_now", 0.0)))
-    lines.append("shortage_ema: %.3f" % float(d.get("shortage_ema", 0.0)))
-    lines.append("prod / cons: +%.2f / -%.2f" % [float(d.get("prod_per_day", 0.0)), float(d.get("cons_per_day", 0.0))])
-
-    if d.has("base_target"):
-        lines.append("base_target: %.2f" % float(d.get("base_target", 0.0)))
-    if d.has("export_target"):
-        lines.append("export_target: %.2f" % float(d.get("export_target", 0.0)))
-    if d.has("target_eff"):
-        lines.append("target_eff: %.2f" % float(d.get("target_eff", 0.0)))
-    if d.has("effective_target"):
-        lines.append("effective_target: %.2f" % float(d.get("effective_target", 0.0)))
-    if d.has("backlog"):
-        lines.append("backlog: %.2f" % float(d.get("backlog", 0.0)))
-    if d.has("cons_port"):
-        lines.append("cons_port: %.2f" % float(d.get("cons_port", 0.0)))
-    if d.has("water_in"):
-        lines.append("water_in: %.2f" % float(d.get("water_in", 0.0)))
-    if d.has("water_out"):
-        lines.append("water_out: %.2f" % float(d.get("water_out", 0.0)))
-    if d.has("industry_in"):
-        lines.append("industry_in: %.2f" % float(d.get("industry_in", 0.0)))
-    if d.has("industry_out"):
-        lines.append("industry_out: %.2f" % float(d.get("industry_out", 0.0)))
-    if d.has("emergency_supply"):
-        lines.append("emergency_supply: %.2f" % float(d.get("emergency_supply", 0.0)))
-
-    _rt_price_reason.text = "\n".join(lines)
+    _rt_price_reason.text = _build_price_reason_text(reason)
 
 func _update_supply_stats() -> void:
     if world == null:

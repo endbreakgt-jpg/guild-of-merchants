@@ -175,3 +175,30 @@ B. ui/debug_panel.gd
 - DebugPanel で City を個別都市にすると Price Reason が表示される
 - World(ALL) 選択時は意図的に非表示メッセージを返す
 - 将来、永続化が必要になった場合は save/load 対象に _price_reason_today を追加検討
+
+==================================================
+【追記 2026-03-17】別タスク: debug_ui_followups_2026-03-17
+==================================================
+
+0) 対象
+- ui/game_hud.gd
+- ui/debug_panel.gd
+
+1) 実装サマリ
+- f3_debug_toggle_fix_patch_2026-03-17
+  - F3 は game_hud.gd の _input() のみで処理
+  - handled 化して二重トグルを防止
+  - debug_open_on_start 時に _debug_user_open を同期
+- price_reason_readability_patch_2026-03-17
+  - Price Reason を [基礎] / [外部] / [物流 / 需要] の3ブロックに整理
+  - 0 または未設定の行を極力省略
+  - 数値桁を整理し、先頭で「最新再計算スナップショット」と明示
+  - world.gd の reason payload 構造は変更なし
+
+2) 確認メモ
+- 静的差分確認: 実施済み
+- headless 起動: World ready までは到達
+- 終了時に環境依存のエラーあり
+  - root certificate store 読み取り失敗
+  - Dialog.gd 側の deferred raise エラー
+- 少なくとも今回の対象ファイルに対する parse error は観測していない
