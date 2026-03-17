@@ -5,6 +5,7 @@ class_name DebugPanel
 @export var default_city: String = ""
 @export var default_product: String = ""
 @export var price_reason_detail_default: bool = false
+@export var price_reason_day_end_default: bool = false
 
 const WORLD_KEY := "__WORLD__" # 特別項目（全世界）
 
@@ -26,6 +27,7 @@ var _val_supply_total: Label
 var _rt_supply_city: RichTextLabel
 var _rt_supply_product: RichTextLabel
 var _rt_price_reason: RichTextLabel
+var _cb_reason_day_end: CheckButton
 var _cb_reason_detail: CheckButton
 
 func _ready() -> void:
@@ -156,6 +158,15 @@ func _build_ui() -> void:
     reason_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     reason_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
     reason_row.add_child(reason_spacer)
+
+    _cb_reason_day_end = CheckButton.new()
+    _cb_reason_day_end.text = "日次確定"
+    _cb_reason_day_end.tooltip_text = "ON で日送り確定後の Price Reason を表示"
+    _cb_reason_day_end.button_pressed = price_reason_day_end_default
+    _cb_reason_day_end.focus_mode = Control.FOCUS_ALL
+    _cb_reason_day_end.mouse_filter = Control.MOUSE_FILTER_STOP
+    _cb_reason_day_end.toggled.connect(_on_reason_source_toggled)
+    reason_row.add_child(_cb_reason_day_end)
 
     _cb_reason_detail = CheckButton.new()
     _cb_reason_detail.text = "詳細"
@@ -376,10 +387,18 @@ func _append_reason_line_if_nonzero(lines: PackedStringArray, d: Dictionary, key
     if _reason_nonzero(d, key, eps):
         _append_reason_line(lines, label, d[key], digits)
 
+func _is_reason_day_end_enabled() -> bool:
+    if is_instance_valid(_cb_reason_day_end):
+        return _cb_reason_day_end.button_pressed
+    return price_reason_day_end_default
+
 func _is_reason_detail_enabled() -> bool:
     if is_instance_valid(_cb_reason_detail):
         return _cb_reason_detail.button_pressed
     return price_reason_detail_default
+
+func _on_reason_source_toggled(_pressed: bool) -> void:
+    _update_price_reason()
 
 func _on_reason_detail_toggled(_pressed: bool) -> void:
     _update_price_reason()
@@ -396,12 +415,30 @@ func _pick_reason_base(reason: Dictionary) -> Variant:
         base = _reason_value(reason, "base_price", null)
     return base
 
-func _build_price_reason_basic_text(reason: Dictionary) -> String:
+func _price_reason_snapshot_title(reason: Dictionary, use_day_end: bool) -> String:
+    var title: String = "最新再計算スナップショット"
+    if use_day_end:
+        title = "日次確定スナップショット"
+
     if reason.is_empty():
-        return "reason なし"
+        return title
+
+    var day_val: Variant = _reason_value(reason, "day", null)
+    if day_val != null:
+        return "%s (day %d)" % [title, int(day_val)]
+    return title
+
+func _price_reason_empty_text(use_day_end: bool) -> String:
+    if use_day_end:
+        return "この時点の日次確定値はまだありません"
+    return "reason なし"
+
+func _build_price_reason_basic_text(reason: Dictionary, use_day_end: bool) -> String:
+    if reason.is_empty():
+        return _price_reason_empty_text(use_day_end)
 
     var lines: PackedStringArray = []
-    lines.append("最新再計算スナップショット")
+    lines.append(_price_reason_snapshot_title(reason, use_day_end))
     lines.append("")
     lines.append("[基本]")
 
@@ -471,12 +508,12 @@ func _build_price_reason_basic_text(reason: Dictionary) -> String:
     lines.append("※ 詳細ONで内訳を表示")
     return "\n".join(lines)
 
-func _build_price_reason_text(reason: Dictionary) -> String:
+func _build_price_reason_text(reason: Dictionary, use_day_end: bool) -> String:
     if reason.is_empty():
-        return "reason なし"
+        return _price_reason_empty_text(use_day_end)
 
     var lines: PackedStringArray = []
-    lines.append("最新再計算スナップショット")
+    lines.append(_price_reason_snapshot_title(reason, use_day_end))
     lines.append("")
 
     lines.append("[基礎]")
@@ -714,16 +751,21 @@ func _update_price_reason() -> void:
         _rt_price_reason.text = "品目未選択"
         return
 
+    var use_day_end: bool = _is_reason_day_end_enabled()
     var reason: Dictionary = {}
-    if world.has_method("debug_get_price_reason"):
-        var raw_any: Variant = world.debug_get_price_reason(cid, pid)
-        if raw_any is Dictionary:
-            reason = raw_any
+    if use_day_end and world.has_method("debug_get_price_reason_day_end"):
+        var raw_day_end: Variant = world.debug_get_price_reason_day_end(cid, pid)
+        if raw_day_end is Dictionary:
+            reason = raw_day_end
+    elif world.has_method("debug_get_price_reason"):
+        var raw_latest: Variant = world.debug_get_price_reason(cid, pid)
+        if raw_latest is Dictionary:
+            reason = raw_latest
 
     if _is_reason_detail_enabled():
-        _rt_price_reason.text = _build_price_reason_text(reason)
+        _rt_price_reason.text = _build_price_reason_text(reason, use_day_end)
     else:
-        _rt_price_reason.text = _build_price_reason_basic_text(reason)
+        _rt_price_reason.text = _build_price_reason_basic_text(reason, use_day_end)
 
 func _update_supply_stats() -> void:
     if world == null:

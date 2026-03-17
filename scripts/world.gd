@@ -418,8 +418,10 @@ var supply_count_total: int = 0
 var supply_count_by_month: Dictionary = {}   # "YYYY-MM" -> int
 var supply_count_by_city: Dictionary = {}    # city_id -> int
 var supply_count_by_pid: Dictionary = {}     # pid -> int
-var _price_reason_today: Dictionary = {}     # city_id -> pid -> reason
+var _price_reason_today: Dictionary = {}     # city_id -> pid -> reason（最新再計算）
 var _price_reason_last_day: int = -1
+var _price_reason_day_end: Dictionary = {}   # city_id -> pid -> reason（日次確定）
+var _price_reason_day_end_day: int = -1
 
 
 var _loader: CsvLoader
@@ -610,6 +612,9 @@ func finalize_day() -> void:
 
     if enable_player_decay:
         _apply_player_decay()
+
+    # 当日すべての価格再計算が終わった時点の確定スナップショットを保存
+    _snapshot_price_reason_day_end()
 
     day_advanced.emit(day)
     world_updated.emit()
@@ -2540,6 +2545,10 @@ func _clear_price_reason_today() -> void:
     _price_reason_today.clear()
     _price_reason_last_day = day
 
+func _clear_price_reason_day_end() -> void:
+    _price_reason_day_end.clear()
+    _price_reason_day_end_day = -1
+
 func _ensure_price_reason_cell(city_id: String, pid: String) -> Dictionary:
     if not _price_reason_today.has(city_id):
         _price_reason_today[city_id] = {}
@@ -2554,6 +2563,22 @@ func _ensure_price_reason_cell(city_id: String, pid: String) -> Dictionary:
     by_pid[pid] = {}
     return by_pid[pid]
 
+func _price_reason_from_store(store: Dictionary, city_id: String, pid: String) -> Dictionary:
+    if city_id == "" or pid == "":
+        return {}
+    if store.has(city_id):
+        var by_pid_val = store.get(city_id)
+        if by_pid_val is Dictionary:
+            var by_pid: Dictionary = by_pid_val
+            var cell_val = by_pid.get(pid)
+            if cell_val is Dictionary:
+                return (cell_val as Dictionary).duplicate(true)
+    return {}
+
+func _snapshot_price_reason_day_end() -> void:
+    _price_reason_day_end = _price_reason_today.duplicate(true)
+    _price_reason_day_end_day = day
+
 func _record_price_reason(city_id: String, pid: String, payload: Dictionary) -> void:
     if _price_reason_last_day != day:
         _clear_price_reason_today()
@@ -2563,16 +2588,13 @@ func _record_price_reason(city_id: String, pid: String, payload: Dictionary) -> 
         cell[key] = payload[key_any]
 
 func debug_get_price_reason(city_id: String, pid: String) -> Dictionary:
-    if city_id == "" or pid == "":
-        return {}
-    if _price_reason_today.has(city_id):
-        var by_pid_val = _price_reason_today.get(city_id)
-        if by_pid_val is Dictionary:
-            var by_pid: Dictionary = by_pid_val
-            var cell_val = by_pid.get(pid)
-            if cell_val is Dictionary:
-                return (cell_val as Dictionary).duplicate(true)
-    return {}
+    return _price_reason_from_store(_price_reason_today, city_id, pid)
+
+func debug_get_price_reason_day_end(city_id: String, pid: String) -> Dictionary:
+    return _price_reason_from_store(_price_reason_day_end, city_id, pid)
+
+func debug_get_price_reason_day_end_day() -> int:
+    return _price_reason_day_end_day
 
 func update_prices() -> void:
     _clear_price_reason_today()

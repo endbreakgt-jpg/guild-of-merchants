@@ -1,0 +1,571 @@
+Guild of Merchants
+Price Reason「最新 / 日次確定」対応パッチ
+更新日: 2026-03-17
+
+目的
+- Price Reason の表示元を「最新再計算スナップショット」と「日次確定スナップショット」で切り替えられるようにする
+- world.gd では当日終端の価格理由を別キャッシュで保持する
+- debug_panel.gd では「日次確定」CheckButton を追加して表示元を切り替える
+
+==================================================
+1) scripts/world.gd
+==================================================
+
+[1-1] 価格理由キャッシュ変数の差し替え
+以下の2行:
+
+var _price_reason_today: Dictionary = {}     # city_id -> pid -> reason
+var _price_reason_last_day: int = -1
+
+を、以下に置き換え:
+
+var _price_reason_today: Dictionary = {}     # city_id -> pid -> reason（最新再計算）
+var _price_reason_last_day: int = -1
+var _price_reason_day_end: Dictionary = {}   # city_id -> pid -> reason（日次確定）
+var _price_reason_day_end_day: int = -1
+
+
+[1-2] finalize_day() を関数ごと置き換え
+
+func finalize_day() -> void:
+    # 生産/消費 → 産業 → 供給 → 価格 → 市・屋台 → NPC → プレイヤー到着 → 劣化 → 通知
+    _decay_backlog_daily()  # バックログを日次で少し蒸発
+
+    # --- Pass A: 需要計算 & 基礎供給（バッチ放出） ---
+    for city_id_any in stock.keys():
+        var city_id: String = String(city_id_any)
+        for pid_any in stock[city_id].keys():
+            var pid: String = String(pid_any)
+            var rec: Dictionary = stock[city_id][pid] as Dictionary
+
+            # 需要（Elasticity を含む基礎関数で算出）
+            var demand: float = _consumption_for_today(city_id, pid)
+            rec["cons"] = demand
+
+            # 生産の取り込み: バッファへ積み、条件成立時だけ市場に出す
+            var base_prod_today: float = float(rec.get("prod", 0.0))
+            _enqueue_prod(city_id, pid, base_prod_today)
+            _try_release_batches(city_id, pid)
+
+            stock[city_id][pid] = rec
+
+    # --- Pass A2: 港への輸入（工房より前） ---
+    _tick_port_imports()
+
+    # --- Pass B: 産業（原料→製品） ---
+    _tick_industries()
+
+    # --- Pass B2: Water logistics ---
+    _tick_water_logistics()
+
+    # --- Pass C: 当日の販売（市場在庫から需要ぶんだけ減る） & backlog ---
+    for city_id_any2 in stock.keys():
+        var city_id2: String = String(city_id_any2)
+        for pid_any2 in stock[city_id2].keys():
+            var pid2: String = String(pid_any2)
+            var demand2: float = float(stock[city_id2][pid2].get("cons", 0.0))
+
+            var have: float = float(stock[city_id2][pid2].get("qty", 0.0))
+            var sold: float = min(have, demand2)
+            have -= sold
+            stock[city_id2][pid2]["qty"] = have
+
+            var unmet: float = max(0.0, demand2 - sold)
+            if use_backlog_absorption and unmet > 0.0:
+                _ensure_backlog_record(city_id2, pid2)
+                backlog[city_id2][pid2] = float(backlog[city_id2].get(pid2, 0.0)) + unmet
+
+    # 追加: ランダム供給（既存機能）
+    if enable_auto_supply:
+        _apply_supply_events()
+
+    # 追加: 欠品救済（安全柵。デフォルトOFF）
+    _tick_emergency_supply()
+
+    update_prices()
+
+    if enable_fairs:
+        _tick_fairs()
+    if enable_stalls:
+        _process_auto_sales()
+
+    # NPC商人の到着＆出発
+    for t in traders:
+        var just_arrived: bool = bool(t.get("enroute", false)) and int(t.get("arrival_day", 0)) <= day
+        if just_arrived:
+            _arrive_and_trade(t)
+
+        if not bool(t.get("enroute", false)) and (depart_same_day or not just_arrived):
+            var city_id3: String = String(t.get("city", ""))
+            if city_id3 != "":
+                var plan: Dictionary = _best_trade_from(city_id3, t)
+                _plan_and_depart(t, plan)
+
+    _tick_player_convoy_condition_on_travel_day()
+    if bool(player.get("enroute", false)) and int(player.get("arrival_day", 0)) <= day:
+        _player_arrive()
+
+    if enable_player_decay:
+        _apply_player_decay()
+
+    # 当日すべての価格再計算が終わった時点の確定スナップショットを保存
+    _snapshot_price_reason_day_end()
+
+    day_advanced.emit(day)
+    world_updated.emit()
+    _log_day_summary()
+    if log_daily_supply_count:
+        _log_supply_daily_count()
+
+
+[1-3] 価格理由ヘルパー群をまとめて置き換え
+以下のブロック:
+- _clear_price_reason_today()
+- _ensure_price_reason_cell()
+- _record_price_reason()
+- debug_get_price_reason()
+
+を、以下に置き換え:
+
+func _clear_price_reason_today() -> void:
+    _price_reason_today.clear()
+    _price_reason_last_day = day
+
+func _clear_price_reason_day_end() -> void:
+    _price_reason_day_end.clear()
+    _price_reason_day_end_day = -1
+
+func _ensure_price_reason_cell(city_id: String, pid: String) -> Dictionary:
+    if not _price_reason_today.has(city_id):
+        _price_reason_today[city_id] = {}
+    var by_pid_val = _price_reason_today.get(city_id)
+    var by_pid: Dictionary = by_pid_val if by_pid_val is Dictionary else {}
+    if not by_pid.has(pid):
+        by_pid[pid] = {}
+    _price_reason_today[city_id] = by_pid
+    var cell_val = by_pid.get(pid)
+    if cell_val is Dictionary:
+        return cell_val
+    by_pid[pid] = {}
+    return by_pid[pid]
+
+func _price_reason_from_store(store: Dictionary, city_id: String, pid: String) -> Dictionary:
+    if city_id == "" or pid == "":
+        return {}
+    if store.has(city_id):
+        var by_pid_val = store.get(city_id)
+        if by_pid_val is Dictionary:
+            var by_pid: Dictionary = by_pid_val
+            var cell_val = by_pid.get(pid)
+            if cell_val is Dictionary:
+                return (cell_val as Dictionary).duplicate(true)
+    return {}
+
+func _snapshot_price_reason_day_end() -> void:
+    _price_reason_day_end = _price_reason_today.duplicate(true)
+    _price_reason_day_end_day = day
+
+func _record_price_reason(city_id: String, pid: String, payload: Dictionary) -> void:
+    if _price_reason_last_day != day:
+        _clear_price_reason_today()
+    var cell: Dictionary = _ensure_price_reason_cell(city_id, pid)
+    for key_any in payload.keys():
+        var key: String = String(key_any)
+        cell[key] = payload[key_any]
+
+func debug_get_price_reason(city_id: String, pid: String) -> Dictionary:
+    return _price_reason_from_store(_price_reason_today, city_id, pid)
+
+func debug_get_price_reason_day_end(city_id: String, pid: String) -> Dictionary:
+    return _price_reason_from_store(_price_reason_day_end, city_id, pid)
+
+func debug_get_price_reason_day_end_day() -> int:
+    return _price_reason_day_end_day
+
+
+==================================================
+2) ui/debug_panel.gd
+==================================================
+
+[2-1] export / 変数宣言の差し替え
+以下のブロック:
+
+@export var world_path: NodePath
+@export var default_city: String = ""
+@export var default_product: String = ""
+@export var price_reason_detail_default: bool = false
+
+const WORLD_KEY := "__WORLD__" # 特別項目（全世界）
+
+var world: World = null # World型のノードを想定
+var _ob_city: OptionButton
+var _ob_prod: OptionButton
+var _val_mid: Label
+var _val_spread: Label
+var _val_shortage: Label
+# --- City Stock (selected or world total) ---
+var _val_stock_qty: Label
+var _val_stock_target: Label
+var _val_stock_flow: Label
+# --- Supply Stats ---
+var _val_day: Label
+var _val_supply_today: Label
+var _val_supply_month: Label
+var _val_supply_total: Label
+var _rt_supply_city: RichTextLabel
+var _rt_supply_product: RichTextLabel
+var _rt_price_reason: RichTextLabel
+var _cb_reason_detail: CheckButton
+
+を、以下に置き換え:
+
+@export var world_path: NodePath
+@export var default_city: String = ""
+@export var default_product: String = ""
+@export var price_reason_detail_default: bool = false
+@export var price_reason_day_end_default: bool = false
+
+const WORLD_KEY := "__WORLD__" # 特別項目（全世界）
+
+var world: World = null # World型のノードを想定
+var _ob_city: OptionButton
+var _ob_prod: OptionButton
+var _val_mid: Label
+var _val_spread: Label
+var _val_shortage: Label
+# --- City Stock (selected or world total) ---
+var _val_stock_qty: Label
+var _val_stock_target: Label
+var _val_stock_flow: Label
+# --- Supply Stats ---
+var _val_day: Label
+var _val_supply_today: Label
+var _val_supply_month: Label
+var _val_supply_total: Label
+var _rt_supply_city: RichTextLabel
+var _rt_supply_product: RichTextLabel
+var _rt_price_reason: RichTextLabel
+var _cb_reason_day_end: CheckButton
+var _cb_reason_detail: CheckButton
+
+
+[2-2] Price Reason ヘッダ行の UI 構築部分を差し替え
+以下のブロック:
+
+    var reason_spacer := Control.new()
+    reason_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reason_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    reason_row.add_child(reason_spacer)
+
+    _cb_reason_detail = CheckButton.new()
+    _cb_reason_detail.text = "詳細"
+    _cb_reason_detail.tooltip_text = "ON で Price Reason の詳細内訳を表示"
+    _cb_reason_detail.button_pressed = price_reason_detail_default
+    _cb_reason_detail.focus_mode = Control.FOCUS_ALL
+    _cb_reason_detail.mouse_filter = Control.MOUSE_FILTER_STOP
+    _cb_reason_detail.toggled.connect(_on_reason_detail_toggled)
+    reason_row.add_child(_cb_reason_detail)
+
+を、以下に置き換え:
+
+    var reason_spacer := Control.new()
+    reason_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reason_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    reason_row.add_child(reason_spacer)
+
+    _cb_reason_day_end = CheckButton.new()
+    _cb_reason_day_end.text = "日次確定"
+    _cb_reason_day_end.tooltip_text = "ON で日送り確定後の Price Reason を表示"
+    _cb_reason_day_end.button_pressed = price_reason_day_end_default
+    _cb_reason_day_end.focus_mode = Control.FOCUS_ALL
+    _cb_reason_day_end.mouse_filter = Control.MOUSE_FILTER_STOP
+    _cb_reason_day_end.toggled.connect(_on_reason_source_toggled)
+    reason_row.add_child(_cb_reason_day_end)
+
+    _cb_reason_detail = CheckButton.new()
+    _cb_reason_detail.text = "詳細"
+    _cb_reason_detail.tooltip_text = "ON で Price Reason の詳細内訳を表示"
+    _cb_reason_detail.button_pressed = price_reason_detail_default
+    _cb_reason_detail.focus_mode = Control.FOCUS_ALL
+    _cb_reason_detail.mouse_filter = Control.MOUSE_FILTER_STOP
+    _cb_reason_detail.toggled.connect(_on_reason_detail_toggled)
+    reason_row.add_child(_cb_reason_detail)
+
+
+[2-3] Price Reason 補助関数群をまとめて置き換え
+以下のブロック:
+- _is_reason_detail_enabled()
+- _on_reason_detail_toggled()
+- _pick_reason_mid()
+- _pick_reason_base()
+- _build_price_reason_basic_text()
+- _build_price_reason_text()
+
+を、以下に置き換え:
+
+func _is_reason_day_end_enabled() -> bool:
+    if is_instance_valid(_cb_reason_day_end):
+        return _cb_reason_day_end.button_pressed
+    return price_reason_day_end_default
+
+func _is_reason_detail_enabled() -> bool:
+    if is_instance_valid(_cb_reason_detail):
+        return _cb_reason_detail.button_pressed
+    return price_reason_detail_default
+
+func _on_reason_source_toggled(_pressed: bool) -> void:
+    _update_price_reason()
+
+func _on_reason_detail_toggled(_pressed: bool) -> void:
+    _update_price_reason()
+
+func _pick_reason_mid(reason: Dictionary) -> Variant:
+    var mid: Variant = _reason_value(reason, "mid", null)
+    if mid == null:
+        mid = _reason_value(reason, "mid_price", null)
+    return mid
+
+func _pick_reason_base(reason: Dictionary) -> Variant:
+    var base: Variant = _reason_value(reason, "base", null)
+    if base == null:
+        base = _reason_value(reason, "base_price", null)
+    return base
+
+func _price_reason_snapshot_title(reason: Dictionary, use_day_end: bool) -> String:
+    var title: String = "最新再計算スナップショット"
+    if use_day_end:
+        title = "日次確定スナップショット"
+
+    if reason.is_empty():
+        return title
+
+    var day_val: Variant = _reason_value(reason, "day", null)
+    if day_val != null:
+        return "%s (day %d)" % [title, int(day_val)]
+    return title
+
+func _price_reason_empty_text(use_day_end: bool) -> String:
+    if use_day_end:
+        return "この時点の日次確定値はまだありません"
+    return "reason なし"
+
+func _build_price_reason_basic_text(reason: Dictionary, use_day_end: bool) -> String:
+    if reason.is_empty():
+        return _price_reason_empty_text(use_day_end)
+
+    var lines: PackedStringArray = []
+    lines.append(_price_reason_snapshot_title(reason, use_day_end))
+    lines.append("")
+    lines.append("[基本]")
+
+    var mid: Variant = _pick_reason_mid(reason)
+    var base: Variant = _pick_reason_base(reason)
+    if mid != null or base != null:
+        lines.append("価格: mid %s / base %s" % [_fmt_reason_num(mid), _fmt_reason_num(base)])
+
+    var qty: Variant = _reason_value(reason, "qty", null)
+    var target: Variant = _reason_value(reason, "target", null)
+    var diff: Variant = _reason_value(reason, "diff", null)
+    var mult_stock: Variant = _reason_value(reason, "mult_stock", null)
+    if qty != null or target != null:
+        lines.append("在庫: qty %s / target %s" % [_fmt_reason_num(qty), _fmt_reason_num(target)])
+    if diff != null or mult_stock != null:
+        lines.append("在庫圧: diff %s / mult %s" % [_fmt_reason_num(diff), _fmt_reason_num(mult_stock, 3)])
+
+    var external_delta: Variant = _reason_value(reason, "external_delta", null)
+    var target_mid_after_external: Variant = _reason_value(reason, "target_mid_after_external", null)
+    if _reason_nonzero(reason, "external_delta"):
+        lines.append("外部: delta %s → target mid %s" % [
+            _fmt_reason_num(external_delta),
+            _fmt_reason_num(target_mid_after_external)
+        ])
+    else:
+        lines.append("外部: 影響小")
+
+    var demand_parts: PackedStringArray = []
+    if reason.has("base_target"):
+        demand_parts.append("base %s" % _fmt_reason_num(reason["base_target"]))
+    if reason.has("target_eff"):
+        demand_parts.append("eff %s" % _fmt_reason_num(reason["target_eff"]))
+    elif reason.has("effective_target"):
+        demand_parts.append("eff %s" % _fmt_reason_num(reason["effective_target"]))
+    if _reason_nonzero(reason, "backlog"):
+        demand_parts.append("backlog %s" % _fmt_reason_num(reason["backlog"]))
+    if _reason_nonzero(reason, "export_target"):
+        demand_parts.append("export %s" % _fmt_reason_num(reason["export_target"]))
+    if _reason_nonzero(reason, "cons_port"):
+        demand_parts.append("port %s" % _fmt_reason_num(reason["cons_port"]))
+    if demand_parts.size() > 0:
+        lines.append("需要: " + " / ".join(demand_parts))
+
+    var supply_parts: PackedStringArray = []
+    if _reason_nonzero(reason, "water_in"):
+        supply_parts.append("water_in %s" % _fmt_reason_num(reason["water_in"]))
+    if _reason_nonzero(reason, "water_out"):
+        supply_parts.append("water_out %s" % _fmt_reason_num(reason["water_out"]))
+    if _reason_nonzero(reason, "industry_in"):
+        supply_parts.append("industry_in %s" % _fmt_reason_num(reason["industry_in"]))
+    if _reason_nonzero(reason, "industry_out"):
+        supply_parts.append("industry_out %s" % _fmt_reason_num(reason["industry_out"]))
+    if _reason_nonzero(reason, "emergency_supply"):
+        supply_parts.append("emergency %s" % _fmt_reason_num(reason["emergency_supply"]))
+    if supply_parts.size() > 0:
+        lines.append("供給: " + " / ".join(supply_parts))
+
+    var shortage_now: Variant = _reason_value(reason, "shortage_now", null)
+    var shortage_ema: Variant = _reason_value(reason, "shortage_ema", null)
+    if shortage_now != null or shortage_ema != null:
+        lines.append("不足: now %s / EMA %s" % [
+            _fmt_reason_num(shortage_now, 3),
+            _fmt_reason_num(shortage_ema, 3)
+        ])
+
+    lines.append("")
+    lines.append("※ 詳細ONで内訳を表示")
+    return "\n".join(lines)
+
+func _build_price_reason_text(reason: Dictionary, use_day_end: bool) -> String:
+    if reason.is_empty():
+        return _price_reason_empty_text(use_day_end)
+
+    var lines: PackedStringArray = []
+    lines.append(_price_reason_snapshot_title(reason, use_day_end))
+    lines.append("")
+
+    lines.append("[基礎]")
+    var mid: Variant = _pick_reason_mid(reason)
+    if mid != null:
+        _append_reason_line(lines, "mid", mid)
+
+    var base: Variant = _pick_reason_base(reason)
+    if base != null:
+        _append_reason_line(lines, "base", base)
+
+    var qty: Variant = _reason_value(reason, "qty", null)
+    var target: Variant = _reason_value(reason, "target", null)
+    if qty != null or target != null:
+        lines.append("qty / target: %s / %s" % [_fmt_reason_num(qty), _fmt_reason_num(target)])
+
+    _append_reason_line_if_present(lines, reason, "diff", "diff(target-qty)")
+    _append_reason_line_if_present(lines, reason, "mult_stock", "stock mult", 3)
+    _append_reason_line_if_present(lines, reason, "effect_mult", "effect mult", 3)
+    _append_reason_line_if_present(lines, reason, "shortage_now", "shortage now", 3)
+    _append_reason_line_if_present(lines, reason, "shortage_ema", "shortage EMA", 3)
+
+    var has_external: bool = false
+    for k in ["local_target_mid", "neighbor_mid", "external_delta", "beta_used", "alpha_used", "target_mid_after_external"]:
+        if reason.has(k):
+            has_external = true
+            break
+    if has_external:
+        lines.append("")
+        lines.append("[外部]")
+        _append_reason_line_if_present(lines, reason, "local_target_mid", "local target mid")
+        _append_reason_line_if_present(lines, reason, "neighbor_mid", "neighbor mid")
+        _append_reason_line_if_nonzero(lines, reason, "external_delta", "external delta")
+        _append_reason_line_if_nonzero(lines, reason, "beta_used", "beta", 3)
+        _append_reason_line_if_nonzero(lines, reason, "alpha_used", "alpha", 3)
+        _append_reason_line_if_present(lines, reason, "target_mid_after_external", "target mid")
+
+    var has_flow: bool = false
+    for k in ["base_target", "target_eff", "effective_target", "backlog", "export_target", "cons_port", "prod_per_day", "cons_per_day", "water_in", "water_out", "industry_in", "industry_out", "emergency_supply"]:
+        if reason.has(k) and _reason_nonzero(reason, k, 0.0):
+            has_flow = true
+            break
+    if has_flow:
+        lines.append("")
+        lines.append("[物流 / 需要]")
+        _append_reason_line_if_present(lines, reason, "base_target", "base target")
+        _append_reason_line_if_nonzero(lines, reason, "export_target", "export target")
+        if reason.has("target_eff"):
+            _append_reason_line(lines, "target eff", reason["target_eff"])
+        elif reason.has("effective_target"):
+            _append_reason_line(lines, "target eff", reason["effective_target"])
+        _append_reason_line_if_nonzero(lines, reason, "backlog", "backlog")
+        _append_reason_line_if_nonzero(lines, reason, "cons_port", "port cons")
+
+        var prod_per_day: Variant = _reason_value(reason, "prod_per_day", null)
+        var cons_per_day: Variant = _reason_value(reason, "cons_per_day", null)
+        if prod_per_day != null or cons_per_day != null:
+            lines.append("prod / cons: %s / %s" % [_fmt_reason_num(prod_per_day), _fmt_reason_num(cons_per_day)])
+
+        _append_reason_line_if_nonzero(lines, reason, "water_in", "water in")
+        _append_reason_line_if_nonzero(lines, reason, "water_out", "water out")
+        _append_reason_line_if_nonzero(lines, reason, "industry_in", "industry in")
+        _append_reason_line_if_nonzero(lines, reason, "industry_out", "industry out")
+        _append_reason_line_if_nonzero(lines, reason, "emergency_supply", "emergency supply")
+
+    return "\n".join(lines)
+
+
+[2-4] _update_price_reason() を関数ごと置き換え
+
+func _update_price_reason() -> void:
+    if not is_instance_valid(world):
+        if is_instance_valid(_rt_price_reason):
+            _rt_price_reason.text = "world なし"
+        return
+
+    if not is_instance_valid(_rt_price_reason):
+        return
+
+    var cid := _selected_city_id()
+    if cid == "" or _is_world(cid):
+        _rt_price_reason.text = "都市個別選択時のみ表示"
+        return
+
+    var pid := _selected_product_id()
+    if pid == "":
+        _rt_price_reason.text = "品目未選択"
+        return
+
+    var use_day_end: bool = _is_reason_day_end_enabled()
+    var reason: Dictionary = {}
+
+    if use_day_end and world.has_method("debug_get_price_reason_day_end"):
+        var raw_day_end: Variant = world.debug_get_price_reason_day_end(cid, pid)
+        if raw_day_end is Dictionary:
+            reason = raw_day_end
+    elif world.has_method("debug_get_price_reason"):
+        var raw_latest: Variant = world.debug_get_price_reason(cid, pid)
+        if raw_latest is Dictionary:
+            reason = raw_latest
+
+    if _is_reason_detail_enabled():
+        _rt_price_reason.text = _build_price_reason_text(reason, use_day_end)
+    else:
+        _rt_price_reason.text = _build_price_reason_basic_text(reason, use_day_end)
+
+
+==================================================
+3) others/引継.txt 追記案
+==================================================
+
+以下を debug_ui_price_reason 節に追記:
+
+[debug_ui_price_reason]
+- 2026-03-17: Price Reason の表示元を「最新再計算」と「日次確定」で切替可能にした。
+- world.gd:
+  - _price_reason_day_end
+  - _price_reason_day_end_day
+  - _snapshot_price_reason_day_end()
+  - debug_get_price_reason_day_end(city_id, pid)
+  - debug_get_price_reason_day_end_day()
+  を追加。
+- finalize_day() の終端で、その日の最終状態を日次確定スナップショットとして保存する。
+- ui/debug_panel.gd:
+  - @export var price_reason_day_end_default: bool = false
+  - var _cb_reason_day_end: CheckButton
+  - _is_reason_day_end_enabled()
+  - _on_reason_source_toggled()
+  - _price_reason_snapshot_title()
+  - _price_reason_empty_text()
+  を追加。
+- Price Reason header に「日次確定」CheckButton を追加。
+  - OFF: 最新再計算スナップショット
+  - ON: 日次確定スナップショット
+- 実機確認ポイント:
+  - 日送り前は「日次確定値はまだありません」と出てもよい
+  - 日送り後は「日次確定」ONで、その日の確定値が表示されること
+  - 売買直後に「最新」と「日次確定」で表示差が出ること
+
