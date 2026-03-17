@@ -254,6 +254,7 @@ func _ensure_spacer_before_buttons() -> void:
         spacer.name = "Spacer"
         spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         topbar.add_child(spacer)
+    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
     var min_btn_idx: int = 999999
     for b in [menu_btn, map_btn, trade_btn]:
         if b and b.get_parent() == topbar:

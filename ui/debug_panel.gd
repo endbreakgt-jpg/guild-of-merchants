@@ -142,21 +142,27 @@ func _build_ui() -> void:
     vb.add_child(HSeparator.new())
 
     var reason_row := HBoxContainer.new()
+    reason_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     reason_row.add_theme_constant_override("separation", 8)
     vb.add_child(reason_row)
 
     var title_reason := Label.new()
     title_reason.text = "Price Reason"
+    title_reason.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     title_reason.add_theme_font_size_override("font_size", 14)
     reason_row.add_child(title_reason)
 
     var reason_spacer := Control.new()
     reason_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reason_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
     reason_row.add_child(reason_spacer)
 
     _cb_reason_detail = CheckButton.new()
     _cb_reason_detail.text = "詳細"
+    _cb_reason_detail.tooltip_text = "ON で Price Reason の詳細内訳を表示"
     _cb_reason_detail.button_pressed = price_reason_detail_default
+    _cb_reason_detail.focus_mode = Control.FOCUS_ALL
+    _cb_reason_detail.mouse_filter = Control.MOUSE_FILTER_STOP
     _cb_reason_detail.toggled.connect(_on_reason_detail_toggled)
     reason_row.add_child(_cb_reason_detail)
 

@@ -1,0 +1,111 @@
+Guild of Merchants
+クリック不発対策パッチ（mouse_filter 対応）
+対象:
+- ui/debug_panel.gd
+- ui/game_hud.gd
+
+目的:
+- 装飾用 / レイアウト用 Control がクリックを吸う可能性を減らす
+- 右寄せ用 Spacer などの透明 Control を必ず MOUSE_FILTER_IGNORE にする
+- 実際に hovered している Control を確認したい場合の任意デバッグコードも添付
+
+==================================================
+1. ui/debug_panel.gd
+==================================================
+
+【置換①】
+Price Reason 見出し行を組み立てている箇所の
+`reason_spacer := Control.new()` 周辺を以下に置換してください。
+
+--- 置換後 ---
+var reason_header := HBoxContainer.new()
+reason_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+stats_col.add_child(reason_header)
+
+var reason_title := Label.new()
+reason_title.text = "Price Reason"
+reason_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+reason_header.add_child(reason_title)
+
+var reason_spacer := Control.new()
+reason_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+reason_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+reason_header.add_child(reason_spacer)
+
+_cb_reason_detail = CheckButton.new()
+_cb_reason_detail.text = "詳細"
+_cb_reason_detail.tooltip_text = "ON で Price Reason の詳細内訳を表示"
+_cb_reason_detail.button_pressed = price_reason_detail_default
+_cb_reason_detail.focus_mode = Control.FOCUS_ALL
+_cb_reason_detail.mouse_filter = Control.MOUSE_FILTER_STOP
+_cb_reason_detail.toggled.connect(_on_reason_detail_toggled)
+reason_header.add_child(_cb_reason_detail)
+--- ここまで ---
+
+
+【補足】
+もし `Price Reason` 周辺以外にも `Control.new()` をレイアウト用スペーサとして使っている箇所があれば、
+同様に `mouse_filter = Control.MOUSE_FILTER_IGNORE` を付けてください。
+
+
+==================================================
+2. ui/game_hud.gd
+==================================================
+
+【置換②】
+TopBar 組み立て時の `Spacer` 作成箇所を以下に置換してください。
+
+--- 置換後 ---
+var spacer = Control.new()
+spacer.name = "Spacer"
+spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+topbar.add_child(spacer)
+--- ここまで ---
+
+
+【補足】
+`game_hud.gd` 内で、他にも見た目だけの `Control.new()` を置いている箇所があれば、
+同じく `mouse_filter = Control.MOUSE_FILTER_IGNORE` を付けてください。
+
+
+==================================================
+3. 任意の切り分け用ログ（必要時のみ）
+==================================================
+
+クリックがまだ不安定な場合だけ、一時的に `debug_panel.gd` か `game_hud.gd` の `_input(event)` に
+以下を入れて、実際にどの Control が hover 対象になっているか確認してください。
+
+--- 任意デバッグコード ---
+func _input(event: InputEvent) -> void:
+    if event is InputEventMouseButton and event.pressed:
+        var hovered := get_viewport().gui_get_hovered_control()
+        if hovered:
+            print("hovered: ", hovered.name, " / ", hovered.get_path())
+--- ここまで ---
+
+※ これは恒久対応ではなく切り分け用です。
+※ 既存の `_input(event)` がある場合は、その中へ一時的に追記してください。
+
+
+==================================================
+4. 確認項目
+==================================================
+
+- DebugPanel の「詳細」トグルが毎回安定してクリックできるか
+- 画面上部ボタン（Story / Play / Menu / Map など）のクリック抜けがないか
+- マウスオーバー反応はあるのにクリックだけ効かない箇所が残っていないか
+- もし残る場合、hovered ログで透明 Control や Panel が拾われていないか
+
+
+==================================================
+5. 引継.txt 追記用メモ（必要なら）
+==================================================
+
+- debug_ui_price_reason / debug_ui_input 系フォローとして、
+  レイアウト用 Control がクリック入力を吸う可能性に対応。
+- debug_panel.gd の Price Reason header spacer、game_hud.gd の topbar spacer に
+  `mouse_filter = Control.MOUSE_FILTER_IGNORE` を追加。
+- 透明 Control が hover / click 判定を阻害しうるため、今後スペーサ用途の Control.new() には
+  原則 `MOUSE_FILTER_IGNORE` を付与する運用メモを追加。
+

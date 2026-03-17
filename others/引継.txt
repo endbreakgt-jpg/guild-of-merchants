@@ -156,6 +156,8 @@ B. ui/debug_panel.gd
   - 0 または未設定の行を極力省略
   - 数値桁を整理
   - 先頭で「最新再計算スナップショット」と明示
+- Price Reason header の spacer に MOUSE_FILTER_IGNORE を付与
+- 「詳細」CheckButton に tooltip / focus / mouse_filter を設定
 - World(ALL) / 品目未選択 / データなし時のメッセージ分岐あり
 
 [debug_ui_price_reason]
@@ -170,6 +172,7 @@ B. ui/debug_panel.gd
   - _pick_reason_base()
   - _build_price_reason_basic_text()
 - _update_price_reason() は toggle 状態に応じて _build_price_reason_basic_text() / _build_price_reason_text() を切り替える。
+- レイアウト用 Control がクリックを吸わないよう、spacer は原則 MOUSE_FILTER_IGNORE を付ける。
 - 目的:
   - 通常確認では要点だけを見やすくする
   - 必要時だけ詳細内訳を見る
@@ -184,6 +187,8 @@ C. ui/game_hud.gd
   - _input() のみで処理
   - handled 化して二重トグルを防止
   - debug_open_on_start 時に _debug_user_open を同期
+- TopBar の Spacer に MOUSE_FILTER_IGNORE を付与
+- 透明なレイアウト用 Control.new() はクリック阻害を避けるため IGNORE 運用
 
 2) 確認メモ
 - 静的差分確認: 実施済み
@@ -195,4 +200,5 @@ C. ui/game_hud.gd
 
 3) 引継ぎメモ
 - DebugPanel で City を個別都市にすると Price Reason が表示される
+- DebugPanel の「詳細」トグルや TopBar 周辺でクリック抜けが出る場合は、透明 Control の mouse_filter を先に疑う
 - 将来、永続化が必要になった場合は save/load 対象に _price_reason_today を追加検討
