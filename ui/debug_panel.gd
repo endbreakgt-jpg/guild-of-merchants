@@ -4,6 +4,7 @@ class_name DebugPanel
 @export var world_path: NodePath
 @export var default_city: String = ""
 @export var default_product: String = ""
+@export var price_reason_detail_default: bool = false
 
 const WORLD_KEY := "__WORLD__" # 特別項目（全世界）
 
@@ -25,6 +26,7 @@ var _val_supply_total: Label
 var _rt_supply_city: RichTextLabel
 var _rt_supply_product: RichTextLabel
 var _rt_price_reason: RichTextLabel
+var _cb_reason_detail: CheckButton
 
 func _ready() -> void:
     _setup_anchor()
@@ -139,10 +141,24 @@ func _build_ui() -> void:
 
     vb.add_child(HSeparator.new())
 
+    var reason_row := HBoxContainer.new()
+    reason_row.add_theme_constant_override("separation", 8)
+    vb.add_child(reason_row)
+
     var title_reason := Label.new()
     title_reason.text = "Price Reason"
     title_reason.add_theme_font_size_override("font_size", 14)
-    vb.add_child(title_reason)
+    reason_row.add_child(title_reason)
+
+    var reason_spacer := Control.new()
+    reason_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reason_row.add_child(reason_spacer)
+
+    _cb_reason_detail = CheckButton.new()
+    _cb_reason_detail.text = "詳細"
+    _cb_reason_detail.button_pressed = price_reason_detail_default
+    _cb_reason_detail.toggled.connect(_on_reason_detail_toggled)
+    reason_row.add_child(_cb_reason_detail)
 
     _rt_price_reason = RichTextLabel.new()
     _rt_price_reason.bbcode_enabled = false
@@ -354,6 +370,101 @@ func _append_reason_line_if_nonzero(lines: PackedStringArray, d: Dictionary, key
     if _reason_nonzero(d, key, eps):
         _append_reason_line(lines, label, d[key], digits)
 
+func _is_reason_detail_enabled() -> bool:
+    if is_instance_valid(_cb_reason_detail):
+        return _cb_reason_detail.button_pressed
+    return price_reason_detail_default
+
+func _on_reason_detail_toggled(_pressed: bool) -> void:
+    _update_price_reason()
+
+func _pick_reason_mid(reason: Dictionary) -> Variant:
+    var mid: Variant = _reason_value(reason, "mid", null)
+    if mid == null:
+        mid = _reason_value(reason, "mid_price", null)
+    return mid
+
+func _pick_reason_base(reason: Dictionary) -> Variant:
+    var base: Variant = _reason_value(reason, "base", null)
+    if base == null:
+        base = _reason_value(reason, "base_price", null)
+    return base
+
+func _build_price_reason_basic_text(reason: Dictionary) -> String:
+    if reason.is_empty():
+        return "reason なし"
+
+    var lines: PackedStringArray = []
+    lines.append("最新再計算スナップショット")
+    lines.append("")
+    lines.append("[基本]")
+
+    var mid: Variant = _pick_reason_mid(reason)
+    var base: Variant = _pick_reason_base(reason)
+    if mid != null or base != null:
+        lines.append("価格: mid %s / base %s" % [_fmt_reason_num(mid), _fmt_reason_num(base)])
+
+    var qty: Variant = _reason_value(reason, "qty", null)
+    var target: Variant = _reason_value(reason, "target", null)
+    var diff: Variant = _reason_value(reason, "diff", null)
+    var mult_stock: Variant = _reason_value(reason, "mult_stock", null)
+    if qty != null or target != null:
+        lines.append("在庫: qty %s / target %s" % [_fmt_reason_num(qty), _fmt_reason_num(target)])
+    if diff != null or mult_stock != null:
+        lines.append("在庫圧: diff %s / mult %s" % [_fmt_reason_num(diff), _fmt_reason_num(mult_stock, 3)])
+
+    var external_delta: Variant = _reason_value(reason, "external_delta", null)
+    var target_mid_after_external: Variant = _reason_value(reason, "target_mid_after_external", null)
+    if _reason_nonzero(reason, "external_delta"):
+        lines.append("外部: delta %s → target mid %s" % [
+            _fmt_reason_num(external_delta),
+            _fmt_reason_num(target_mid_after_external)
+        ])
+    else:
+        lines.append("外部: 影響小")
+
+    var demand_parts: PackedStringArray = []
+    if reason.has("base_target"):
+        demand_parts.append("base %s" % _fmt_reason_num(reason["base_target"]))
+    if reason.has("target_eff"):
+        demand_parts.append("eff %s" % _fmt_reason_num(reason["target_eff"]))
+    elif reason.has("effective_target"):
+        demand_parts.append("eff %s" % _fmt_reason_num(reason["effective_target"]))
+    if _reason_nonzero(reason, "backlog"):
+        demand_parts.append("backlog %s" % _fmt_reason_num(reason["backlog"]))
+    if _reason_nonzero(reason, "export_target"):
+        demand_parts.append("export %s" % _fmt_reason_num(reason["export_target"]))
+    if _reason_nonzero(reason, "cons_port"):
+        demand_parts.append("port %s" % _fmt_reason_num(reason["cons_port"]))
+    if demand_parts.size() > 0:
+        lines.append("需要: " + " / ".join(demand_parts))
+
+    var supply_parts: PackedStringArray = []
+    if _reason_nonzero(reason, "water_in"):
+        supply_parts.append("water_in %s" % _fmt_reason_num(reason["water_in"]))
+    if _reason_nonzero(reason, "water_out"):
+        supply_parts.append("water_out %s" % _fmt_reason_num(reason["water_out"]))
+    if _reason_nonzero(reason, "industry_in"):
+        supply_parts.append("industry_in %s" % _fmt_reason_num(reason["industry_in"]))
+    if _reason_nonzero(reason, "industry_out"):
+        supply_parts.append("industry_out %s" % _fmt_reason_num(reason["industry_out"]))
+    if _reason_nonzero(reason, "emergency_supply"):
+        supply_parts.append("emergency %s" % _fmt_reason_num(reason["emergency_supply"]))
+    if supply_parts.size() > 0:
+        lines.append("供給: " + " / ".join(supply_parts))
+
+    var shortage_now: Variant = _reason_value(reason, "shortage_now", null)
+    var shortage_ema: Variant = _reason_value(reason, "shortage_ema", null)
+    if shortage_now != null or shortage_ema != null:
+        lines.append("不足: now %s / EMA %s" % [
+            _fmt_reason_num(shortage_now, 3),
+            _fmt_reason_num(shortage_ema, 3)
+        ])
+
+    lines.append("")
+    lines.append("※ 詳細ONで内訳を表示")
+    return "\n".join(lines)
+
 func _build_price_reason_text(reason: Dictionary) -> String:
     if reason.is_empty():
         return "reason なし"
@@ -363,15 +474,11 @@ func _build_price_reason_text(reason: Dictionary) -> String:
     lines.append("")
 
     lines.append("[基礎]")
-    var mid: Variant = _reason_value(reason, "mid", null)
-    if mid == null:
-        mid = _reason_value(reason, "mid_price", null)
+    var mid: Variant = _pick_reason_mid(reason)
     if mid != null:
         _append_reason_line(lines, "mid", mid)
 
-    var base: Variant = _reason_value(reason, "base", null)
-    if base == null:
-        base = _reason_value(reason, "base_price", null)
+    var base: Variant = _pick_reason_base(reason)
     if base != null:
         _append_reason_line(lines, "base", base)
 
@@ -607,7 +714,10 @@ func _update_price_reason() -> void:
         if raw_any is Dictionary:
             reason = raw_any
 
-    _rt_price_reason.text = _build_price_reason_text(reason)
+    if _is_reason_detail_enabled():
+        _rt_price_reason.text = _build_price_reason_text(reason)
+    else:
+        _rt_price_reason.text = _build_price_reason_basic_text(reason)
 
 func _update_supply_stats() -> void:
     if world == null:

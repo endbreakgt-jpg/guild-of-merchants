@@ -158,6 +158,27 @@ B. ui/debug_panel.gd
   - 先頭で「最新再計算スナップショット」と明示
 - World(ALL) / 品目未選択 / データなし時のメッセージ分岐あり
 
+[debug_ui_price_reason]
+- 2026-03-17: ui/debug_panel.gd の Price Reason に「詳細」CheckButton を追加。
+- OFF時は基本表示（要約）、ON時は既存の詳細表示を出し分ける。
+- 追加内容:
+  - @export var price_reason_detail_default: bool = false
+  - var _cb_reason_detail: CheckButton
+  - _is_reason_detail_enabled()
+  - _on_reason_detail_toggled()
+  - _pick_reason_mid()
+  - _pick_reason_base()
+  - _build_price_reason_basic_text()
+- _update_price_reason() は toggle 状態に応じて _build_price_reason_basic_text() / _build_price_reason_text() を切り替える。
+- 目的:
+  - 通常確認では要点だけを見やすくする
+  - 必要時だけ詳細内訳を見る
+- 実機確認ポイント:
+  - 都市個別選択時に Price Reason が表示されること
+  - 「詳細」ON/OFF で表示文面が即時切替すること
+  - 商品切替・売買・日送り後も toggle 状態を維持したまま更新されること
+
+
 C. ui/game_hud.gd
 - F3 デバッグトグルを修正
   - _input() のみで処理
