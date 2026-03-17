@@ -219,12 +219,16 @@ func _ready() -> void:
 
     if debug_open_on_start:
         _spawn_debug_if_needed()
+        _debug_user_open = true
         if debug_embed and is_instance_valid(debug_panel):
             debug_panel.visible = true
+            if debug_panel.has_method("move_to_front"):
+                debug_panel.move_to_front()
+            elif debug_panel.has_method("raise"):
+                debug_panel.raise()
         elif is_instance_valid(debug_window):
             debug_window.popup_centered()
             debug_window.grab_focus()
-        set_process_input(true)
 
     set_process_unhandled_input(true)
     _ensure_dice_overlay()
@@ -696,14 +700,17 @@ func _on_popup_visibility_changed() -> void:
 
 # ---- input (ESC / F3 で操作) ----
 func _input(event: InputEvent) -> void:
-    _handle_esc_event(event)
     if event.is_action_pressed("toggle_debug"):
         _on_debug_btn()
+        get_viewport().set_input_as_handled()
+        return
+
+    _handle_esc_event(event)
 
 func _unhandled_input(event: InputEvent) -> void:
+    # F3 は _input() 側で処理する。
+    # ここでも触ると、表示状態やフォーカス状況によって二重トグルになり得る。
     _handle_esc_event(event)
-    if event.is_action_pressed("toggle_debug"):
-        _on_debug_btn()
 
 func _handle_esc_event(event: InputEvent) -> void:
     if event.is_action_pressed("ui_cancel"):

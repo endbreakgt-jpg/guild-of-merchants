@@ -1,0 +1,74 @@
+[対象]
+res://ui/game_hud.gd
+
+[責務]
+WINDOW / 補助UI入力
+F3 デバッグトグルの二重反応防止と、起動時 Debug Open 状態の内部フラグ同期
+
+[扱い]
+暫定ではなく修正寄り。既存責務を崩さず、入力処理の不整合だけを直す。
+
+==================================================
+1) _ready() 内の debug_open_on_start ブロックを置換
+==================================================
+
+[検索目安]
+if debug_open_on_start:
+
+[置換後]
+    if debug_open_on_start:
+        _spawn_debug_if_needed()
+        _debug_user_open = true
+        if debug_embed and is_instance_valid(debug_panel):
+            debug_panel.visible = true
+            if debug_panel.has_method("move_to_front"):
+                debug_panel.move_to_front()
+            elif debug_panel.has_method("raise"):
+                debug_panel.raise()
+        elif is_instance_valid(debug_window):
+            debug_window.popup_centered()
+            debug_window.grab_focus()
+
+
+==================================================
+2) _input(event: InputEvent) を関数ごと置換
+==================================================
+
+func _input(event: InputEvent) -> void:
+    if event.is_action_pressed("toggle_debug"):
+        _on_debug_btn()
+        get_viewport().set_input_as_handled()
+        return
+
+    _handle_esc_event(event)
+
+
+==================================================
+3) _unhandled_input(event: InputEvent) を関数ごと置換
+==================================================
+
+func _unhandled_input(event: InputEvent) -> void:
+    # F3 は _input() 側で処理する。
+    # ここでも触ると、表示状態やフォーカス状況によって二重トグルになり得る。
+    _handle_esc_event(event)
+
+
+==================================================
+[修正意図]
+==================================================
+- 現状は _input() と _unhandled_input() の両方で toggle_debug を見ているため、
+  F3 が 1 回で 2 回トグルされる経路がある。
+- DebugPanel 表示中は UI 側のフォーカス状態によって片側だけ動き、
+  非表示後は両方動いて結果的に再表示されない、という症状が起きやすい。
+- そのため、F3 は _input() のみで処理し、handled にして二重反応を止める。
+- あわせて debug_open_on_start=true のときに _debug_user_open も true に揃え、
+  見た目の表示状態と内部フラグの不一致をなくす。
+
+
+==================================================
+[確認項目]
+==================================================
+- Debug Open=true で起動し、F3 で非表示→再表示が往復できる
+- Debug Open=false でも F3 で開閉できる
+- ESC による既存のウィンドウクローズ動作が壊れていない
+- Debug ボタンからの開閉も従来どおり動く

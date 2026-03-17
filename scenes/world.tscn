@@ -80,6 +80,7 @@ world_path = NodePath("..")
 dialog_player_path = NodePath("../DialogPlayer")
 show_supply_dialog = false
 show_event_log_panel = false
+debug_open_on_start = true
 
 [node name="Margin" type="MarginContainer" parent="GameHUD"]
 layout_mode = 0
