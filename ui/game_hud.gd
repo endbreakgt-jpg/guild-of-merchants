@@ -1278,12 +1278,15 @@ func _open_escort_confirm_for_move(
     dlg.transient_to_focused = true
     dlg.always_on_top = true
     dlg.exclusive = true
+    dlg.min_size = Vector2i(340, 260)
+    dlg.size = Vector2i(360, 280)
     _escort_confirm_dlg = dlg
     dlg.title = "護衛の確認"
     map_window.add_child(dlg)
 
     var vb := VBoxContainer.new()
-    vb.custom_minimum_size = Vector2(280, 0)
+    vb.add_theme_constant_override("separation", 6)
+    vb.custom_minimum_size = Vector2(300, 0)
     dlg.add_child(vb)
 
     var guide := Label.new()
@@ -1532,10 +1535,6 @@ func _on_map_city_picked(cid: String) -> void:
 
     dlg.confirmed.connect(func():
         _close_escort_confirm_if_any()
-
-        if is_instance_valid(_move_confirm_dlg):
-            _move_confirm_dlg.hide()
-
         _open_escort_confirm_for_move(cid, use_path, days, total, cash)
     )
 

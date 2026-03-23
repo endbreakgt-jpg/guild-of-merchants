@@ -3590,10 +3590,17 @@ func _ensure_player_integrity() -> void:
     if not player.has("last_arrival_day"):
         player["last_arrival_day"] = -999
 
+func _effective_escort_level_max() -> int:
+    if not escort_enabled:
+        return 0
+    if escort_level_max <= 0:
+        return 3
+    return escort_level_max
+
 func _normalize_escort_level(level: int) -> int:
     if not escort_enabled:
         return 0
-    return clampi(level, 0, escort_level_max)
+    return clampi(level, 0, _effective_escort_level_max())
 
 func get_escort_label(level: int) -> String:
     var lv: int = _normalize_escort_level(level)
@@ -3630,7 +3637,7 @@ func get_escort_bandit_reduction(level: int) -> float:
 
 func get_escort_offer_rows(days: int) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
-    var max_level: int = escort_level_max if escort_enabled else 0
+    var max_level: int = _effective_escort_level_max()
 
     for lv in range(0, max_level + 1):
         rows.append({
