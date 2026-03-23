@@ -1222,12 +1222,12 @@ func _compare_city_list_entry(a: Dictionary, b: Dictionary) -> bool:
 
     return pa < pb
 
-func _close_escort_confirm_if_any() -> void:
+func _close_escort_confirm_if_any(restore_move_focus: bool = true) -> void:
     if is_instance_valid(_escort_confirm_dlg):
         _escort_confirm_dlg.queue_free()
     _escort_confirm_dlg = null
 
-    if is_instance_valid(_move_confirm_dlg):
+    if restore_move_focus and is_instance_valid(_move_confirm_dlg):
         _move_confirm_dlg.show()
         _move_confirm_dlg.grab_focus()
 
@@ -1275,7 +1275,7 @@ func _open_escort_confirm_for_move(
     if world == null or not is_instance_valid(map_window):
         return
 
-    _close_escort_confirm_if_any()
+    _close_escort_confirm_if_any(false)
 
     var dlg := ConfirmationDialog.new()
     _escort_confirm_dlg = dlg
@@ -1283,20 +1283,13 @@ func _open_escort_confirm_for_move(
     dlg.exclusive = true
     dlg.unresizable = true
     dlg.min_size = Vector2i(360, 260)
+    dlg.size = Vector2i(360, 260)
     map_window.add_child(dlg)
 
-    var root := MarginContainer.new()
-    root.offset_left = 12.0
-    root.offset_top = 12.0
-    root.offset_right = -12.0
-    root.offset_bottom = -12.0
-    root.anchor_right = 1.0
-    root.anchor_bottom = 1.0
-    dlg.add_child(root)
-
     var vb := VBoxContainer.new()
-    vb.custom_minimum_size = Vector2(320, 0)
-    root.add_child(vb)
+    vb.position = Vector2(12, 12)
+    vb.custom_minimum_size = Vector2(320, 180)
+    dlg.add_child(vb)
 
     var guide := Label.new()
     guide.text = "護衛の有無を選んで出発します。"
@@ -1304,7 +1297,7 @@ func _open_escort_confirm_for_move(
 
     var opt := OptionButton.new()
     opt.focus_mode = Control.FOCUS_ALL
-    opt.custom_minimum_size = Vector2(280, 0)
+    opt.custom_minimum_size = Vector2(320, 0)
     vb.add_child(opt)
 
     var rows: Array[Dictionary] = []
@@ -1329,8 +1322,7 @@ func _open_escort_confirm_for_move(
 
     var info := Label.new()
     info.autowrap_mode = TextServer.AUTOWRAP_WORD
-    info.custom_minimum_size = Vector2(0, 120)
-    info.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    info.custom_minimum_size = Vector2(320, 120)
     vb.add_child(info)
 
     _update_escort_confirm_summary(info, 0, days, base_total, cash)
@@ -1346,16 +1338,10 @@ func _open_escort_confirm_for_move(
         dlg.get_cancel_button().text = "戻る"
 
     dlg.canceled.connect(func():
-        _close_escort_confirm_if_any()
-        if is_instance_valid(_move_confirm_dlg):
-            _move_confirm_dlg.show()
-            _move_confirm_dlg.grab_focus()
+        _close_escort_confirm_if_any(true)
     )
     dlg.close_requested.connect(func():
-        _close_escort_confirm_if_any()
-        if is_instance_valid(_move_confirm_dlg):
-            _move_confirm_dlg.show()
-            _move_confirm_dlg.grab_focus()
+        _close_escort_confirm_if_any(true)
     )
 
     dlg.confirmed.connect(func():
@@ -1386,7 +1372,7 @@ func _open_escort_confirm_for_move(
                 res_ok = world.player_move(cid, escort_level)
 
         if res_ok:
-            _close_escort_confirm_if_any()
+            _close_escort_confirm_if_any(false)
 
             if is_instance_valid(map_window):
                 var map := map_window.get_node_or_null("MapLayer")
@@ -1419,6 +1405,7 @@ func _open_escort_confirm_for_move(
         call_deferred("_sync_pause_state")
     )
     dlg.popup_centered(Vector2i(360, 260))
+    dlg.grab_focus()
 
     if opt.item_count > 0:
         opt.select(0)
@@ -1549,8 +1536,6 @@ func _on_map_city_picked(cid: String) -> void:
         dlg.get_cancel_button().text = "やめる"
 
     dlg.confirmed.connect(func():
-        _close_escort_confirm_if_any()
-
         if is_instance_valid(_move_confirm_dlg):
             _move_confirm_dlg.show()
 
