@@ -1227,6 +1227,10 @@ func _close_escort_confirm_if_any() -> void:
         _escort_confirm_dlg.queue_free()
     _escort_confirm_dlg = null
 
+    if is_instance_valid(_move_confirm_dlg):
+        _move_confirm_dlg.show()
+        _move_confirm_dlg.grab_focus()
+
 func _update_escort_confirm_summary(
     info_label: Label,
     selected_level: int,
@@ -1274,27 +1278,33 @@ func _open_escort_confirm_for_move(
     _close_escort_confirm_if_any()
 
     var dlg := ConfirmationDialog.new()
-    dlg.transient = true
-    dlg.transient_to_focused = true
-    dlg.always_on_top = true
-    dlg.exclusive = true
-    dlg.min_size = Vector2i(340, 260)
-    dlg.size = Vector2i(360, 280)
     _escort_confirm_dlg = dlg
     dlg.title = "護衛の確認"
+    dlg.exclusive = true
+    dlg.unresizable = true
+    dlg.min_size = Vector2i(360, 260)
     map_window.add_child(dlg)
 
+    var root := MarginContainer.new()
+    root.offset_left = 12.0
+    root.offset_top = 12.0
+    root.offset_right = -12.0
+    root.offset_bottom = -12.0
+    root.anchor_right = 1.0
+    root.anchor_bottom = 1.0
+    dlg.add_child(root)
+
     var vb := VBoxContainer.new()
-    vb.add_theme_constant_override("separation", 6)
-    vb.custom_minimum_size = Vector2(300, 0)
-    dlg.add_child(vb)
+    vb.custom_minimum_size = Vector2(320, 0)
+    root.add_child(vb)
 
     var guide := Label.new()
     guide.text = "護衛の有無を選んで出発します。"
-    guide.autowrap_mode = TextServer.AUTOWRAP_WORD
     vb.add_child(guide)
 
     var opt := OptionButton.new()
+    opt.focus_mode = Control.FOCUS_ALL
+    opt.custom_minimum_size = Vector2(280, 0)
     vb.add_child(opt)
 
     var rows: Array[Dictionary] = []
@@ -1305,8 +1315,8 @@ func _open_escort_confirm_for_move(
         rows = [
             {"level": 0, "label": "護衛なし", "cost": 0.0},
             {"level": 1, "label": "軽護衛", "cost": 0.0},
-            {"level": 2, "label": "中護衛", "cost": 0.0},
-            {"level": 3, "label": "重護衛", "cost": 0.0},
+            {"level": 2, "label": "標準護衛", "cost": 0.0},
+            {"level": 3, "label": "厚い護衛", "cost": 0.0},
         ]
 
     for row in rows:
@@ -1319,6 +1329,8 @@ func _open_escort_confirm_for_move(
 
     var info := Label.new()
     info.autowrap_mode = TextServer.AUTOWRAP_WORD
+    info.custom_minimum_size = Vector2(0, 120)
+    info.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
     vb.add_child(info)
 
     _update_escort_confirm_summary(info, 0, days, base_total, cash)
@@ -1336,13 +1348,13 @@ func _open_escort_confirm_for_move(
     dlg.canceled.connect(func():
         _close_escort_confirm_if_any()
         if is_instance_valid(_move_confirm_dlg):
-            _move_confirm_dlg.popup_centered()
+            _move_confirm_dlg.show()
             _move_confirm_dlg.grab_focus()
     )
     dlg.close_requested.connect(func():
         _close_escort_confirm_if_any()
         if is_instance_valid(_move_confirm_dlg):
-            _move_confirm_dlg.popup_centered()
+            _move_confirm_dlg.show()
             _move_confirm_dlg.grab_focus()
     )
 
@@ -1359,9 +1371,9 @@ func _open_escort_confirm_for_move(
         if cash < total_cost:
             var err := AcceptDialog.new()
             err.title = "出発できません"
-            err.dialog_text = "所持金が不足しています。\n必要: %.1f / 所持金: %.1f" % [total_cost, cash]
+            err.dialog_text = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total_cost, cash]
             map_window.add_child(err)
-            err.popup_centered()
+            err.popup_centered(Vector2i(320, 140))
             return
 
         var res_ok := false
@@ -1396,7 +1408,7 @@ func _open_escort_confirm_for_move(
             err2.title = "出発できません"
             err2.dialog_text = "出発処理に失敗しました。"
             map_window.add_child(err2)
-            err2.popup_centered()
+            err2.popup_centered(Vector2i(320, 140))
     )
 
     _sync_pause_state()
@@ -1406,8 +1418,11 @@ func _open_escort_confirm_for_move(
     dlg.visibility_changed.connect(func():
         call_deferred("_sync_pause_state")
     )
-    dlg.popup_centered()
-    dlg.grab_focus()
+    dlg.popup_centered(Vector2i(360, 260))
+
+    if opt.item_count > 0:
+        opt.select(0)
+    opt.grab_focus()
 
 func _on_map_city_picked(cid: String) -> void:
 
@@ -1535,6 +1550,10 @@ func _on_map_city_picked(cid: String) -> void:
 
     dlg.confirmed.connect(func():
         _close_escort_confirm_if_any()
+
+        if is_instance_valid(_move_confirm_dlg):
+            _move_confirm_dlg.show()
+
         _open_escort_confirm_for_move(cid, use_path, days, total, cash)
     )
 
