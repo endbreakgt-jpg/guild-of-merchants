@@ -286,6 +286,11 @@ var _emergency_last_day: Dictionary = {}         # city_id -> pid -> int
 @export var travel_good_weight_per_hazard: float = -0.2    # 危険度で良イベントはやや減
 @export var travel_good_weight_per_escort: float = 0.3     # 護衛で良イベントはやや増
 @export_range(0, 50, 1) var travel_roll_shift_max: int = 20
+@export var escort_enabled: bool = true
+@export_range(0, 3, 1) var escort_level_max: int = 3
+@export_range(0.0, 10.0, 0.1) var escort_cost_per_day_lv1: float = 0.6
+@export_range(0.0, 10.0, 0.1) var escort_cost_per_day_lv2: float = 1.2
+@export_range(0.0, 10.0, 0.1) var escort_cost_per_day_lv3: float = 2.0
 @export_range(0.0, 1.0, 0.01) var escort_bandit_layer_reduction_per_level: float = 0.15
 @export var convoy_condition_enabled: bool = true
 @export_range(1, 100, 1) var convoy_condition_max: int = 100
@@ -3585,17 +3590,71 @@ func _ensure_player_integrity() -> void:
     if not player.has("last_arrival_day"):
         player["last_arrival_day"] = -999
 
+func _normalize_escort_level(level: int) -> int:
+    if not escort_enabled:
+        return 0
+    return clampi(level, 0, escort_level_max)
+
+func get_escort_label(level: int) -> String:
+    var lv: int = _normalize_escort_level(level)
+    match lv:
+        1:
+            return "軽護衛"
+        2:
+            return "中護衛"
+        3:
+            return "重護衛"
+        _:
+            return "護衛なし"
+
+func get_escort_cost(level: int, days: int) -> float:
+    var lv: int = _normalize_escort_level(level)
+    var d: int = max(0, days)
+    var per_day: float = 0.0
+
+    match lv:
+        1:
+            per_day = escort_cost_per_day_lv1
+        2:
+            per_day = escort_cost_per_day_lv2
+        3:
+            per_day = escort_cost_per_day_lv3
+        _:
+            per_day = 0.0
+
+    return per_day * float(d)
+
+func get_escort_bandit_reduction(level: int) -> float:
+    var lv: int = _normalize_escort_level(level)
+    return min(1.0, float(lv) * escort_bandit_layer_reduction_per_level)
+
+func get_escort_offer_rows(days: int) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    var max_level: int = escort_level_max if escort_enabled else 0
+
+    for lv in range(0, max_level + 1):
+        rows.append({
+            "level": lv,
+            "label": get_escort_label(lv),
+            "days": days,
+            "cost": get_escort_cost(lv, days),
+            "bandit_reduction": get_escort_bandit_reduction(lv),
+        })
+
+    return rows
+
 func _player_arrive() -> void:
     player["enroute"] = false
     player["city"] = player["dest"]
     player["last_arrival_day"] = day
     player["arrival_day_base"] = 0
+    player["escort_level"] = 0
     world_updated.emit()
     contracts_try_auto_deliver_at(String(player.get("city","")))
 
 enum MoveErr { OK, ARRIVED_TODAY, NOT_ADJACENT, LACK_CASH }
 
-func can_player_move_to(dest: String) -> Dictionary:
+func can_player_move_to(dest: String, escort_level: int = 0) -> Dictionary:
     var a: String = String(player.get("city", ""))
     if int(player.get("last_arrival_day", -999)) == day:
         return {"ok": false, "err": MoveErr.ARRIVED_TODAY}
@@ -3604,12 +3663,29 @@ func can_player_move_to(dest: String) -> Dictionary:
     var cap_used: int = _cargo_used(player)
     var breakdown: Dictionary = _calc_edge_travel_cost(a, dest, cap_used)
     var days: int = int(breakdown.get("days", 1))
-    var total_cost: float = float(breakdown.get("total", 0.0))
+    var escort_lv: int = _normalize_escort_level(escort_level)
+    var escort_cost: float = get_escort_cost(escort_lv, days)
+    var total_cost: float = float(breakdown.get("total", 0.0)) + escort_cost
     if float(player.get("cash", 0.0)) < total_cost:
-        return {"ok": false, "err": MoveErr.LACK_CASH, "need": total_cost, "days": days, "breakdown": breakdown}
-    return {"ok": true, "need": total_cost, "days": days, "breakdown": breakdown}
+        return {
+            "ok": false,
+            "err": MoveErr.LACK_CASH,
+            "need": total_cost,
+            "days": days,
+            "escort_level": escort_lv,
+            "escort_cost": escort_cost,
+            "breakdown": breakdown
+        }
+    return {
+        "ok": true,
+        "need": total_cost,
+        "days": days,
+        "escort_level": escort_lv,
+        "escort_cost": escort_cost,
+        "breakdown": breakdown
+    }
 
-func player_move(dest: String) -> bool:
+func player_move(dest: String, escort_level: int = 0) -> bool:
     # 1ステップ移動も player_move_via に統一して扱う
     if bool(player.get("enroute", false)):
         return false
@@ -3623,7 +3699,7 @@ func player_move(dest: String) -> bool:
         return false
 
     var path: Array[String] = [a, dest]
-    return player_move_via(dest, path)
+    return player_move_via(dest, path, escort_level)
 
 
 # ---- Path & multi-hop travel (new) ----
@@ -3805,7 +3881,7 @@ func compute_path(a: String, b: String, weight_type: String = "fastest") -> Dict
         "score": float(dist.get(b, float(days)))
     }
 
-func player_move_via(dest: String, path: Array[String]) -> bool:
+func player_move_via(dest: String, path: Array[String], escort_level: int = 0) -> bool:
     if bool(player.get("enroute", false)):
         return false
     if int(player.get("last_arrival_day", -999)) == day:
@@ -3814,6 +3890,8 @@ func player_move_via(dest: String, path: Array[String]) -> bool:
         return false
     if String(path.front()) != String(player.get("city", "")) or String(path.back()) != dest:
         return false
+
+    var escort_lv: int = _normalize_escort_level(escort_level)
 
     # 現在の積載量をもとに、各辺のコストを集計
     var cap_used: int = _cargo_used(player)
@@ -3837,6 +3915,9 @@ func player_move_via(dest: String, path: Array[String]) -> bool:
     if days_total <= 0:
         return false
 
+    var escort_cost: float = get_escort_cost(escort_lv, days_total)
+    total_cost += escort_cost
+
     if float(player.get("cash", 0.0)) < total_cost:
         return false
 
@@ -3851,6 +3932,7 @@ func player_move_via(dest: String, path: Array[String]) -> bool:
         cities[cid]["funds"] = float(cities[cid].get("funds", 0.0)) + float(per_city_cost[cid])
 
     # 出発
+    player["escort_level"] = escort_lv
     player["dest"] = dest
     player["arrival_day"] = day + days_total
     player["arrival_day_base"] = int(player["arrival_day"])

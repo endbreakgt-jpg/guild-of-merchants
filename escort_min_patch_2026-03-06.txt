@@ -1,0 +1,423 @@
+Guild of Merchants 護衛導入パッチ（最小実装）
+更新日: 2026-03-06
+
+方針
+- 既存の移動確認ダイアログはそのまま使う
+- 「移動する」を押した後に、護衛選択ダイアログを出す
+- World を状態・料金計算の責務、GameHUD をUI導線の責務に置く
+- 最小実装として escort_level 0..3 を1回の旅に対して選択
+- 護衛費は出発時に一括支払い
+- 到着時に escort_level を 0 に戻す
+
+================================================================================
+1) scripts/world.gd
+================================================================================
+
+A. 既存の護衛export群の近くに追記
+----------------------------------------
+
+@export var escort_enabled: bool = true
+@export_range(0, 3, 1) var escort_level_max: int = 3
+@export_range(0.0, 10.0, 0.1) var escort_cost_per_day_lv1: float = 0.6
+@export_range(0.0, 10.0, 0.1) var escort_cost_per_day_lv2: float = 1.2
+@export_range(0.0, 10.0, 0.1) var escort_cost_per_day_lv3: float = 2.0
+
+
+B. 移動まわりのヘルパーを追加
+----------------------------------------
+# 置き場所は can_player_move_to / player_move / player_move_via の少し上でOK
+
+func _normalize_escort_level(level: int) -> int:
+    if not escort_enabled:
+        return 0
+    return clampi(level, 0, escort_level_max)
+
+func get_escort_label(level: int) -> String:
+    var lv: int = _normalize_escort_level(level)
+    match lv:
+        1:
+            return "軽護衛"
+        2:
+            return "標準護衛"
+        3:
+            return "厚い護衛"
+        _:
+            return "護衛なし"
+
+func get_escort_cost(level: int, days: int) -> float:
+    var lv: int = _normalize_escort_level(level)
+    var d: int = max(0, days)
+    var per_day: float = 0.0
+
+    match lv:
+        1:
+            per_day = escort_cost_per_day_lv1
+        2:
+            per_day = escort_cost_per_day_lv2
+        3:
+            per_day = escort_cost_per_day_lv3
+        _:
+            per_day = 0.0
+
+    return per_day * float(d)
+
+func get_escort_bandit_reduction(level: int) -> float:
+    var lv: int = _normalize_escort_level(level)
+    return min(1.0, float(lv) * escort_bandit_layer_reduction_per_level)
+
+func get_escort_offer_rows(days: int) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+
+    for lv in range(0, escort_level_max + 1):
+        rows.append({
+            "level": lv,
+            "label": get_escort_label(lv),
+            "days": days,
+            "cost": get_escort_cost(lv, days),
+            "bandit_reduction": get_escort_bandit_reduction(lv),
+        })
+
+    return rows
+
+
+C. _player_arrive() を置換
+----------------------------------------
+
+func _player_arrive() -> void:
+    player["enroute"] = false
+    player["city"] = player["dest"]
+    player["last_arrival_day"] = day
+    player["arrival_day_base"] = 0
+    player["escort_level"] = 0
+    world_updated.emit()
+    contracts_try_auto_deliver_at(String(player.get("city", "")))
+
+
+D. can_player_move_to() を置換
+----------------------------------------
+
+func can_player_move_to(dest: String, escort_level: int = 0) -> Dictionary:
+    var a: String = String(player.get("city", ""))
+
+    if int(player.get("last_arrival_day", -999)) == day:
+        return {"ok": false, "err": MoveErr.ARRIVED_TODAY}
+
+    if not adj.has(a) or not (dest in (adj[a] as Array)):
+        return {"ok": false, "err": MoveErr.NOT_ADJACENT}
+
+    var cap_used: int = _cargo_used(player)
+    var breakdown: Dictionary = _calc_edge_travel_cost(a, dest, cap_used)
+    var days: int = int(breakdown.get("days", 1))
+    var escort_lv: int = _normalize_escort_level(escort_level)
+    var escort_cost: float = get_escort_cost(escort_lv, days)
+    var total_cost: float = float(breakdown.get("total", 0.0)) + escort_cost
+
+    if float(player.get("cash", 0.0)) < total_cost:
+        return {
+            "ok": false,
+            "err": MoveErr.LACK_CASH,
+            "need": total_cost,
+            "days": days,
+            "escort_level": escort_lv,
+            "escort_cost": escort_cost,
+            "breakdown": breakdown
+        }
+
+    return {
+        "ok": true,
+        "need": total_cost,
+        "days": days,
+        "escort_level": escort_lv,
+        "escort_cost": escort_cost,
+        "breakdown": breakdown
+    }
+
+
+E. player_move() を置換
+----------------------------------------
+
+func player_move(dest: String, escort_level: int = 0) -> bool:
+    # 1ステップ移動も player_move_via に統一して扱う
+    if bool(player.get("enroute", false)):
+        return false
+    if int(player.get("last_arrival_day", -999)) == day:
+        return false
+
+    var a: String = String(player.get("city", ""))
+    if a == "" or dest == "":
+        return false
+    if not adj.has(a) or not (dest in (adj[a] as Array)):
+        return false
+
+    var path: Array[String] = [a, dest]
+    return player_move_via(dest, path, escort_level)
+
+
+F. player_move_via() を置換
+----------------------------------------
+
+func player_move_via(dest: String, path: Array[String], escort_level: int = 0) -> bool:
+    if bool(player.get("enroute", false)):
+        return false
+    if int(player.get("last_arrival_day", -999)) == day:
+        return false
+    if path.size() < 2:
+        return false
+    if String(path.front()) != String(player.get("city", "")) or String(path.back()) != dest:
+        return false
+
+    var escort_lv: int = _normalize_escort_level(escort_level)
+    var cap_used: int = _cargo_used(player)
+
+    var days_total: int = 0
+    var total_cost: float = 0.0
+    var per_city_cost: Dictionary = {}
+
+    for i in range(path.size() - 1):
+        var u := String(path[i])
+        var v := String(path[i + 1])
+
+        var breakdown: Dictionary = _calc_edge_travel_cost(u, v, cap_used)
+        var d_edge: int = int(breakdown.get("days", 0))
+        var c_edge: float = float(breakdown.get("total", 0.0))
+
+        days_total += d_edge
+        total_cost += c_edge
+        per_city_cost[v] = float(per_city_cost.get(v, 0.0)) + c_edge
+
+    if days_total <= 0:
+        return false
+
+    var escort_cost: float = get_escort_cost(escort_lv, days_total)
+    total_cost += escort_cost
+
+    if float(player.get("cash", 0.0)) < total_cost:
+        return false
+
+    # 支払い
+    player["cash"] = float(player.get("cash", 0.0)) - total_cost
+
+    # 都市への落ち金は経由先に寄せる
+    for cid_any in per_city_cost.keys():
+        var cid := String(cid_any)
+        if not cities.has(cid):
+            continue
+        cities[cid]["funds"] = float(cities[cid].get("funds", 0.0)) + float(per_city_cost[cid])
+
+    # 出発
+    player["escort_level"] = escort_lv
+    player["dest"] = dest
+    player["arrival_day"] = day + days_total
+    player["arrival_day_base"] = int(player["arrival_day"])
+    player["enroute"] = true
+
+    world_updated.emit()
+    return true
+
+
+================================================================================
+2) ui/game_hud.gd
+================================================================================
+
+A. 変数追加
+----------------------------------------
+# _move_confirm_dlg の近くに追加
+
+var _escort_confirm_dlg: ConfirmationDialog = null
+
+
+B. ヘルパー追加
+----------------------------------------
+# _close_confirm_if_any() の近くに置くと見通しがよいです
+
+func _close_escort_confirm_if_any() -> void:
+    if is_instance_valid(_escort_confirm_dlg):
+        _escort_confirm_dlg.queue_free()
+    _escort_confirm_dlg = null
+
+func _update_escort_confirm_summary(
+    info_label: Label,
+    selected_level: int,
+    days: int,
+    base_total: float,
+    cash: float
+) -> void:
+    if world == null or info_label == null:
+        return
+
+    var escort_cost: float = 0.0
+    if world.has_method("get_escort_cost"):
+        escort_cost = float(world.get_escort_cost(selected_level, days))
+
+    var protect_pct: float = 0.0
+    if world.has_method("get_escort_bandit_reduction"):
+        protect_pct = float(world.get_escort_bandit_reduction(selected_level)) * 100.0
+
+    var escort_name: String = "護衛なし"
+    if world.has_method("get_escort_label"):
+        escort_name = String(world.get_escort_label(selected_level))
+
+    var total_cost: float = base_total + escort_cost
+
+    var txt := ""
+    txt += "護衛: %s\n" % escort_name
+    txt += "日数: %d\n" % days
+    txt += "護衛費: %.1f\n" % escort_cost
+    txt += "盗賊対策: -%.0f%%\n" % protect_pct
+    txt += "――――――――――\n"
+    txt += "出発合計: %.1f\n" % total_cost
+    txt += "所持金: %.1f" % cash
+    info_label.text = txt
+
+func _open_escort_confirm_for_move(
+    cid: String,
+    use_path: Array[String],
+    days: int,
+    base_total: float,
+    cash: float
+) -> void:
+    if world == null or not is_instance_valid(map_window):
+        return
+
+    _close_escort_confirm_if_any()
+
+    var dlg := ConfirmationDialog.new()
+    _escort_confirm_dlg = dlg
+    dlg.title = "護衛の確認"
+    map_window.add_child(dlg)
+
+    var vb := VBoxContainer.new()
+    vb.custom_minimum_size = Vector2(280, 0)
+    dlg.add_child(vb)
+
+    var guide := Label.new()
+    guide.text = "護衛を付けて出発しますか？"
+    vb.add_child(guide)
+
+    var opt := OptionButton.new()
+    vb.add_child(opt)
+
+    var rows: Array[Dictionary] = []
+    if world.has_method("get_escort_offer_rows"):
+        rows = world.get_escort_offer_rows(days)
+
+    if rows.is_empty():
+        rows = [
+            {"level": 0, "label": "護衛なし", "cost": 0.0},
+            {"level": 1, "label": "軽護衛", "cost": 0.0},
+            {"level": 2, "label": "標準護衛", "cost": 0.0},
+            {"level": 3, "label": "厚い護衛", "cost": 0.0},
+        ]
+
+    for row in rows:
+        var level: int = int(row.get("level", 0))
+        var label: String = String(row.get("label", "護衛なし"))
+        var cost: float = float(row.get("cost", 0.0))
+        opt.add_item("%s  %.1fG" % [label, cost])
+        var idx: int = opt.item_count - 1
+        opt.set_item_metadata(idx, level)
+
+    var info := Label.new()
+    info.autowrap_mode = TextServer.AUTOWRAP_WORD
+    vb.add_child(info)
+
+    _update_escort_confirm_summary(info, 0, days, base_total, cash)
+
+    opt.item_selected.connect(func(index: int):
+        var level: int = int(opt.get_item_metadata(index))
+        _update_escort_confirm_summary(info, level, days, base_total, cash)
+    )
+
+    if dlg.get_ok_button():
+        dlg.get_ok_button().text = "出発する"
+    if dlg.get_cancel_button():
+        dlg.get_cancel_button().text = "戻る"
+
+    dlg.canceled.connect(func():
+        _close_escort_confirm_if_any()
+        if is_instance_valid(_move_confirm_dlg):
+            _move_confirm_dlg.popup_centered()
+            _move_confirm_dlg.grab_focus()
+    )
+
+    dlg.confirmed.connect(func():
+        var escort_level: int = 0
+        if opt.selected >= 0:
+            escort_level = int(opt.get_item_metadata(opt.selected))
+
+        var escort_cost: float = 0.0
+        if world.has_method("get_escort_cost"):
+            escort_cost = float(world.get_escort_cost(escort_level, days))
+
+        var total_cost: float = base_total + escort_cost
+
+        if cash < total_cost:
+            var err := AcceptDialog.new()
+            err.title = "出発できません"
+            err.dialog_text = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total_cost, cash]
+            map_window.add_child(err)
+            err.popup_centered()
+            return
+
+        var res_ok := false
+
+        if world and world.has_method("player_move_via") and use_path.size() >= 2:
+            if int(world.player.get("last_arrival_day", -999)) != world.day:
+                res_ok = world.player_move_via(cid, use_path, escort_level)
+        else:
+            var r := world.can_player_move_to(cid, escort_level)
+            if bool(r.get("ok", false)):
+                res_ok = world.player_move(cid, escort_level)
+
+        if res_ok:
+            _close_escort_confirm_if_any()
+            if is_instance_valid(_move_confirm_dlg):
+                _move_confirm_dlg.queue_free()
+                _move_confirm_dlg = null
+            start_auto_travel()
+        else:
+            var err2 := AcceptDialog.new()
+            err2.title = "出発できません"
+            err2.dialog_text = "出発処理に失敗しました。"
+            map_window.add_child(err2)
+            err2.popup_centered()
+    )
+
+    dlg.popup_centered()
+
+
+C. _on_map_city_picked() の confirmed.connect ブロックだけ差し替え
+----------------------------------------
+# 既存の「その場で world.player_move_via(...) を呼ぶ」部分を、
+# 下記のように「護衛ダイアログを開く」形へ変更してください。
+
+    dlg.confirmed.connect(func():
+        _close_escort_confirm_if_any()
+
+        if is_instance_valid(_move_confirm_dlg):
+            _move_confirm_dlg.hide()
+
+        _open_escort_confirm_for_move(cid, use_path, days, total, cash)
+    )
+
+
+================================================================================
+3) 動作確認ポイント
+================================================================================
+
+1. 都市ノード選択
+2. 既存の移動確認ダイアログが出る
+3. 「移動する」で護衛ダイアログへ遷移
+4. 護衛レベル変更で護衛費と出発合計が更新
+5. 「出発する」で auto travel 開始
+6. travel event の重み計算で escort_level が効く
+7. 到着後 escort_level が 0 に戻る
+
+================================================================================
+4) メモ
+================================================================================
+
+- まずは「護衛は bandit レイヤだけに効く」で十分です
+- 危険度や weather/water への拡張は後で World 側だけを広げれば対応できます
+- UI文言の「移動する」は当面そのままで問題ありません
+- 将来、ルート3候補UIを入れるときもこの護衛ダイアログはそのまま再利用できます

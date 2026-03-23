@@ -928,6 +928,9 @@ func _open_map_popup(for_move: bool = false) -> void:
         if is_instance_valid(_move_confirm_dlg):
             _move_confirm_dlg.queue_free()
             _move_confirm_dlg = null
+        if is_instance_valid(_escort_confirm_dlg):
+            _escort_confirm_dlg.queue_free()
+            _escort_confirm_dlg = null
 
         _map_city_list_panel = null
         _map_city_list_body = null
@@ -995,6 +998,7 @@ func _spawn_trade_if_needed() -> void:
 
 # ---- Move / Inventory ----
 var _move_confirm_dlg: ConfirmationDialog = null
+var _escort_confirm_dlg: ConfirmationDialog = null
 var _last_move_pick_cid: String = ""
 
 var _map_city_list_panel: PanelContainer = null
@@ -1218,9 +1222,198 @@ func _compare_city_list_entry(a: Dictionary, b: Dictionary) -> bool:
 
     return pa < pb
 
+func _close_escort_confirm_if_any() -> void:
+    if is_instance_valid(_escort_confirm_dlg):
+        _escort_confirm_dlg.queue_free()
+    _escort_confirm_dlg = null
+
+func _update_escort_confirm_summary(
+    info_label: Label,
+    selected_level: int,
+    days: int,
+    base_total: float,
+    cash: float
+) -> void:
+    if world == null or info_label == null:
+        return
+
+    var escort_cost: float = 0.0
+    if world.has_method("get_escort_cost"):
+        escort_cost = float(world.get_escort_cost(selected_level, days))
+
+    var protect_pct: float = 0.0
+    if world.has_method("get_escort_bandit_reduction"):
+        protect_pct = float(world.get_escort_bandit_reduction(selected_level)) * 100.0
+
+    var escort_name: String = "護衛なし"
+    if world.has_method("get_escort_label"):
+        escort_name = String(world.get_escort_label(selected_level))
+
+    var total_cost: float = base_total + escort_cost
+
+    var txt := ""
+    txt += "護衛: %s\n" % escort_name
+    txt += "日数: %d\n" % days
+    txt += "護衛費: %.1f\n" % escort_cost
+    txt += "盗賊危険軽減: -%.0f%%\n" % protect_pct
+    txt += "――――――――――\n"
+    txt += "出発時合計: %.1f\n" % total_cost
+    txt += "所持金: %.1f" % cash
+    info_label.text = txt
+
+func _open_escort_confirm_for_move(
+    cid: String,
+    use_path: Array[String],
+    days: int,
+    base_total: float,
+    cash: float
+) -> void:
+    if world == null or not is_instance_valid(map_window):
+        return
+
+    _close_escort_confirm_if_any()
+
+    var dlg := ConfirmationDialog.new()
+    dlg.transient = true
+    dlg.transient_to_focused = true
+    dlg.always_on_top = true
+    dlg.exclusive = true
+    _escort_confirm_dlg = dlg
+    dlg.title = "護衛の確認"
+    map_window.add_child(dlg)
+
+    var vb := VBoxContainer.new()
+    vb.custom_minimum_size = Vector2(280, 0)
+    dlg.add_child(vb)
+
+    var guide := Label.new()
+    guide.text = "護衛の有無を選んで出発します。"
+    guide.autowrap_mode = TextServer.AUTOWRAP_WORD
+    vb.add_child(guide)
+
+    var opt := OptionButton.new()
+    vb.add_child(opt)
+
+    var rows: Array[Dictionary] = []
+    if world.has_method("get_escort_offer_rows"):
+        rows = world.get_escort_offer_rows(days)
+
+    if rows.is_empty():
+        rows = [
+            {"level": 0, "label": "護衛なし", "cost": 0.0},
+            {"level": 1, "label": "軽護衛", "cost": 0.0},
+            {"level": 2, "label": "中護衛", "cost": 0.0},
+            {"level": 3, "label": "重護衛", "cost": 0.0},
+        ]
+
+    for row in rows:
+        var level: int = int(row.get("level", 0))
+        var label: String = String(row.get("label", "護衛なし"))
+        var cost: float = float(row.get("cost", 0.0))
+        opt.add_item("%s  %.1fG" % [label, cost])
+        var idx: int = opt.item_count - 1
+        opt.set_item_metadata(idx, level)
+
+    var info := Label.new()
+    info.autowrap_mode = TextServer.AUTOWRAP_WORD
+    vb.add_child(info)
+
+    _update_escort_confirm_summary(info, 0, days, base_total, cash)
+
+    opt.item_selected.connect(func(index: int):
+        var level: int = int(opt.get_item_metadata(index))
+        _update_escort_confirm_summary(info, level, days, base_total, cash)
+    )
+
+    if dlg.get_ok_button():
+        dlg.get_ok_button().text = "出発する"
+    if dlg.get_cancel_button():
+        dlg.get_cancel_button().text = "戻る"
+
+    dlg.canceled.connect(func():
+        _close_escort_confirm_if_any()
+        if is_instance_valid(_move_confirm_dlg):
+            _move_confirm_dlg.popup_centered()
+            _move_confirm_dlg.grab_focus()
+    )
+    dlg.close_requested.connect(func():
+        _close_escort_confirm_if_any()
+        if is_instance_valid(_move_confirm_dlg):
+            _move_confirm_dlg.popup_centered()
+            _move_confirm_dlg.grab_focus()
+    )
+
+    dlg.confirmed.connect(func():
+        var escort_level: int = 0
+        if opt.selected >= 0:
+            escort_level = int(opt.get_item_metadata(opt.selected))
+
+        var escort_cost: float = 0.0
+        if world.has_method("get_escort_cost"):
+            escort_cost = float(world.get_escort_cost(escort_level, days))
+
+        var total_cost: float = base_total + escort_cost
+        if cash < total_cost:
+            var err := AcceptDialog.new()
+            err.title = "出発できません"
+            err.dialog_text = "所持金が不足しています。\n必要: %.1f / 所持金: %.1f" % [total_cost, cash]
+            map_window.add_child(err)
+            err.popup_centered()
+            return
+
+        var res_ok := false
+        if world and world.has_method("player_move_via") and use_path.size() >= 2:
+            if int(world.player.get("last_arrival_day", -999)) != world.day:
+                res_ok = world.player_move_via(cid, use_path, escort_level)
+        else:
+            var r := world.can_player_move_to(cid, escort_level)
+            if bool(r.get("ok", false)):
+                res_ok = world.player_move(cid, escort_level)
+
+        if res_ok:
+            _close_escort_confirm_if_any()
+
+            if is_instance_valid(map_window):
+                var map := map_window.get_node_or_null("MapLayer")
+                if map and map.has_method("end_pick"):
+                    map.call("end_pick")
+                map_window.hide()
+                map_window.queue_free()
+                map_window = null
+
+            if is_instance_valid(_move_confirm_dlg):
+                _move_confirm_dlg.hide()
+                _move_confirm_dlg.queue_free()
+                _move_confirm_dlg = null
+
+            start_auto_travel()
+            _refresh()
+        else:
+            var err2 := AcceptDialog.new()
+            err2.title = "出発できません"
+            err2.dialog_text = "出発処理に失敗しました。"
+            map_window.add_child(err2)
+            err2.popup_centered()
+    )
+
+    _sync_pause_state()
+    dlg.confirmed.connect(_sync_pause_state)
+    dlg.canceled.connect(_sync_pause_state)
+    dlg.close_requested.connect(_sync_pause_state)
+    dlg.visibility_changed.connect(func():
+        call_deferred("_sync_pause_state")
+    )
+    dlg.popup_centered()
+    dlg.grab_focus()
+
 func _on_map_city_picked(cid: String) -> void:
 
     # 二重生成防止：同じ都市で確認ダイアログが開いているならフォーカスだけ戻す
+    if is_instance_valid(_escort_confirm_dlg):
+        if _escort_confirm_dlg.visible and _last_move_pick_cid == cid:
+            _escort_confirm_dlg.grab_focus()
+            return
+        _close_escort_confirm_if_any()
     if is_instance_valid(_move_confirm_dlg):
         if _move_confirm_dlg.visible and _last_move_pick_cid == cid:
             _move_confirm_dlg.grab_focus()
@@ -1338,37 +1531,12 @@ func _on_map_city_picked(cid: String) -> void:
         dlg.get_cancel_button().text = "やめる"
 
     dlg.confirmed.connect(func():
-        var res_ok := false
-        if world and world.has_method("player_move_via") and use_path.size() >= 2:
-            # 資金チェック（World.player_move_via 側でも再チェックされる）
-            if cash >= total and (int(world.player.get("last_arrival_day", -999)) != world.day):
-                res_ok = world.player_move_via(cid, use_path)
-        else:
-            var r := world.can_player_move_to(cid)
-            if bool(r.get("ok", false)):
-                res_ok = world.player_move(cid)
+        _close_escort_confirm_if_any()
 
-        if res_ok:
-            # マップ上の選択状態をクリア
-            if is_instance_valid(map_window):
-                var map := map_window.get_node_or_null("MapLayer")
-                if map and map.has_method("end_pick"):
-                    map.call("end_pick")
+        if is_instance_valid(_move_confirm_dlg):
+            _move_confirm_dlg.hide()
 
-                # 移動開始に成功したらマップウインドウを閉じる
-                map_window.hide()
-                map_window.queue_free()
-                map_window = null
-
-            # 自身の確認ダイアログを破棄
-            if is_instance_valid(_move_confirm_dlg):
-                _move_confirm_dlg.hide()
-                _move_confirm_dlg.queue_free()
-                _move_confirm_dlg = null
-
-            # 移動開始後は自動で日数を進める
-            start_auto_travel()
-            _refresh()
+        _open_escort_confirm_for_move(cid, use_path, days, total, cash)
     )
 
     _sync_pause_state()

@@ -1,10 +1,11 @@
-新規チャット用 引継サマリ（更新: 2026-03-17）
+新規チャット用 引継サマリ（更新: 2026-03-23）
 作業後、必要に応じてこのファイルを上書き更新してください。
 このタスクは Local で実行（Cloud に委譲しない）。
 
 0) プロジェクト基本情報
 - プロジェクト: guild-of-merchants（Godot 4.3）
 - 実行ファイル: C:\Godot_v4.3-stable_win64.exe\Godot_v4.3-stable_win64.exe
+- 引継.txt の文字コード: UTF-8
 
 1) 現在の確定方針
 - convoy_condition は事故系リスク用の仕組みとして扱う
@@ -13,7 +14,7 @@
   - bandit にのみ影響
 - 数値バランス調整はまだ仮
   - route_hazards 側の危険度ベース調整が先
-- 次の主作業は escort の仮実装とする
+- 2026-03-23 時点で escort の最小実装は反映済み
 
 2) 現在の実装状態
 A. world.gd
@@ -26,6 +27,20 @@ A. world.gd
   - escort は bandit に効く
 - misc は固定値ではなく危険度連動に変更済み
 - route key 推定の保険を追加済み
+- escort 最小実装を反映済み
+  - `escort_enabled`
+  - `escort_level_max`
+  - `escort_cost_per_day_lv1 / lv2 / lv3`
+  - `_normalize_escort_level()`
+  - `get_escort_label()`
+  - `get_escort_cost()`
+  - `get_escort_bandit_reduction()`
+  - `get_escort_offer_rows()`
+- `can_player_move_to(dest, escort_level=0)` に拡張済み
+- `player_move(dest, escort_level=0)` に拡張済み
+- `player_move_via(dest, path, escort_level=0)` に拡張済み
+- 出発時に護衛費を合算し、移動中は `player["escort_level"]` を保持する
+- 到着時に `player["escort_level"] = 0` へ戻す
 
 B. UI
 - HUD に整備度表示あり
@@ -35,135 +50,106 @@ B. UI
 - CityActionBar には不足分だけ置く
 - menu_panel.gd は既存処理の再利用先として残す
 - MenuPanel 側の Row / Row2 は二重導線回避のため非表示運用
+- escort 最小UIを game_hud.gd に反映済み
+  - 移動確認の後に護衛確認ダイアログを開く
+  - OptionButton で護衛レベル 0..3 を選択
+  - 護衛費、盗賊危険軽減率、出発時合計、所持金を表示
+  - 「戻る」で移動確認ダイアログへ戻る
+  - マップを閉じる時は護衛確認ダイアログも後片付けする
 
-C. 動作確認済み
+C. debug_ui_price_reason
+- scripts/world.gd / ui/debug_panel.gd / ui/game_hud.gd への実装は完了済み
+- F3 デバッグトグルの二重反応対策済み
+- Price Reason 表示のクリック抜け対策済み
+- save/load 永続化は未対応
+
+D. 動作確認済み
 - 移動で整備度が減少
 - 整備で整備度が回復
-- エラーなし
+- escort 反映後の `world.gd` / `game_hud.gd` は headless の `--check-only` で parse error なし
 
-3) convoy_condition の現仕様
+3) 2026-03-23 作業内容（escort_min_patch_2026-03-06 反映）
+- 対象ファイル
+  - scripts/world.gd
+  - ui/game_hud.gd
+- 反映内容
+  - escort の export 設定を追加
+  - 護衛ラベル/料金/候補一覧の helper を追加
+  - 移動APIに escort_level 引数を追加
+  - 移動費へ護衛費を加算
+  - 出発中のみ escort_level を保持し、到着時に解除
+  - 移動確認の次段で護衛選択ダイアログを出すように変更
+- 非変更
+  - ui/move_window.gd は未変更
+  - 既存呼び出しはデフォルト引数で互換維持
+
+4) convoy_condition の現仕様
 - 最大値: 100
-- 閾値:
+- 閾値
   - 70〜100: 良好
   - 40〜69: 摩耗
   - 20〜39: 不調
   - 0〜19: 危険
-- 設計意図:
+- 設計意図
   - 一気に移動してもよい
   - ただし整備不足だと事故系リスクが上がる
   - 道中破損で詰むのではなく、遅延・出費・事故率上昇で表現する
-- 世界観メモ:
+- 世界観メモ
   - 修理道具や予備パーツは常備している前提
   - 完全破損で進行不能にはしない
 
-4) 次タスク
-- escort 仮実装の最小仕様を決める
-  - escort_level 型で行くか
-  - 候補提示型まで先に入れるか
-- escort の効果整理
-  - bandit layer 軽減
-  - banditイベント被害軽減を入れるか
-- 雇用単位と費用整理
+5) escort の現仕様
+- escort は bandit 系だけに効かせる前提
+- 護衛レベル
+  - 0: 護衛なし
+  - 1: 軽護衛
+  - 2: 中護衛
+  - 3: 重護衛
+- 雇用単位
   - 旅ごと雇用
-  - 出発地で雇って到着時解除
-  - 日数比例にするか
-- UI導線
-  - 移動前に選ぶ
-  - おすすめボタンを置くか
+  - 出発時に確定
+  - 到着時に解除
+- 費用
+  - Lv1: 0.6 / 日
+  - Lv2: 1.2 / 日
+  - Lv3: 2.0 / 日
+- 効果
+  - `escort_bandit_layer_reduction_per_level` に応じて bandit layer を軽減
+  - 既存の travel dice 側では `player["escort_level"]` を参照する
 
-5) 数値調整の扱い
-- まだ route_hazards 側の危険度ベースが固まっていない
-- よって以下は後回し
-  - convoy_condition の減少量
-  - 整備回復量
-  - 整備コスト
-  - 低コンディション時のペナルティ量
+6) 次タスク
+- escort の数値調整
+  - 費用感
+  - 軽減率
+  - 旅日数との釣り合い
+- escort の追加効果を入れるか判断
+  - banditイベント被害軽減
+  - banditイベント出現率補正
+- route_hazards 側の危険度ベース調整
+- 必要なら ui/move_window.gd 側にも escort 選択導線をそろえる
+- save/load に escort 関連の追加対応が必要か再確認
+  - 現状は `player["escort_level"]` 自体は player 辞書保存に含まれる
+  - 追加 export 値や helper はコード側のみ
 
-6) 実装運用メモ
-- world.gd は長いので完成ファイルではなく関数差分またはパッチ形式を優先
+7) 実装運用メモ
+- world.gd は長いので完成ファイル全文ではなく関数差分またはパッチ形式を優先
 - Godot 4.3 / GDScript 前提
-- 三項演算子 ? は避ける
+- 三項演算子 `?` は避ける
 - インデントはスペースで統一
 - ユーザーは VS Code で差分更新する運用
+- 手編集時は `others/引継.txt` を肥大化させず、完了済み詳細は圧縮する
 
-7) 引継資料の圧縮ルール（運用案）
-- 引継.txt は「現在有効な情報だけ」を残す
-- 完了済みで今後参照頻度の低い実装ログは削る
-- 詳細な作業履歴が必要なら別ファイルへ退避する
-  - 例: others/archive/引継_2026-03.txt
-- 追記方式ではなく、節ごと上書き更新を基本にする
-- 目安:
-  - 150行を超えたら圧縮
-  - 直近3テーマ以外の完了ログは1〜2行に要約
-- 毎回残すのは以下だけ
-  - 現在の確定方針
-  - 現在の実装状態
-  - 次タスク
-  - 実装運用メモ
-
-8) 圧縮時の判断基準
-- 残す:
-  - 今後の設計判断に影響する前提
-  - まだ未完了の作業
-  - 実装の責務分担
-- 削る / 別ファイルへ送る:
-  - 完了済みで再利用しにくい逐次ログ
-  - 一度だけ使った検証メモ
-  - 過去の試行錯誤の細部
+8) 検証メモ
+- 実施済み
+  - `Godot_v4.3-stable_win64.exe --headless --path . --check-only --script res://scripts/world.gd`
+  - `Godot_v4.3-stable_win64.exe --headless --path . --check-only --script res://ui/game_hud.gd`
+- 結果
+  - parse error なし
+- 未実施
+  - 実画面での移動確認 → 護衛選択 → 出発までの手動確認
+  - 複数日移動時の費用感バランス確認
 
 9) 今回の一言メモ
-- convoy_condition は「導入・表示・回復・リスク反映」まで通った
-- 今は数値を詰めるより、システムの骨組みを広げる段階
-- 次は escort に戻ってよい
-
-==================================================
-【追記 2026-03-16/17】別タスク: debug_ui_price_reason
-==================================================
-
-※この追記は、上記の「次タスク（convoy_condition / escort系）」とは別系統。
-  convoy/escort 系とは分けて扱うこと。
-
-0) 対象
-- scripts/world.gd
-- ui/debug_panel.gd
-- ui/game_hud.gd
-
-1) 実装サマリ
-A. world.gd
-- Price Reason のキャッシュを実装済み
-  - 最新再計算: `_price_reason_today`
-  - 日次確定: `_price_reason_day_end`
-- `debug_get_price_reason()` / `debug_get_price_reason_day_end()` で参照可能
-- `finalize_day()` の終端で、その日の最終状態を日次確定スナップショットとして保存
-- 価格更新は `_update_price_for()` で reason payload を構築・記録する方式に集約済み
-
-B. ui/debug_panel.gd
-- Price Reason セクションを追加
-- 個別都市選択時のみ、`world.debug_get_price_reason*()` を元に表示
-- 表示モード:
-  - 「詳細」OFF: 要約表示
-  - 「詳細」ON: `[基礎] / [外部] / [物流 / 需要]` の詳細表示
-  - 「日次確定」OFF: 最新再計算スナップショット
-  - 「日次確定」ON: 日次確定スナップショット
-- World(ALL) / 品目未選択 / データなし時は専用メッセージ分岐あり
-- クリック抜け対策として、Price Reason header 周辺の spacer は `MOUSE_FILTER_IGNORE`
-
-C. ui/game_hud.gd
-- F3 デバッグトグルを修正
-  - _input() のみで処理
-  - handled 化して二重トグルを防止
-  - debug_open_on_start 時に _debug_user_open を同期
-- TopBar の Spacer に MOUSE_FILTER_IGNORE を付与
-- 透明なレイアウト用 Control.new() はクリック阻害を避けるため IGNORE 運用
-
-2) 確認メモ
-- 静的差分確認: 実施済み
-- headless 起動: parse error 未観測
-- 終了時に環境依存のエラーあり
-  - root certificate store 読み取り失敗
-  - Dialog.gd 側の deferred raise エラー
-
-3) 引継ぎメモ
-- DebugPanel で City を個別都市にすると Price Reason が表示される
-- 「詳細」や「日次確定」のトグル周辺でクリック抜けが出る場合は、透明 Control の mouse_filter を先に疑う
-- 将来、永続化が必要になった場合は save/load 対象に _price_reason_today / _price_reason_day_end を追加検討
+- convoy_condition は導入・表示・回復・リスク反映まで通っている
+- escort は最小導線と最小料金ロジックまで入った
+- 次は数値調整と bandit 系への効き方の詰めに戻ってよい
