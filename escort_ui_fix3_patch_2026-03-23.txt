@@ -1,0 +1,239 @@
+護衛UI オーバーレイ順序調整パッチ（2026-03-23）
+対象: ui/game_hud.gd
+
+目的
+- 護衛確認を必ず移動確認より前面に出す
+- 護衛確認を開いている間、移動確認は見えるが操作できない状態にする
+- 護衛確認の初期表示位置を「やや中央から右上」にずらす
+
+考え方
+- 現在は Window 同士の前後関係が不安定
+- そこで「移動確認を一時的に非操作化」しつつ、
+  護衛確認側を transient / always_on_top で前面固定する
+- 位置は popup_centered() 後に明示的に右上へずらす
+
+================================================================================
+1) 変数追加
+================================================================================
+
+# _escort_confirm_dlg の近くに追記
+var _move_confirm_prev_exclusive: bool = false
+
+
+================================================================================
+2) ヘルパー追加
+================================================================================
+
+# _close_escort_confirm_if_any() の近くに追加
+
+func _set_move_confirm_interactable(enabled: bool) -> void:
+    if not is_instance_valid(_move_confirm_dlg):
+        return
+
+    if _move_confirm_dlg.get_ok_button():
+        _move_confirm_dlg.get_ok_button().disabled = not enabled
+    if _move_confirm_dlg.get_cancel_button():
+        _move_confirm_dlg.get_cancel_button().disabled = not enabled
+
+    # 前面奪取を抑えるため、護衛確認中だけ exclusive を外す
+    # 閉じる時に元へ戻す
+    if enabled:
+        _move_confirm_dlg.exclusive = _move_confirm_prev_exclusive
+    else:
+        _move_confirm_prev_exclusive = _move_confirm_dlg.exclusive
+        _move_confirm_dlg.exclusive = false
+
+
+================================================================================
+3) _close_escort_confirm_if_any() を置換
+================================================================================
+
+func _close_escort_confirm_if_any(restore_move_focus: bool = true) -> void:
+    if is_instance_valid(_escort_confirm_dlg):
+        _escort_confirm_dlg.queue_free()
+    _escort_confirm_dlg = null
+
+    _set_move_confirm_interactable(true)
+
+    if restore_move_focus and is_instance_valid(_move_confirm_dlg):
+        _move_confirm_dlg.show()
+        _move_confirm_dlg.grab_focus()
+
+
+================================================================================
+4) _open_escort_confirm_for_move(...) を丸ごと置換
+================================================================================
+
+func _open_escort_confirm_for_move(
+    cid: String,
+    use_path: Array[String],
+    days: int,
+    base_total: float,
+    cash: float
+) -> void:
+    if world == null or not is_instance_valid(map_window):
+        return
+
+    _close_escort_confirm_if_any(false)
+    _set_move_confirm_interactable(false)
+
+    var dlg := ConfirmationDialog.new()
+    _escort_confirm_dlg = dlg
+    dlg.title = "護衛の確認"
+    dlg.exclusive = true
+    dlg.transient = true
+    dlg.always_on_top = true
+    dlg.unresizable = true
+    dlg.min_size = Vector2i(360, 260)
+    dlg.size = Vector2i(360, 260)
+    map_window.add_child(dlg)
+
+    var vb := VBoxContainer.new()
+    vb.position = Vector2(12, 12)
+    vb.custom_minimum_size = Vector2(320, 180)
+    dlg.add_child(vb)
+
+    var guide := Label.new()
+    guide.text = "護衛の有無を選んで出発します。"
+    vb.add_child(guide)
+
+    var opt := OptionButton.new()
+    opt.focus_mode = Control.FOCUS_ALL
+    opt.custom_minimum_size = Vector2(320, 0)
+    vb.add_child(opt)
+
+    var rows: Array[Dictionary] = []
+    if world.has_method("get_escort_offer_rows"):
+        rows = world.get_escort_offer_rows(days)
+
+    if rows.is_empty():
+        rows = [
+            {"level": 0, "label": "護衛なし", "cost": 0.0},
+            {"level": 1, "label": "軽護衛", "cost": 0.0},
+            {"level": 2, "label": "標準護衛", "cost": 0.0},
+            {"level": 3, "label": "厚い護衛", "cost": 0.0},
+        ]
+
+    for row in rows:
+        var level: int = int(row.get("level", 0))
+        var label: String = String(row.get("label", "護衛なし"))
+        var cost: float = float(row.get("cost", 0.0))
+        opt.add_item("%s  %.1fG" % [label, cost])
+        var idx: int = opt.item_count - 1
+        opt.set_item_metadata(idx, level)
+
+    var info := Label.new()
+    info.autowrap_mode = TextServer.AUTOWRAP_WORD
+    info.custom_minimum_size = Vector2(320, 120)
+    vb.add_child(info)
+
+    _update_escort_confirm_summary(info, 0, days, base_total, cash)
+
+    opt.item_selected.connect(func(index: int):
+        var level: int = int(opt.get_item_metadata(index))
+        _update_escort_confirm_summary(info, level, days, base_total, cash)
+    )
+
+    if dlg.get_ok_button():
+        dlg.get_ok_button().text = "出発する"
+    if dlg.get_cancel_button():
+        dlg.get_cancel_button().text = "戻る"
+
+    dlg.canceled.connect(func():
+        _close_escort_confirm_if_any(true)
+    )
+
+    dlg.confirmed.connect(func():
+        var escort_level: int = 0
+        if opt.selected >= 0:
+            escort_level = int(opt.get_item_metadata(opt.selected))
+
+        var escort_cost: float = 0.0
+        if world.has_method("get_escort_cost"):
+            escort_cost = float(world.get_escort_cost(escort_level, days))
+
+        var total_cost: float = base_total + escort_cost
+
+        if cash < total_cost:
+            var err := AcceptDialog.new()
+            err.title = "出発できません"
+            err.dialog_text = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total_cost, cash]
+            map_window.add_child(err)
+            err.popup_centered(Vector2i(320, 140))
+            return
+
+        var res_ok := false
+
+        if world and world.has_method("player_move_via") and use_path.size() >= 2:
+            if int(world.player.get("last_arrival_day", -999)) != world.day:
+                res_ok = world.player_move_via(cid, use_path, escort_level)
+        else:
+            var r := world.can_player_move_to(cid, escort_level)
+            if bool(r.get("ok", false)):
+                res_ok = world.player_move(cid, escort_level)
+
+        if res_ok:
+            _close_escort_confirm_if_any(false)
+
+            if is_instance_valid(_move_confirm_dlg):
+                _move_confirm_dlg.queue_free()
+                _move_confirm_dlg = null
+
+            start_auto_travel()
+        else:
+            var err2 := AcceptDialog.new()
+            err2.title = "出発できません"
+            err2.dialog_text = "出発処理に失敗しました。"
+            map_window.add_child(err2)
+            err2.popup_centered(Vector2i(320, 140))
+    )
+
+    dlg.popup_centered(Vector2i(360, 260))
+
+    # 初期表示位置を「やや中央から右上」にずらす
+    var view_size: Vector2i = map_window.get_visible_rect().size
+    var x: int = int(view_size.x * 0.55)
+    var y: int = int(view_size.y * 0.06)
+    dlg.position = Vector2i(x, y)
+
+    dlg.grab_focus()
+
+    if opt.item_count > 0:
+        opt.select(0)
+    opt.grab_focus()
+
+
+================================================================================
+5) _on_map_city_picked() 内の confirmed.connect ブロックを再置換
+================================================================================
+
+    dlg.confirmed.connect(func():
+        if is_instance_valid(_move_confirm_dlg):
+            _move_confirm_dlg.show()
+
+        _open_escort_confirm_for_move(cid, use_path, days, total, cash)
+    )
+
+※ このブロックは前回と見た目同じですが、そのままでOKです。
+  前面制御は _open_escort_confirm_for_move() 側へ寄せています。
+
+
+================================================================================
+6) 期待する見え方
+================================================================================
+
+- 移動確認ダイアログは中央付近に残る
+- 護衛確認ダイアログはそれより右上に出る
+- 折り重なって「次の確認に進んだ」ことが分かる
+- 護衛確認を開いている間、移動確認の OK/Cancel は押せない
+- 戻るで護衛確認を閉じると、移動確認が再び操作可能になる
+
+
+================================================================================
+7) 補足
+================================================================================
+
+もしこれでも移動確認が前面へ出続ける場合は、
+Godot の Window 同士の重なり順の癖が強いので、
+次段階では escort 側だけ Window をやめて PanelContainer ベースの自前オーバーレイへ切り替えるのが安全です。
+ただ今回はまず最小差分で直る線を優先しています。

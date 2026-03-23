@@ -999,6 +999,7 @@ func _spawn_trade_if_needed() -> void:
 # ---- Move / Inventory ----
 var _move_confirm_dlg: ConfirmationDialog = null
 var _escort_confirm_dlg: ConfirmationDialog = null
+var _move_confirm_prev_exclusive: bool = false
 var _last_move_pick_cid: String = ""
 
 var _map_city_list_panel: PanelContainer = null
@@ -1227,9 +1228,26 @@ func _close_escort_confirm_if_any(restore_move_focus: bool = true) -> void:
         _escort_confirm_dlg.queue_free()
     _escort_confirm_dlg = null
 
+    _set_move_confirm_interactable(true)
+
     if restore_move_focus and is_instance_valid(_move_confirm_dlg):
         _move_confirm_dlg.show()
         _move_confirm_dlg.grab_focus()
+
+func _set_move_confirm_interactable(enabled: bool) -> void:
+    if not is_instance_valid(_move_confirm_dlg):
+        return
+
+    if _move_confirm_dlg.get_ok_button():
+        _move_confirm_dlg.get_ok_button().disabled = not enabled
+    if _move_confirm_dlg.get_cancel_button():
+        _move_confirm_dlg.get_cancel_button().disabled = not enabled
+
+    if enabled:
+        _move_confirm_dlg.exclusive = _move_confirm_prev_exclusive
+    else:
+        _move_confirm_prev_exclusive = _move_confirm_dlg.exclusive
+        _move_confirm_dlg.exclusive = false
 
 func _update_escort_confirm_summary(
     info_label: Label,
@@ -1276,11 +1294,14 @@ func _open_escort_confirm_for_move(
         return
 
     _close_escort_confirm_if_any(false)
+    _set_move_confirm_interactable(false)
 
     var dlg := ConfirmationDialog.new()
     _escort_confirm_dlg = dlg
     dlg.title = "護衛の確認"
     dlg.exclusive = true
+    dlg.transient = true
+    dlg.always_on_top = true
     dlg.unresizable = true
     dlg.min_size = Vector2i(360, 260)
     dlg.size = Vector2i(360, 260)
@@ -1405,6 +1426,12 @@ func _open_escort_confirm_for_move(
         call_deferred("_sync_pause_state")
     )
     dlg.popup_centered(Vector2i(360, 260))
+
+    var view_size: Vector2i = map_window.get_visible_rect().size
+    var x: int = int(view_size.x * 0.50)
+    var y: int = int(view_size.y * 0.30)
+    dlg.position = Vector2i(x, y)
+
     dlg.grab_focus()
 
     if opt.item_count > 0:
