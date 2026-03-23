@@ -1303,23 +1303,26 @@ func _open_escort_confirm_for_move(
     dlg.transient = true
     dlg.always_on_top = true
     dlg.unresizable = true
-    dlg.min_size = Vector2i(360, 260)
-    dlg.size = Vector2i(360, 260)
+    dlg.min_size = Vector2i(360, 320)
+    dlg.size = Vector2i(360, 320)
     map_window.add_child(dlg)
 
     var vb := VBoxContainer.new()
     vb.position = Vector2(12, 12)
-    vb.custom_minimum_size = Vector2(320, 180)
+    vb.custom_minimum_size = Vector2(320, 240)
     dlg.add_child(vb)
 
     var guide := Label.new()
     guide.text = "護衛の有無を選んで出発します。"
     vb.add_child(guide)
 
-    var opt := OptionButton.new()
-    opt.focus_mode = Control.FOCUS_ALL
-    opt.custom_minimum_size = Vector2(320, 0)
-    vb.add_child(opt)
+    var escort_list := ItemList.new()
+    escort_list.custom_minimum_size = Vector2(320, 96)
+    escort_list.select_mode = ItemList.SELECT_SINGLE
+    escort_list.allow_reselect = true
+    escort_list.same_column_width = true
+    escort_list.auto_height = false
+    vb.add_child(escort_list)
 
     var rows: Array[Dictionary] = []
     if world.has_method("get_escort_offer_rows"):
@@ -1337,9 +1340,10 @@ func _open_escort_confirm_for_move(
         var level: int = int(row.get("level", 0))
         var label: String = String(row.get("label", "護衛なし"))
         var cost: float = float(row.get("cost", 0.0))
-        opt.add_item("%s  %.1fG" % [label, cost])
-        var idx: int = opt.item_count - 1
-        opt.set_item_metadata(idx, level)
+        var text := "%s  %.1fG" % [label, cost]
+        escort_list.add_item(text)
+        var idx: int = escort_list.item_count - 1
+        escort_list.set_item_metadata(idx, level)
 
     var info := Label.new()
     info.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -1348,8 +1352,8 @@ func _open_escort_confirm_for_move(
 
     _update_escort_confirm_summary(info, 0, days, base_total, cash)
 
-    opt.item_selected.connect(func(index: int):
-        var level: int = int(opt.get_item_metadata(index))
+    escort_list.item_selected.connect(func(index: int):
+        var level: int = int(escort_list.get_item_metadata(index))
         _update_escort_confirm_summary(info, level, days, base_total, cash)
     )
 
@@ -1367,8 +1371,9 @@ func _open_escort_confirm_for_move(
 
     dlg.confirmed.connect(func():
         var escort_level: int = 0
-        if opt.selected >= 0:
-            escort_level = int(opt.get_item_metadata(opt.selected))
+        var selected_items: PackedInt32Array = escort_list.get_selected_items()
+        if selected_items.size() > 0:
+            escort_level = int(escort_list.get_item_metadata(selected_items[0]))
 
         var escort_cost: float = 0.0
         if world.has_method("get_escort_cost"):
@@ -1425,18 +1430,18 @@ func _open_escort_confirm_for_move(
     dlg.visibility_changed.connect(func():
         call_deferred("_sync_pause_state")
     )
-    dlg.popup_centered(Vector2i(360, 260))
+    dlg.popup_centered(Vector2i(360, 320))
 
     var view_size: Vector2i = map_window.get_visible_rect().size
     var x: int = int(view_size.x * 0.50)
     var y: int = int(view_size.y * 0.30)
     dlg.position = Vector2i(x, y)
 
-    dlg.grab_focus()
+    if escort_list.item_count > 0:
+        escort_list.select(0)
 
-    if opt.item_count > 0:
-        opt.select(0)
-    opt.grab_focus()
+    dlg.grab_focus()
+    escort_list.grab_focus()
 
 func _on_map_city_picked(cid: String) -> void:
 

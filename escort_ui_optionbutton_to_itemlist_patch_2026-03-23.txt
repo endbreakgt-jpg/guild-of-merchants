@@ -1,0 +1,166 @@
+護衛UI 安定化パッチ（OptionButton廃止版）
+更新日: 2026-03-23
+対象: ui/game_hud.gd
+
+方針
+- OptionButton は Popup を別レイヤで開くため、Window / Dialog の重なり順や入力制御と相性が悪い
+- 今回は「新しいダイアログが前面」を優先するため、護衛選択UIを常時表示型へ変更する
+- 具体的には OptionButton を ItemList に置き換える
+- これで popup 開閉が不要になり、入力まわりがかなり安定する
+
+================================================================================
+1) _open_escort_confirm_for_move(...) を丸ごと置換
+================================================================================
+
+func _open_escort_confirm_for_move(
+    cid: String,
+    use_path: Array[String],
+    days: int,
+    base_total: float,
+    cash: float
+) -> void:
+    if world == null or not is_instance_valid(map_window):
+        return
+
+    _close_escort_confirm_if_any(false)
+    _set_move_confirm_interactable(false)
+
+    var dlg := ConfirmationDialog.new()
+    _escort_confirm_dlg = dlg
+    dlg.title = "護衛の確認"
+    dlg.exclusive = true
+    dlg.transient = true
+    dlg.always_on_top = true
+    dlg.unresizable = true
+    dlg.min_size = Vector2i(360, 320)
+    dlg.size = Vector2i(360, 320)
+    map_window.add_child(dlg)
+
+    var vb := VBoxContainer.new()
+    vb.position = Vector2(12, 12)
+    vb.custom_minimum_size = Vector2(320, 240)
+    dlg.add_child(vb)
+
+    var guide := Label.new()
+    guide.text = "護衛の有無を選んで出発します。"
+    vb.add_child(guide)
+
+    var escort_list := ItemList.new()
+    escort_list.custom_minimum_size = Vector2(320, 96)
+    escort_list.select_mode = ItemList.SELECT_SINGLE
+    escort_list.allow_reselect = true
+    escort_list.same_column_width = true
+    escort_list.auto_height = false
+    vb.add_child(escort_list)
+
+    var rows: Array[Dictionary] = []
+    if world.has_method("get_escort_offer_rows"):
+        rows = world.get_escort_offer_rows(days)
+
+    if rows.is_empty():
+        rows = [
+            {"level": 0, "label": "護衛なし", "cost": 0.0},
+            {"level": 1, "label": "軽護衛", "cost": 0.0},
+            {"level": 2, "label": "標準護衛", "cost": 0.0},
+            {"level": 3, "label": "厚い護衛", "cost": 0.0},
+        ]
+
+    for row in rows:
+        var level: int = int(row.get("level", 0))
+        var label: String = String(row.get("label", "護衛なし"))
+        var cost: float = float(row.get("cost", 0.0))
+        var text := "%s  %.1fG" % [label, cost]
+        escort_list.add_item(text)
+        var idx: int = escort_list.item_count - 1
+        escort_list.set_item_metadata(idx, level)
+
+    var info := Label.new()
+    info.autowrap_mode = TextServer.AUTOWRAP_WORD
+    info.custom_minimum_size = Vector2(320, 120)
+    vb.add_child(info)
+
+    _update_escort_confirm_summary(info, 0, days, base_total, cash)
+
+    escort_list.item_selected.connect(func(index: int):
+        var level: int = int(escort_list.get_item_metadata(index))
+        _update_escort_confirm_summary(info, level, days, base_total, cash)
+    )
+
+    if escort_list.item_count > 0:
+        escort_list.select(0)
+
+    if dlg.get_ok_button():
+        dlg.get_ok_button().text = "出発する"
+    if dlg.get_cancel_button():
+        dlg.get_cancel_button().text = "戻る"
+
+    dlg.canceled.connect(func():
+        _close_escort_confirm_if_any(true)
+    )
+
+    dlg.confirmed.connect(func():
+        var escort_level: int = 0
+        var selected_items: PackedInt32Array = escort_list.get_selected_items()
+        if selected_items.size() > 0:
+            escort_level = int(escort_list.get_item_metadata(selected_items[0]))
+
+        var escort_cost: float = 0.0
+        if world.has_method("get_escort_cost"):
+            escort_cost = float(world.get_escort_cost(escort_level, days))
+
+        var total_cost: float = base_total + escort_cost
+
+        if cash < total_cost:
+            var err := AcceptDialog.new()
+            err.title = "出発できません"
+            err.dialog_text = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total_cost, cash]
+            map_window.add_child(err)
+            err.popup_centered(Vector2i(320, 140))
+            return
+
+        var res_ok := false
+
+        if world and world.has_method("player_move_via") and use_path.size() >= 2:
+            if int(world.player.get("last_arrival_day", -999)) != world.day:
+                res_ok = world.player_move_via(cid, use_path, escort_level)
+        else:
+            var r := world.can_player_move_to(cid, escort_level)
+            if bool(r.get("ok", false)):
+                res_ok = world.player_move(cid, escort_level)
+
+        if res_ok:
+            _close_escort_confirm_if_any(false)
+
+            if is_instance_valid(_move_confirm_dlg):
+                _move_confirm_dlg.queue_free()
+                _move_confirm_dlg = null
+
+            start_auto_travel()
+        else:
+            var err2 := AcceptDialog.new()
+            err2.title = "出発できません"
+            err2.dialog_text = "出発処理に失敗しました。"
+            map_window.add_child(err2)
+            err2.popup_centered(Vector2i(320, 140))
+    )
+
+    dlg.popup_centered(Vector2i(360, 320))
+
+    var view_size: Vector2i = map_window.get_visible_rect().size
+    var x: int = int(view_size.x * 0.55)
+    var y: int = int(view_size.y * 0.06)
+    dlg.position = Vector2i(x, y)
+
+    dlg.grab_focus()
+    escort_list.grab_focus()
+
+
+================================================================================
+2) 補足
+================================================================================
+
+- 今回は OptionButton をやめて ItemList にしています。
+- 見た目は少し簡素になりますが、仮実装としてはかなり安定です。
+- 将来、候補選択式の護衛NPCに発展させる場合も、
+  ItemList / VBox / カード選択UI の方が自然に拡張できます。
+- 「選ぶためにさらに popup を開く」UIは、今の Window 多重構成では相性が悪いです。
