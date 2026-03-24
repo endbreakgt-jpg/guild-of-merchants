@@ -292,6 +292,15 @@ var _emergency_last_day: Dictionary = {}         # city_id -> pid -> int
 @export_range(0.0, 10.0, 0.1) var escort_cost_per_day_lv2: float = 1.2
 @export_range(0.0, 10.0, 0.1) var escort_cost_per_day_lv3: float = 2.0
 @export_range(0.0, 1.0, 0.01) var escort_bandit_layer_reduction_per_level: float = 0.15
+@export var escort_templates_csv_path: String = "res://data/escort_templates.csv"
+@export var escort_offer_count_tier1: int = 2
+@export var escort_offer_count_tier2: int = 3
+@export var escort_offer_count_tier3: int = 4
+@export var escort_offer_count_tier4: int = 5
+@export var escort_offer_cache_enabled: bool = true
+var escort_templates: Array[Dictionary] = []
+var escort_offers_by_city: Dictionary = {}
+var escort_offer_seed_salt: String = "escort_offer_v01"
 @export var convoy_condition_enabled: bool = true
 @export_range(1, 100, 1) var convoy_condition_max: int = 100
 @export_range(0, 10, 1) var convoy_wear_base: int = 1
@@ -1918,6 +1927,39 @@ func get_product_name(pid: String) -> String:
     return pid
 
 
+func load_escort_templates() -> void:
+    escort_templates.clear()
+    escort_offers_by_city.clear()
+
+    var rows: Array[Dictionary] = []
+    if _loader != null:
+        rows = _loader.load_csv_dicts(escort_templates_csv_path, true, ",")
+
+    for row_any in rows:
+        var row: Dictionary = row_any.duplicate(true)
+
+        row["escort_id"] = String(row.get("escort_id", "")).strip_edges()
+        row["name_ja"] = String(row.get("name_ja", "護衛")).strip_edges()
+        row["rank"] = String(row.get("rank", "common")).strip_edges()
+        row["base_fee"] = float(row.get("base_fee", 0.0))
+        row["bandit_reduce"] = float(row.get("bandit_reduce", 0.0))
+        row["trait_type"] = String(row.get("trait_type", "none")).strip_edges()
+        row["trait_value"] = float(row.get("trait_value", 0.0))
+        row["trait_text"] = String(row.get("trait_text", "")).strip_edges()
+        row["province_tags"] = String(row.get("province_tags", "all")).strip_edges()
+        row["city_tier_min"] = int(row.get("city_tier_min", 1))
+        row["weight"] = maxf(0.0, float(row.get("weight", 1.0)))
+        row["desc_ja"] = String(row.get("desc_ja", "")).strip_edges()
+
+        if String(row.get("escort_id", "")) == "":
+            continue
+
+        escort_templates.append(row)
+
+    if escort_templates.is_empty():
+        push_warning("escort_templates.csv loaded 0 rows: %s" % escort_templates_csv_path)
+
+
 func load_data() -> void:
     # products
     var prod_rows: Array[Dictionary] = _loader.load_csv_dicts(data_dir + "products.csv")
@@ -2118,6 +2160,8 @@ func load_data() -> void:
 
     # --- Ports / Water logistics ---
     _load_ports_and_water_routes()
+
+    load_escort_templates()
 
 func _load_ports_and_water_routes() -> void:
     port_category_by_pid.clear()
@@ -3602,6 +3646,199 @@ func _normalize_escort_level(level: int) -> int:
         return 0
     return clampi(level, 0, _effective_escort_level_max())
 
+
+func _split_tags_semicolon(raw: String) -> PackedStringArray:
+    var out: PackedStringArray = []
+    for part_any in raw.split(";"):
+        var s: String = String(part_any).strip_edges().to_lower()
+        if s != "":
+            out.append(s)
+    return out
+
+
+func _city_rank_to_escort_tier(rank: int) -> int:
+    if rank <= 3:
+        return 1
+    if rank <= 5:
+        return 2
+    if rank <= 7:
+        return 3
+    return 4
+
+
+func _get_city_tier_int(city_id: String) -> int:
+    if not cities.has(city_id):
+        return 1
+
+    var c: Dictionary = cities[city_id]
+    var has_explicit_tier: bool = c.has("tier") or c.has("city_tier")
+    var raw: Variant = c.get("tier", c.get("city_tier", c.get("rank", 1)))
+
+    if raw is int:
+        if has_explicit_tier:
+            return clampi(int(raw), 1, 4)
+        return _city_rank_to_escort_tier(int(raw))
+
+    if raw is float:
+        if has_explicit_tier:
+            return clampi(int(raw), 1, 4)
+        return _city_rank_to_escort_tier(int(raw))
+
+    var s: String = String(raw).strip_edges().to_lower()
+    if s.is_valid_int():
+        var n: int = int(s)
+        if has_explicit_tier:
+            return clampi(n, 1, 4)
+        return _city_rank_to_escort_tier(n)
+
+    match s:
+        "village", "small", "small_town", "town", "t1":
+            return 1
+        "mid", "middle", "medium", "city", "t2":
+            return 2
+        "large", "big", "major", "large_city", "t3":
+            return 3
+        "capital", "metropolis", "hub", "t4":
+            return 4
+        _:
+            return 1
+
+
+func _get_city_escort_offer_count(city_id: String) -> int:
+    var tier: int = _get_city_tier_int(city_id)
+    match tier:
+        1:
+            return escort_offer_count_tier1
+        2:
+            return escort_offer_count_tier2
+        3:
+            return escort_offer_count_tier3
+        _:
+            return escort_offer_count_tier4
+
+
+func _get_city_escort_region_tags(city_id: String) -> PackedStringArray:
+    var tags: PackedStringArray = ["all"]
+
+    if not cities.has(city_id):
+        return tags
+
+    var c: Dictionary = cities[city_id]
+    var province: String = String(c.get("province", c.get("province_id", ""))).strip_edges().to_lower()
+    var city_name: String = String(c.get("name", "")).strip_edges().to_lower()
+    var note: String = String(c.get("note", "")).strip_edges().to_lower()
+
+    if province != "":
+        tags.append(province)
+
+    var is_coastal: bool = false
+    if c.has("coastal") and bool(c.get("coastal", false)):
+        is_coastal = true
+    elif c.has("is_coastal") and bool(c.get("is_coastal", false)):
+        is_coastal = true
+    elif _port_level(city_id) > 0:
+        is_coastal = true
+    elif note.find("港") != -1 or note.find("湾") != -1:
+        is_coastal = true
+
+    if is_coastal:
+        tags.append("coastal")
+        tags.append("port")
+    else:
+        tags.append("inland")
+
+    if city_name.find("high") != -1 or city_name.find("moor") != -1 or note.find("高地") != -1 or note.find("山") != -1:
+        tags.append("highland")
+
+    if city_name.find("marsh") != -1 or city_name.find("bog") != -1 or city_name.find("swamp") != -1 or note.find("沼") != -1:
+        tags.append("marsh")
+
+    var unique := {}
+    for t_any in tags:
+        unique[String(t_any)] = true
+
+    var out: PackedStringArray = []
+    for k_any in unique.keys():
+        out.append(String(k_any))
+    return out
+
+
+func _escort_template_matches_city(tpl: Dictionary, city_id: String) -> bool:
+    var tier_need: int = int(tpl.get("city_tier_min", 1))
+    if _get_city_tier_int(city_id) < tier_need:
+        return false
+
+    var city_tags: PackedStringArray = _get_city_escort_region_tags(city_id)
+    var city_set := {}
+    for t_any in city_tags:
+        city_set[String(t_any)] = true
+
+    var raw_tags: String = String(tpl.get("province_tags", "all"))
+    var tpl_tags: PackedStringArray = _split_tags_semicolon(raw_tags)
+    if tpl_tags.is_empty():
+        return true
+
+    for t_any in tpl_tags:
+        var t: String = String(t_any)
+        if t == "all":
+            return true
+        if city_set.has(t):
+            return true
+
+    return false
+
+
+func _make_escort_offer_seed(city_id: String) -> int:
+    var base: String = "%s|%s|%d" % [escort_offer_seed_salt, city_id, int(day)]
+    return int(hash(base))
+
+
+func _pick_weighted_escort_template(pool: Array[Dictionary], rng: RandomNumberGenerator) -> Dictionary:
+    var total_weight: float = 0.0
+    for tpl_any in pool:
+        var tpl: Dictionary = tpl_any
+        total_weight += maxf(0.0, float(tpl.get("weight", 1.0)))
+
+    if total_weight <= 0.0:
+        if pool.is_empty():
+            return {}
+        return pool[rng.randi_range(0, pool.size() - 1)]
+
+    var roll: float = rng.randf_range(0.0, total_weight)
+    var acc: float = 0.0
+    for tpl_any in pool:
+        var tpl: Dictionary = tpl_any
+        acc += maxf(0.0, float(tpl.get("weight", 1.0)))
+        if roll <= acc:
+            return tpl
+
+    return pool.back()
+
+
+func _build_escort_offer_from_template(tpl: Dictionary, city_id: String) -> Dictionary:
+    var offer: Dictionary = {}
+    offer["offer_id"] = "%s@%s@%d" % [String(tpl.get("escort_id", "")), city_id, int(day)]
+    offer["escort_id"] = String(tpl.get("escort_id", ""))
+    offer["name_ja"] = String(tpl.get("name_ja", "護衛"))
+    offer["rank"] = String(tpl.get("rank", "common"))
+    offer["base_fee"] = float(tpl.get("base_fee", 0.0))
+    offer["bandit_reduce"] = float(tpl.get("bandit_reduce", 0.0))
+    offer["trait_type"] = String(tpl.get("trait_type", "none"))
+    offer["trait_value"] = float(tpl.get("trait_value", 0.0))
+    offer["trait_text"] = String(tpl.get("trait_text", ""))
+    offer["desc_ja"] = String(tpl.get("desc_ja", ""))
+    offer["city_id"] = city_id
+    return offer
+
+
+func _duplicate_escort_offer_array(source: Array) -> Array[Dictionary]:
+    var out: Array[Dictionary] = []
+    for offer_any in source:
+        if offer_any is Dictionary:
+            out.append((offer_any as Dictionary).duplicate(true))
+    return out
+
+
 func get_escort_label(level: int) -> String:
     var lv: int = _normalize_escort_level(level)
     match lv:
@@ -3650,12 +3887,76 @@ func get_escort_offer_rows(days: int) -> Array[Dictionary]:
 
     return rows
 
+
+func clear_escort_offer_cache(city_id: String = "") -> void:
+    if city_id == "":
+        escort_offers_by_city.clear()
+        return
+    escort_offers_by_city.erase(city_id)
+
+
+func generate_escort_offers_for_city(city_id: String) -> Array[Dictionary]:
+    if city_id == "":
+        return []
+
+    if escort_offer_cache_enabled and escort_offers_by_city.has(city_id):
+        return _duplicate_escort_offer_array(escort_offers_by_city.get(city_id, []) as Array)
+
+    var pool: Array[Dictionary] = []
+    for tpl_any in escort_templates:
+        var tpl: Dictionary = tpl_any
+        if _escort_template_matches_city(tpl, city_id):
+            pool.append(tpl)
+
+    if pool.is_empty():
+        return []
+
+    var want_count: int = _get_city_escort_offer_count(city_id)
+    want_count = mini(want_count, pool.size())
+
+    var rng := RandomNumberGenerator.new()
+    rng.seed = _make_escort_offer_seed(city_id)
+
+    var remain: Array[Dictionary] = pool.duplicate(true)
+    var out: Array[Dictionary] = []
+
+    while out.size() < want_count and not remain.is_empty():
+        var picked: Dictionary = _pick_weighted_escort_template(remain, rng)
+        if picked.is_empty():
+            break
+
+        out.append(_build_escort_offer_from_template(picked, city_id))
+
+        var picked_id: String = String(picked.get("escort_id", ""))
+        var next_remain: Array[Dictionary] = []
+        for tpl_any in remain:
+            var tpl: Dictionary = tpl_any
+            if String(tpl.get("escort_id", "")) != picked_id:
+                next_remain.append(tpl)
+        remain = next_remain
+
+    if escort_offer_cache_enabled:
+        escort_offers_by_city[city_id] = out.duplicate(true)
+
+    return _duplicate_escort_offer_array(out)
+
+
+func get_current_city_escort_offers() -> Array[Dictionary]:
+    var city_id: String = String(player.get("city", ""))
+    return generate_escort_offers_for_city(city_id)
+
+
+func get_escort_offer_count_for_city(city_id: String) -> int:
+    return _get_city_escort_offer_count(city_id)
+
+
 func _player_arrive() -> void:
     player["enroute"] = false
     player["city"] = player["dest"]
     player["last_arrival_day"] = day
     player["arrival_day_base"] = 0
     player["escort_level"] = 0
+    generate_escort_offers_for_city(String(player.get("city", "")))
     world_updated.emit()
     contracts_try_auto_deliver_at(String(player.get("city","")))
 
@@ -3927,6 +4228,8 @@ func player_move_via(dest: String, path: Array[String], escort_level: int = 0) -
 
     if float(player.get("cash", 0.0)) < total_cost:
         return false
+
+    clear_escort_offer_cache(String(player.get("city", "")))
 
     # 支払い
     player["cash"] = float(player["cash"]) - total_cost

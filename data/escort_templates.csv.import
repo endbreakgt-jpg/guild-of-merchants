@@ -1,0 +1,17 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://b0xwf7v2uwvxm"
+
+[deps]
+
+files=["res://data/escort_templates.name.translation", "res://data/escort_templates.rank.translation", "res://data/escort_templates.base.translation", "res://data/escort_templates.bandit.translation", "res://data/escort_templates.trait.translation", "res://data/escort_templates.trait.translation", "res://data/escort_templates.trait.translation", "res://data/escort_templates.province.translation", "res://data/escort_templates.city.translation", "res://data/escort_templates.weight.translation", "res://data/escort_templates.desc.translation"]
+
+source_file="res://data/escort_templates.csv"
+dest_files=["res://data/escort_templates.name.translation", "res://data/escort_templates.rank.translation", "res://data/escort_templates.base.translation", "res://data/escort_templates.bandit.translation", "res://data/escort_templates.trait.translation", "res://data/escort_templates.trait.translation", "res://data/escort_templates.trait.translation", "res://data/escort_templates.province.translation", "res://data/escort_templates.city.translation", "res://data/escort_templates.weight.translation", "res://data/escort_templates.desc.translation"]
+
+[params]
+
+compress=true
+delimiter=0

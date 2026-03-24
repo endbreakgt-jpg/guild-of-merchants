@@ -1,0 +1,351 @@
+Guild of Merchants 護衛テンプレ読込・候補生成パッチ v0.1
+更新日: 2026-03-24
+対象: scripts/world.gd
+責務: 状態管理 / データ読込 / 都市ごとの護衛候補生成
+扱い: 暫定仕様（UI接続前の足場）
+
+前提
+- data/escort_templates.csv は作成済み
+- world.gd が cities / player / day を保持している
+- 長大ファイルのため完成ファイルではなく関数差分で返却
+
+狙い
+- escort_templates.csv を読み込む
+- 都市 tier と地域タグに応じて、都市ごとの雇用候補を 2～5 人生成できるようにする
+- 同じ都市に滞在中は候補を固定し、都市を出たら再生成可能にする
+- 今回は UI はまだ触らず、GameHUD から参照できる API を world.gd に用意する
+
+================================================================================
+A) export / var 追加
+================================================================================
+
+# 既存の escort / convoy_condition 近くに追記
+
+@export var escort_templates_csv_path: String = "res://data/escort_templates.csv"
+@export var escort_offer_count_tier1: int = 2
+@export var escort_offer_count_tier2: int = 3
+@export var escort_offer_count_tier3: int = 4
+@export var escort_offer_count_tier4: int = 5
+@export var escort_offer_cache_enabled: bool = true
+
+var escort_templates: Array[Dictionary] = []
+var escort_offers_by_city: Dictionary = {}
+var escort_offer_seed_salt: String = "escort_offer_v01"
+
+
+================================================================================
+B) _ready() か初期CSV読込のまとまりに追記
+================================================================================
+
+# 既存の CSV 群を読み込んでいる箇所に 1 行追加
+# 例:
+# load_products()
+# load_cities()
+# ...
+# load_escort_templates()
+
+load_escort_templates()
+
+
+================================================================================
+C) テンプレ読込関数を追加
+================================================================================
+
+func load_escort_templates() -> void:
+    escort_templates.clear()
+
+    var rows: Array[Dictionary] = []
+    var loader := CsvLoader.new()
+    rows = loader.load_csv_dicts(escort_templates_csv_path, true, ",")
+
+    for row_any in rows:
+        var row: Dictionary = row_any.duplicate(true)
+
+        row["escort_id"] = String(row.get("escort_id", "")).strip_edges()
+        row["name_ja"] = String(row.get("name_ja", "護衛")).strip_edges()
+        row["rank"] = String(row.get("rank", "common")).strip_edges()
+        row["base_fee"] = float(row.get("base_fee", 0.0))
+        row["bandit_reduce"] = float(row.get("bandit_reduce", 0.0))
+        row["trait_type"] = String(row.get("trait_type", "none")).strip_edges()
+        row["trait_value"] = float(row.get("trait_value", 0.0))
+        row["trait_text"] = String(row.get("trait_text", "")).strip_edges()
+        row["province_tags"] = String(row.get("province_tags", "all")).strip_edges()
+        row["city_tier_min"] = int(row.get("city_tier_min", 1))
+        row["weight"] = maxf(0.0, float(row.get("weight", 1.0)))
+        row["desc_ja"] = String(row.get("desc_ja", "")).strip_edges()
+
+        if String(row.get("escort_id", "")) == "":
+            continue
+
+        escort_templates.append(row)
+
+    if escort_templates.is_empty():
+        push_warning("escort_templates.csv loaded 0 rows: %s" % escort_templates_csv_path)
+
+
+================================================================================
+D) 補助関数群を追加
+================================================================================
+
+func _split_tags_semicolon(raw: String) -> PackedStringArray:
+    var out: PackedStringArray = []
+    for part_any in raw.split(";"):
+        var s: String = String(part_any).strip_edges().to_lower()
+        if s != "":
+            out.append(s)
+    return out
+
+func _get_city_tier_int(city_id: String) -> int:
+    if not cities.has(city_id):
+        return 1
+
+    var c: Dictionary = cities[city_id]
+    var raw = c.get("tier", c.get("city_tier", 1))
+
+    if raw is int:
+        return maxi(1, int(raw))
+
+    var s: String = String(raw).strip_edges().to_lower()
+    if s.is_valid_int():
+        return maxi(1, int(s))
+
+    match s:
+        "village", "small", "small_town", "town", "t1":
+            return 1
+        "mid", "middle", "medium", "city", "t2":
+            return 2
+        "large", "big", "major", "large_city", "t3":
+            return 3
+        "capital", "metropolis", "hub", "t4":
+            return 4
+        _:
+            return 1
+
+func _get_city_escort_offer_count(city_id: String) -> int:
+    var tier: int = _get_city_tier_int(city_id)
+    match tier:
+        1:
+            return escort_offer_count_tier1
+        2:
+            return escort_offer_count_tier2
+        3:
+            return escort_offer_count_tier3
+        _:
+            return escort_offer_count_tier4
+
+func _get_city_escort_region_tags(city_id: String) -> PackedStringArray:
+    var tags: PackedStringArray = ["all"]
+
+    if not cities.has(city_id):
+        return tags
+
+    var c: Dictionary = cities[city_id]
+
+    var province: String = String(c.get("province", c.get("province_id", ""))).strip_edges().to_lower()
+    if province != "":
+        tags.append(province)
+
+    var region: String = String(c.get("region", "")).strip_edges().to_lower()
+    if region != "":
+        tags.append(region)
+
+    var coast_raw = c.get("coastal", c.get("is_coastal", false))
+    if bool(coast_raw):
+        tags.append("coastal")
+
+    var port_level: int = int(c.get("port_level", 0))
+    if port_level > 0:
+        tags.append("coastal")
+        tags.append("port")
+
+    var terrain: String = String(c.get("terrain", c.get("terrain_tag", ""))).strip_edges().to_lower()
+    if terrain != "":
+        tags.append(terrain)
+
+    var unique := {}
+    for t_any in tags:
+        unique[String(t_any)] = true
+
+    var out: PackedStringArray = []
+    for k_any in unique.keys():
+        out.append(String(k_any))
+    return out
+
+func _escort_template_matches_city(tpl: Dictionary, city_id: String) -> bool:
+    var tier_need: int = int(tpl.get("city_tier_min", 1))
+    if _get_city_tier_int(city_id) < tier_need:
+        return false
+
+    var city_tags: PackedStringArray = _get_city_escort_region_tags(city_id)
+    var city_set := {}
+    for t_any in city_tags:
+        city_set[String(t_any)] = true
+
+    var raw_tags: String = String(tpl.get("province_tags", "all"))
+    var tpl_tags: PackedStringArray = _split_tags_semicolon(raw_tags)
+    if tpl_tags.is_empty():
+        return true
+
+    for t_any in tpl_tags:
+        var t: String = String(t_any)
+        if t == "all":
+            return true
+        if city_set.has(t):
+            return true
+
+    return false
+
+func _make_escort_offer_seed(city_id: String) -> int:
+    var base: String = "%s|%s|%d" % [escort_offer_seed_salt, city_id, int(day)]
+    return int(hash(base))
+
+func _pick_weighted_escort_template(pool: Array[Dictionary], rng: RandomNumberGenerator) -> Dictionary:
+    var total_weight: float = 0.0
+    for tpl_any in pool:
+        var tpl: Dictionary = tpl_any
+        total_weight += maxf(0.0, float(tpl.get("weight", 1.0)))
+
+    if total_weight <= 0.0:
+        if pool.is_empty():
+            return {}
+        return pool[rng.randi_range(0, pool.size() - 1)]
+
+    var roll: float = rng.randf_range(0.0, total_weight)
+    var acc: float = 0.0
+    for tpl_any in pool:
+        var tpl: Dictionary = tpl_any
+        acc += maxf(0.0, float(tpl.get("weight", 1.0)))
+        if roll <= acc:
+            return tpl
+
+    return pool.back()
+
+func _build_escort_offer_from_template(tpl: Dictionary, city_id: String) -> Dictionary:
+    var offer: Dictionary = {}
+    offer["offer_id"] = "%s@%s@%d" % [String(tpl.get("escort_id", "")), city_id, int(day)]
+    offer["escort_id"] = String(tpl.get("escort_id", ""))
+    offer["name_ja"] = String(tpl.get("name_ja", "護衛"))
+    offer["rank"] = String(tpl.get("rank", "common"))
+    offer["base_fee"] = float(tpl.get("base_fee", 0.0))
+    offer["bandit_reduce"] = float(tpl.get("bandit_reduce", 0.0))
+    offer["trait_type"] = String(tpl.get("trait_type", "none"))
+    offer["trait_value"] = float(tpl.get("trait_value", 0.0))
+    offer["trait_text"] = String(tpl.get("trait_text", ""))
+    offer["desc_ja"] = String(tpl.get("desc_ja", ""))
+    offer["city_id"] = city_id
+    return offer
+
+
+================================================================================
+E) 公開APIを追加
+================================================================================
+
+func clear_escort_offer_cache(city_id: String = "") -> void:
+    if city_id == "":
+        escort_offers_by_city.clear()
+        return
+    escort_offers_by_city.erase(city_id)
+
+func generate_escort_offers_for_city(city_id: String) -> Array[Dictionary]:
+    if city_id == "":
+        return []
+
+    if escort_offer_cache_enabled and escort_offers_by_city.has(city_id):
+        return (escort_offers_by_city[city_id] as Array).duplicate(true)
+
+    var pool: Array[Dictionary] = []
+    for tpl_any in escort_templates:
+        var tpl: Dictionary = tpl_any
+        if _escort_template_matches_city(tpl, city_id):
+            pool.append(tpl)
+
+    if pool.is_empty():
+        return []
+
+    var want_count: int = _get_city_escort_offer_count(city_id)
+    want_count = mini(want_count, pool.size())
+
+    var rng := RandomNumberGenerator.new()
+    rng.seed = _make_escort_offer_seed(city_id)
+
+    var remain: Array[Dictionary] = pool.duplicate(true)
+    var out: Array[Dictionary] = []
+
+    while out.size() < want_count and not remain.is_empty():
+        var picked: Dictionary = _pick_weighted_escort_template(remain, rng)
+        if picked.is_empty():
+            break
+
+        out.append(_build_escort_offer_from_template(picked, city_id))
+
+        var picked_id: String = String(picked.get("escort_id", ""))
+        var next_remain: Array[Dictionary] = []
+        for tpl_any in remain:
+            var tpl: Dictionary = tpl_any
+            if String(tpl.get("escort_id", "")) != picked_id:
+                next_remain.append(tpl)
+        remain = next_remain
+
+    if escort_offer_cache_enabled:
+        escort_offers_by_city[city_id] = out.duplicate(true)
+
+    return out.duplicate(true)
+
+func get_current_city_escort_offers() -> Array[Dictionary]:
+    var city_id: String = String(player.get("city", ""))
+    return generate_escort_offers_for_city(city_id)
+
+func get_escort_offer_count_for_city(city_id: String) -> int:
+    return _get_city_escort_offer_count(city_id)
+
+
+================================================================================
+F) 到着時キャッシュ更新を追加
+================================================================================
+
+# 既存の _player_arrive() の末尾付近に 1 行追加
+generate_escort_offers_for_city(String(player.get("city", "")))
+
+
+================================================================================
+G) 出発時に旧都市キャッシュを消したい場合（任意）
+================================================================================
+
+# player_move_via() で出発確定直前か直後に 1 行追加
+clear_escort_offer_cache(String(player.get("city", "")))
+
+
+================================================================================
+H) 想定される GameHUD 側の呼び出し
+================================================================================
+
+# 今後の護衛パネル側では、ひとまずこれだけで一覧を取れます
+
+var offers: Array[Dictionary] = world.get_current_city_escort_offers()
+
+# 1件の構造
+# {
+#   "offer_id": "...",
+#   "escort_id": "ESC001",
+#   "name_ja": "街道の用心棒",
+#   "rank": "common",
+#   "base_fee": 8.0,
+#   "bandit_reduce": 0.08,
+#   "trait_type": "none",
+#   "trait_value": 0.0,
+#   "trait_text": "特性なし",
+#   "desc_ja": "雇いやすい一般的な護衛",
+#   "city_id": "RE0001"
+# }
+
+
+================================================================================
+I) 補足
+================================================================================
+
+- 今回は「旅ごとの一時雇用候補」を都市ごとに生成するだけです
+- まだ route 情報や日数を料金へ反映していないため、base_fee は素の値です
+- 将来は GameHUD 側で route_days を渡して見積額を表示するか、
+  world 側に別関数を足して fee_total を返す形へ拡張できます
+- trait_type の実効果適用はまだ未接続です
+- まずは UI が「都市ごとに2〜5件の候補を安定表示できる」ことを優先しています
