@@ -1,0 +1,638 @@
+Guild of Merchants 護衛パネル差分 v0.1
+更新日: 2026-03-24
+対象:
+- scripts/world.gd
+- ui/game_hud.gd
+
+目的
+- 護衛確認を ConfirmationDialog から、契約新規受注風の「一覧 + 詳細 + 選択」パネルへ置換
+- world.get_current_city_escort_offers() を UI に接続
+- 2〜5人の雇用候補から最大3人まで選択
+- 選択人数を既存 escort_level(0..3) に接続
+- 候補ごとの base_fee は「一括雇用費」として別建てで徴収
+- 後で trait_type / trait_value を効かせられるよう、player["escort_offers"] に保持
+
+================================================================================
+1) scripts/world.gd
+================================================================================
+
+A. init_player() の player 初期値に1項目追加
+----------------------------------------
+既存 player 辞書の末尾付近へ追加
+
+        "escort_offers": [],
+
+
+B. _ensure_player_integrity() に1項目追加
+----------------------------------------
+escort_level の補完付近へ追加
+
+    if not player.has("escort_offers") or not (player.get("escort_offers") is Array):
+        player["escort_offers"] = []
+
+
+C. _player_arrive() を置換
+----------------------------------------
+
+func _player_arrive() -> void:
+    player["enroute"] = false
+    player["city"] = player["dest"]
+    player["last_arrival_day"] = day
+    player["arrival_day_base"] = 0
+    player["escort_level"] = 0
+    player["escort_offers"] = []
+    generate_escort_offers_for_city(String(player.get("city", "")))
+    world_updated.emit()
+    contracts_try_auto_deliver_at(String(player.get("city","")))
+
+
+D. get_escort_offer_count_for_city() の下あたりに新規関数を追加
+----------------------------------------
+
+func get_escort_level_from_offer_count(count: int) -> int:
+    return _normalize_escort_level(count)
+
+func get_escort_total_base_fee_from_offers(selected_offers: Array) -> float:
+    var total: float = 0.0
+    for offer_any in selected_offers:
+        if not (offer_any is Dictionary):
+            continue
+        var offer: Dictionary = offer_any
+        total += maxf(0.0, float(offer.get("base_fee", 0.0)))
+    return total
+
+func apply_escort_offer_selection(selected_offers: Array) -> bool:
+    _ensure_player_integrity()
+
+    var copied: Array = []
+    for offer_any in selected_offers:
+        if offer_any is Dictionary:
+            copied.append((offer_any as Dictionary).duplicate(true))
+
+    var hire_fee: float = get_escort_total_base_fee_from_offers(copied)
+    if float(player.get("cash", 0.0)) < hire_fee:
+        return false
+
+    player["escort_offers"] = copied
+    if hire_fee > 0.0:
+        player["cash"] = float(player.get("cash", 0.0)) - hire_fee
+        var city_id: String = String(player.get("city", ""))
+        if cities.has(city_id):
+            cities[city_id]["funds"] = float(cities[city_id].get("funds", 0.0)) + hire_fee
+
+    world_updated.emit()
+    return true
+
+func get_player_escort_offers() -> Array[Dictionary]:
+    _ensure_player_integrity()
+    return _duplicate_escort_offer_array(player.get("escort_offers", []) as Array)
+
+
+================================================================================
+2) ui/game_hud.gd
+================================================================================
+
+A. 変数宣言を置換
+----------------------------------------
+既存:
+
+var _escort_confirm_dlg: ConfirmationDialog = null
+
+これを置換:
+
+var _escort_confirm_dlg: Control = null
+
+
+B. 護衛パネル用の状態変数を追加
+----------------------------------------
+_move_confirm_prev_exclusive の下あたりへ追記
+
+var _escort_offer_list: ItemList = null
+var _escort_offer_detail: RichTextLabel = null
+var _escort_offer_summary: RichTextLabel = null
+var _escort_toggle_btn: Button = null
+var _escort_depart_btn: Button = null
+var _escort_selected_offer_ids: Array[String] = []
+var _escort_selected_offer_map: Dictionary = {}
+var _escort_offer_context: Dictionary = {}
+
+
+C. 既存 _close_escort_confirm_if_any() を置換
+----------------------------------------
+
+func _close_escort_confirm_if_any(restore_move_focus: bool = true) -> void:
+    if is_instance_valid(_escort_confirm_dlg):
+        _escort_confirm_dlg.queue_free()
+    _escort_confirm_dlg = null
+
+    _escort_offer_list = null
+    _escort_offer_detail = null
+    _escort_offer_summary = null
+    _escort_toggle_btn = null
+    _escort_depart_btn = null
+    _escort_selected_offer_ids.clear()
+    _escort_selected_offer_map.clear()
+    _escort_offer_context.clear()
+
+    _set_move_confirm_interactable(true)
+
+    if restore_move_focus and is_instance_valid(_move_confirm_dlg):
+        _move_confirm_dlg.show()
+        _move_confirm_dlg.grab_focus()
+
+
+D. 補助関数を追加
+----------------------------------------
+_close_escort_confirm_if_any() の下などに追加
+
+func _escort_ctx_offers() -> Array:
+    if _escort_offer_context.has("offers"):
+        return _escort_offer_context.get("offers", []) as Array
+    return []
+
+func _escort_find_offer_by_id(offer_id: String) -> Dictionary:
+    for offer_any in _escort_ctx_offers():
+        if not (offer_any is Dictionary):
+            continue
+        var offer: Dictionary = offer_any
+        if String(offer.get("offer_id", "")) == offer_id:
+            return offer
+    return {}
+
+func _escort_current_offer_id() -> String:
+    if _escort_offer_list == null or not is_instance_valid(_escort_offer_list):
+        return ""
+    var selected: PackedInt32Array = _escort_offer_list.get_selected_items()
+    if selected.is_empty():
+        return ""
+    var idx: int = int(selected[0])
+    return String(_escort_offer_list.get_item_metadata(idx))
+
+func _escort_selected_offers_array() -> Array:
+    var out: Array = []
+    for id_any in _escort_selected_offer_ids:
+        var offer_id: String = String(id_any)
+        if _escort_selected_offer_map.has(offer_id):
+            out.append((_escort_selected_offer_map[offer_id] as Dictionary).duplicate(true))
+    return out
+
+func _escort_is_selected(offer_id: String) -> bool:
+    return _escort_selected_offer_map.has(offer_id)
+
+func _escort_toggle_current_offer() -> void:
+    var offer_id: String = _escort_current_offer_id()
+    if offer_id == "":
+        return
+
+    if _escort_is_selected(offer_id):
+        _escort_selected_offer_map.erase(offer_id)
+        _escort_selected_offer_ids.erase(offer_id)
+    else:
+        if _escort_selected_offer_ids.size() >= 3:
+            return
+        var offer: Dictionary = _escort_find_offer_by_id(offer_id)
+        if offer.is_empty():
+            return
+        _escort_selected_offer_ids.append(offer_id)
+        _escort_selected_offer_map[offer_id] = offer.duplicate(true)
+
+    _escort_refresh_offer_list()
+    _escort_refresh_offer_detail()
+    _escort_refresh_offer_summary()
+
+func _escort_clear_selection() -> void:
+    _escort_selected_offer_ids.clear()
+    _escort_selected_offer_map.clear()
+    _escort_refresh_offer_list()
+    _escort_refresh_offer_detail()
+    _escort_refresh_offer_summary()
+
+func _escort_refresh_offer_list() -> void:
+    if _escort_offer_list == null or not is_instance_valid(_escort_offer_list):
+        return
+
+    var selected_offer_id: String = _escort_current_offer_id()
+    _escort_offer_list.clear()
+
+    var offers: Array = _escort_ctx_offers()
+    for offer_any in offers:
+        if not (offer_any is Dictionary):
+            continue
+        var offer: Dictionary = offer_any
+        var offer_id: String = String(offer.get("offer_id", ""))
+        var name_ja: String = String(offer.get("name_ja", "護衛"))
+        var rank: String = String(offer.get("rank", "common"))
+        var fee: float = float(offer.get("base_fee", 0.0))
+
+        var mark := "[ ]"
+        if _escort_is_selected(offer_id):
+            mark = "[選]"
+        var row_text := "%s %s  %.1fG  (%s)" % [mark, name_ja, fee, rank]
+
+        _escort_offer_list.add_item(row_text)
+        var idx: int = _escort_offer_list.item_count - 1
+        _escort_offer_list.set_item_metadata(idx, offer_id)
+
+        if offer_id == selected_offer_id:
+            _escort_offer_list.select(idx)
+
+    if _escort_offer_list.item_count > 0 and _escort_offer_list.get_selected_items().is_empty():
+        _escort_offer_list.select(0)
+
+func _escort_refresh_offer_detail() -> void:
+    if _escort_offer_detail == null or not is_instance_valid(_escort_offer_detail):
+        return
+
+    var offer_id: String = _escort_current_offer_id()
+    if offer_id == "":
+        _escort_offer_detail.text = "候補を選ぶと詳細が表示されます。"
+        if _escort_toggle_btn:
+            _escort_toggle_btn.disabled = true
+        return
+
+    var offer: Dictionary = _escort_find_offer_by_id(offer_id)
+    if offer.is_empty():
+        _escort_offer_detail.text = "詳細を取得できませんでした。"
+        if _escort_toggle_btn:
+            _escort_toggle_btn.disabled = true
+        return
+
+    var picked: bool = _escort_is_selected(offer_id)
+    var name_ja: String = String(offer.get("name_ja", "護衛"))
+    var rank: String = String(offer.get("rank", "common"))
+    var fee: float = float(offer.get("base_fee", 0.0))
+    var bandit_reduce: float = float(offer.get("bandit_reduce", 0.0)) * 100.0
+    var trait_text: String = String(offer.get("trait_text", "特性なし"))
+    var desc_ja: String = String(offer.get("desc_ja", ""))
+
+    var txt := ""
+    txt += "[b]%s[/b]\n" % name_ja
+    txt += "格: %s\n" % rank
+    txt += "一括雇用費: %.1fG\n" % fee
+    txt += "基本盗賊対策: -%.0f%%\n" % bandit_reduce
+    txt += "特性: %s\n" % trait_text
+    if desc_ja != "":
+        txt += "\n%s" % desc_ja
+
+    _escort_offer_detail.bbcode_enabled = true
+    _escort_offer_detail.text = txt
+
+    if _escort_toggle_btn:
+        _escort_toggle_btn.disabled = false
+        if picked:
+            _escort_toggle_btn.text = "解除"
+        else:
+            if _escort_selected_offer_ids.size() >= 3:
+                _escort_toggle_btn.text = "選択上限"
+                _escort_toggle_btn.disabled = true
+            else:
+                _escort_toggle_btn.text = "選択"
+
+func _escort_refresh_offer_summary() -> void:
+    if _escort_offer_summary == null or not is_instance_valid(_escort_offer_summary):
+        return
+
+    var days: int = int(_escort_offer_context.get("days", 0))
+    var base_total: float = float(_escort_offer_context.get("base_total", 0.0))
+    var cash: float = float(_escort_offer_context.get("cash", 0.0))
+
+    var selected_offers: Array = _escort_selected_offers_array()
+    var selected_count: int = selected_offers.size()
+
+    var escort_level: int = selected_count
+    if world and world.has_method("get_escort_level_from_offer_count"):
+        escort_level = int(world.get_escort_level_from_offer_count(selected_count))
+
+    var escort_level_label := "護衛なし"
+    if world and world.has_method("get_escort_label"):
+        escort_level_label = String(world.get_escort_label(escort_level))
+
+    var level_cost: float = 0.0
+    if world and world.has_method("get_escort_cost"):
+        level_cost = float(world.get_escort_cost(escort_level, days))
+
+    var hire_fee: float = 0.0
+    if world and world.has_method("get_escort_total_base_fee_from_offers"):
+        hire_fee = float(world.get_escort_total_base_fee_from_offers(selected_offers))
+
+    var total_cost: float = base_total + level_cost + hire_fee
+
+    var names: PackedStringArray = []
+    for offer_any in selected_offers:
+        var offer: Dictionary = offer_any
+        names.append(String(offer.get("name_ja", "護衛")))
+
+    var txt := ""
+    txt += "[b]選択 %d/3[/b]\n" % selected_count
+    txt += "編成評価: %s\n" % escort_level_label
+    txt += "日数連動費: %.1fG\n" % level_cost
+    txt += "一括雇用費: %.1fG\n" % hire_fee
+    txt += "出発時合計: %.1fG\n" % total_cost
+    txt += "所持金: %.1fG\n" % cash
+    if not names.is_empty():
+        txt += "\n選択中:\n- %s" % "\n- ".join(names)
+    else:
+        txt += "\n選択中:\n- なし"
+
+    _escort_offer_summary.bbcode_enabled = true
+    _escort_offer_summary.text = txt
+
+    if _escort_depart_btn:
+        _escort_depart_btn.text = "この編成で出発"
+        _escort_depart_btn.disabled = false
+
+func _depart_with_escort_selection(selected_offers: Array) -> void:
+    if world == null:
+        return
+
+    var cid: String = String(_escort_offer_context.get("cid", ""))
+    var use_path: Array[String] = _escort_offer_context.get("use_path", []) as Array[String]
+    var days: int = int(_escort_offer_context.get("days", 0))
+    var base_total: float = float(_escort_offer_context.get("base_total", 0.0))
+    var cash: float = float(world.player.get("cash", 0.0))
+
+    var escort_level: int = selected_offers.size()
+    if world.has_method("get_escort_level_from_offer_count"):
+        escort_level = int(world.get_escort_level_from_offer_count(selected_offers.size()))
+
+    var level_cost: float = 0.0
+    if world.has_method("get_escort_cost"):
+        level_cost = float(world.get_escort_cost(escort_level, days))
+
+    var hire_fee: float = 0.0
+    if world.has_method("get_escort_total_base_fee_from_offers"):
+        hire_fee = float(world.get_escort_total_base_fee_from_offers(selected_offers))
+
+    var total_cost: float = base_total + level_cost + hire_fee
+    if cash < total_cost:
+        var err := AcceptDialog.new()
+        err.title = "出発できません"
+        err.dialog_text = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total_cost, cash]
+        map_window.add_child(err)
+        err.popup_centered(Vector2i(320, 140))
+        return
+
+    var res_ok := false
+    if world and world.has_method("player_move_via") and use_path.size() >= 2:
+        if int(world.player.get("last_arrival_day", -999)) != world.day:
+            res_ok = world.player_move_via(cid, use_path, escort_level)
+    else:
+        var r := world.can_player_move_to(cid, escort_level)
+        if bool(r.get("ok", false)):
+            res_ok = world.player_move(cid, escort_level)
+
+    if not res_ok:
+        var err2 := AcceptDialog.new()
+        err2.title = "出発できません"
+        err2.dialog_text = "出発処理に失敗しました。"
+        map_window.add_child(err2)
+        err2.popup_centered(Vector2i(320, 140))
+        return
+
+    if selected_offers.size() > 0 and world.has_method("apply_escort_offer_selection"):
+        var ok_apply: bool = bool(world.apply_escort_offer_selection(selected_offers))
+        if not ok_apply:
+            var err3 := AcceptDialog.new()
+            err3.title = "護衛雇用に失敗"
+            err3.dialog_text = "護衛の雇用処理に失敗しました。"
+            map_window.add_child(err3)
+            err3.popup_centered(Vector2i(320, 140))
+            return
+
+    _close_escort_confirm_if_any(false)
+
+    if is_instance_valid(map_window):
+        var map := map_window.get_node_or_null("MapLayer")
+        if map and map.has_method("end_pick"):
+            map.call("end_pick")
+        map_window.hide()
+        map_window.queue_free()
+        map_window = null
+
+    if is_instance_valid(_move_confirm_dlg):
+        _move_confirm_dlg.hide()
+        _move_confirm_dlg.queue_free()
+        _move_confirm_dlg = null
+
+    start_auto_travel()
+    _refresh()
+
+
+E. 既存 _open_escort_confirm_for_move(...) を丸ごと置換
+----------------------------------------
+
+func _open_escort_confirm_for_move(
+    cid: String,
+    use_path: Array[String],
+    days: int,
+    base_total: float,
+    cash: float
+) -> void:
+    if world == null or not is_instance_valid(map_window):
+        return
+
+    _close_escort_confirm_if_any(false)
+    _set_move_confirm_interactable(false)
+
+    var panel := PanelContainer.new()
+    _escort_confirm_dlg = panel
+    panel.name = "EscortOfferPanel"
+    panel.mouse_filter = Control.MOUSE_FILTER_STOP
+    panel.focus_mode = Control.FOCUS_ALL
+    panel.anchor_left = 1.0
+    panel.anchor_right = 1.0
+    panel.anchor_top = 0.0
+    panel.anchor_bottom = 1.0
+    panel.offset_left = -700
+    panel.offset_right = -20
+    panel.offset_top = 60
+    panel.offset_bottom = -20
+    panel.z_index = 200
+    map_window.add_child(panel)
+
+    var margin := MarginContainer.new()
+    margin.anchor_left = 0.0
+    margin.anchor_top = 0.0
+    margin.anchor_right = 1.0
+    margin.anchor_bottom = 1.0
+    margin.offset_left = 12
+    margin.offset_top = 12
+    margin.offset_right = -12
+    margin.offset_bottom = -12
+    panel.add_child(margin)
+
+    var root := VBoxContainer.new()
+    root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    root.add_theme_constant_override("separation", 8)
+    margin.add_child(root)
+
+    var title := Label.new()
+    title.text = "護衛の雇用"
+    root.add_child(title)
+
+    var sub := Label.new()
+    sub.text = "候補から最大3人まで選べます。"
+    root.add_child(sub)
+
+    var body := HBoxContainer.new()
+    body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    body.add_theme_constant_override("separation", 10)
+    root.add_child(body)
+
+    var left_box := VBoxContainer.new()
+    left_box.custom_minimum_size = Vector2(250, 0)
+    left_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    body.add_child(left_box)
+
+    var list_label := Label.new()
+    list_label.text = "雇用可能一覧"
+    left_box.add_child(list_label)
+
+    var offer_list := ItemList.new()
+    offer_list.select_mode = ItemList.SELECT_SINGLE
+    offer_list.custom_minimum_size = Vector2(250, 220)
+    offer_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    offer_list.allow_rmb_select = false
+    left_box.add_child(offer_list)
+    _escort_offer_list = offer_list
+
+    var left_btns := HBoxContainer.new()
+    left_box.add_child(left_btns)
+
+    var toggle_btn := Button.new()
+    toggle_btn.text = "選択"
+    left_btns.add_child(toggle_btn)
+    _escort_toggle_btn = toggle_btn
+
+    var clear_btn := Button.new()
+    clear_btn.text = "全解除"
+    left_btns.add_child(clear_btn)
+
+    var right_box := VBoxContainer.new()
+    right_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    right_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    body.add_child(right_box)
+
+    var detail_label := Label.new()
+    detail_label.text = "護衛詳細"
+    right_box.add_child(detail_label)
+
+    var detail := RichTextLabel.new()
+    detail.fit_content = false
+    detail.scroll_active = true
+    detail.custom_minimum_size = Vector2(0, 170)
+    detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    right_box.add_child(detail)
+    _escort_offer_detail = detail
+
+    var summary_label := Label.new()
+    summary_label.text = "編成状況"
+    right_box.add_child(summary_label)
+
+    var summary := RichTextLabel.new()
+    summary.fit_content = false
+    summary.scroll_active = true
+    summary.custom_minimum_size = Vector2(0, 130)
+    right_box.add_child(summary)
+    _escort_offer_summary = summary
+
+    var bottom := HBoxContainer.new()
+    bottom.alignment = BoxContainer.ALIGNMENT_END
+    bottom.add_theme_constant_override("separation", 8)
+    root.add_child(bottom)
+
+    var back_btn := Button.new()
+    back_btn.text = "戻る"
+    bottom.add_child(back_btn)
+
+    var no_escort_btn := Button.new()
+    no_escort_btn.text = "護衛なしで出発"
+    bottom.add_child(no_escort_btn)
+
+    var depart_btn := Button.new()
+    depart_btn.text = "この編成で出発"
+    bottom.add_child(depart_btn)
+    _escort_depart_btn = depart_btn
+
+    var offers: Array = []
+    if world.has_method("get_current_city_escort_offers"):
+        offers = world.get_current_city_escort_offers()
+
+    _escort_offer_context = {
+        "cid": cid,
+        "use_path": use_path.duplicate(true),
+        "days": days,
+        "base_total": base_total,
+        "cash": cash,
+        "offers": offers.duplicate(true),
+    }
+
+    _escort_refresh_offer_list()
+    _escort_refresh_offer_detail()
+    _escort_refresh_offer_summary()
+
+    offer_list.item_selected.connect(func(_index: int):
+        _escort_refresh_offer_detail()
+    )
+
+    toggle_btn.pressed.connect(func():
+        _escort_toggle_current_offer()
+    )
+
+    clear_btn.pressed.connect(func():
+        _escort_clear_selection()
+    )
+
+    back_btn.pressed.connect(func():
+        _close_escort_confirm_if_any(true)
+    )
+
+    no_escort_btn.pressed.connect(func():
+        _depart_with_escort_selection([])
+    )
+
+    depart_btn.pressed.connect(func():
+        _depart_with_escort_selection(_escort_selected_offers_array())
+    )
+
+    panel.grab_focus()
+    if offer_list.item_count > 0:
+        offer_list.select(0)
+    offer_list.grab_focus()
+
+
+================================================================================
+3) 期待する見え方
+================================================================================
+
+- 移動確認ダイアログは中央寄りに残る
+- その上に、右側へ大きめの護衛パネルが載る
+- 左に候補一覧、右に詳細と編成状況
+- 最大3人まで選択
+- 「護衛なしで出発」も可能
+- 出発時の総額は
+  基本移動費 + escort_levelの日数連動費 + 選択候補の一括雇用費
+- 旅が始まると player["escort_offers"] に保持される
+- 到着時は escort_level / escort_offers をクリア
+
+
+================================================================================
+4) 今回まだやっていないこと
+================================================================================
+
+- trait_type / trait_value の実効果適用
+- 選択候補の相性やシナジー
+- 候補ごとの route_days 反映型 fee_total
+- move_window.gd への導線統一
+- save/load で escort_offers を明示確認
+
+================================================================================
+5) 補足
+================================================================================
+
+- 今回は「後で trait を積める器」を優先し、護衛効果の本体は既存 escort_level に接続しています
+- 選択候補の base_fee は一括雇用費として別建てにしました
+- これで CSV の候補一覧が UI 上で意味を持ちます
+- 将来、個別 trait を実効果へ繋ぐ時は player["escort_offers"] を参照すれば拡張できます

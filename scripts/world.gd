@@ -3589,6 +3589,7 @@ func init_player() -> void:
         "enroute": false,
         "dest": "",
         "arrival_day": 0,
+        "escort_offers": [],
     }
     player["escort_level"] = int(player.get("escort_level", 0))
     player["last_arrival_day"] = -999
@@ -3628,6 +3629,9 @@ func _ensure_player_integrity() -> void:
 
     if not player.has("escort_level"):
         player["escort_level"] = 0
+
+    if not player.has("escort_offers") or not (player.get("escort_offers") is Array):
+        player["escort_offers"] = []
 
     player["escort_level"] = int(player.get("escort_level", 0))
 
@@ -3950,12 +3954,55 @@ func get_escort_offer_count_for_city(city_id: String) -> int:
     return _get_city_escort_offer_count(city_id)
 
 
+func get_escort_level_from_offer_count(count: int) -> int:
+    return _normalize_escort_level(count)
+
+
+func get_escort_total_base_fee_from_offers(selected_offers: Array) -> float:
+    var total: float = 0.0
+    for offer_any in selected_offers:
+        if not (offer_any is Dictionary):
+            continue
+        var offer: Dictionary = offer_any
+        total += maxf(0.0, float(offer.get("base_fee", 0.0)))
+    return total
+
+
+func apply_escort_offer_selection(selected_offers: Array) -> bool:
+    _ensure_player_integrity()
+
+    var copied: Array = []
+    for offer_any in selected_offers:
+        if offer_any is Dictionary:
+            copied.append((offer_any as Dictionary).duplicate(true))
+
+    var hire_fee: float = get_escort_total_base_fee_from_offers(copied)
+    if float(player.get("cash", 0.0)) < hire_fee:
+        return false
+
+    player["escort_offers"] = copied
+    if hire_fee > 0.0:
+        player["cash"] = float(player.get("cash", 0.0)) - hire_fee
+        var city_id: String = String(player.get("city", ""))
+        if cities.has(city_id):
+            cities[city_id]["funds"] = float(cities[city_id].get("funds", 0.0)) + hire_fee
+
+    world_updated.emit()
+    return true
+
+
+func get_player_escort_offers() -> Array[Dictionary]:
+    _ensure_player_integrity()
+    return _duplicate_escort_offer_array(player.get("escort_offers", []) as Array)
+
+
 func _player_arrive() -> void:
     player["enroute"] = false
     player["city"] = player["dest"]
     player["last_arrival_day"] = day
     player["arrival_day_base"] = 0
     player["escort_level"] = 0
+    player["escort_offers"] = []
     generate_escort_offers_for_city(String(player.get("city", "")))
     world_updated.emit()
     contracts_try_auto_deliver_at(String(player.get("city","")))
