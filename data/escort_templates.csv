@@ -1,0 +1,13 @@
+escort_id,name_ja,rank,base_fee,bandit_reduce,trait_type,trait_value,trait_text,province_tags,city_tier_min,weight,desc_ja
+ESC001,街道の用心棒,common,8,0.08,none,0.00,特性なし,all,1,12,雇いやすい一般的な護衛
+ESC002,慎重な斥候,common,10,0.07,delay_risk_cut,0.10,遅延リスクを少し軽減,all,1,10,先行して危険を見張る
+ESC003,荷馬車番,common,9,0.06,convoy_wear_cut,0.12,整備度の消耗を少し抑える,all,1,9,荷車と馬の扱いに慣れている
+ESC004,荒事慣れの傭兵,uncommon,14,0.14,bandit_loss_cut,0.15,盗賊被害を少し抑える,all,2,8,小競り合いに強い実戦派
+ESC005,関所通いの古参,uncommon,13,0.09,toll_cut,0.10,通行まわりの費用を少し抑える,coastal;inland,2,7,役人とのやりとりに慣れている
+ESC006,山道の案内人,uncommon,12,0.08,delay_risk_cut,0.15,悪路での遅延を抑えやすい,highland;inland,2,7,地形を読んで進路を選ぶ
+ESC007,沼地慣れの見張り,uncommon,11,0.09,convoy_wear_cut,0.10,湿った道での消耗を少し抑える,marsh;coastal,2,6,足場の悪い場所に強い
+ESC008,港の用心棒,veteran,18,0.16,extra_bandit_reduce,0.06,盗賊危険を追加で少し下げる,coastal,3,5,港町の荒くれ者に顔が利く
+ESC009,熟練の護送人,veteran,20,0.18,bandit_loss_cut,0.20,盗賊被害を抑える,inland;all,3,5,商隊護送の経験が豊富
+ESC010,節約家の護衛,veteran,17,0.11,toll_cut,0.15,道中の雑費を少し抑える,all,3,4,無駄な出費を嫌う堅実派
+ESC011,神殿出の衛士,elite,26,0.22,delay_risk_cut,0.12,規律ある行軍で移動を安定させる,all,4,3,高価だが頼れる精鋭護衛
+ESC012,老練な隊商監督,elite,24,0.15,convoy_wear_cut,0.18,整備度の消耗を抑える,inland;all,4,3,護衛兼監督として隊列を整える
