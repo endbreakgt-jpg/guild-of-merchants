@@ -1016,6 +1016,7 @@ var _escort_depart_btn: Button = null
 var _escort_selected_offer_ids: Array[String] = []
 var _escort_selected_offer_map: Dictionary = {}
 var _escort_offer_context: Dictionary = {}
+var _escort_modal_blocker: Control = null
 
 var _map_city_list_panel: PanelContainer = null
 var _map_city_list_body: VBoxContainer = null
@@ -1243,6 +1244,10 @@ func _close_escort_confirm_if_any(restore_move_focus: bool = true) -> void:
         _escort_confirm_dlg.queue_free()
     _escort_confirm_dlg = null
 
+    if is_instance_valid(_escort_modal_blocker):
+        _escort_modal_blocker.queue_free()
+    _escort_modal_blocker = null
+
     _escort_offer_list = null
     _escort_offer_detail = null
     _escort_offer_summary = null
@@ -1257,6 +1262,31 @@ func _close_escort_confirm_if_any(restore_move_focus: bool = true) -> void:
     if restore_move_focus and is_instance_valid(_move_confirm_dlg):
         _move_confirm_dlg.show()
         _move_confirm_dlg.grab_focus()
+
+func _ensure_escort_modal_blocker() -> void:
+    if not is_instance_valid(map_window):
+        return
+
+    if is_instance_valid(_escort_modal_blocker):
+        return
+
+    var blocker := ColorRect.new()
+    blocker.name = "EscortModalBlocker"
+    blocker.color = Color(0, 0, 0, 0.001)
+    blocker.anchor_left = 0.0
+    blocker.anchor_top = 0.0
+    blocker.anchor_right = 1.0
+    blocker.anchor_bottom = 1.0
+    blocker.offset_left = 0
+    blocker.offset_top = 0
+    blocker.offset_right = 0
+    blocker.offset_bottom = 0
+    blocker.mouse_filter = Control.MOUSE_FILTER_STOP
+    blocker.focus_mode = Control.FOCUS_ALL
+    blocker.z_index = 180
+    map_window.add_child(blocker)
+    blocker.grab_focus()
+    _escort_modal_blocker = blocker
 
 func _set_move_confirm_interactable(enabled: bool) -> void:
     if not is_instance_valid(_move_confirm_dlg):
@@ -1572,6 +1602,7 @@ func _open_escort_confirm_for_move(
 
     _close_escort_confirm_if_any(false)
     _set_move_confirm_interactable(false)
+    _ensure_escort_modal_blocker()
 
     var panel := PanelContainer.new()
     _escort_confirm_dlg = panel
@@ -1888,6 +1919,17 @@ func _on_map_city_picked(cid: String) -> void:
     dlg.canceled.connect(_clear_map_highlight)
     dlg.close_requested.connect(_clear_map_highlight)
     dlg.grab_focus()
+    var view_size: Vector2i = map_window.get_visible_rect().size
+    var dlg_size: Vector2i = dlg.size
+    if dlg_size.x <= 0:
+        dlg_size.x = 260
+    if dlg_size.y <= 0:
+        dlg_size.y = 300
+
+    dlg.position = Vector2i(
+        max(24, int(view_size.x * 0.08)),
+        max(72, int(view_size.y * 0.18))
+    )
 
 
 
