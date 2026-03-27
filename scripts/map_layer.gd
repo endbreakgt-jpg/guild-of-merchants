@@ -11,6 +11,7 @@ var world: World = null
 @export var base_map_path: String = "res://ui/back/Worldmap.png"
 
 var _last_vp_size: Vector2i = Vector2i.ZERO
+var viewport_override_size: Vector2i = Vector2i.ZERO
 
 # ---- Zoom / Pan ----
 @export var initial_zoom: float = 1.0
@@ -205,6 +206,14 @@ func _to_string_path(v) -> Array[String]:
             out.append(String(x))
     return out
 
+func set_viewport_override_size(size: Vector2i) -> void:
+    viewport_override_size = size
+    queue_redraw()
+
+func clear_viewport_override_size() -> void:
+    viewport_override_size = Vector2i.ZERO
+    queue_redraw()
+
 func set_zoom(z: float) -> void:
     var v: float = clamp(z, zoom_min, zoom_max)
     _zoom = v
@@ -215,13 +224,23 @@ func zoom_in(step: float = 0.1) -> void: set_zoom(_zoom + step)
 func zoom_out(step: float = 0.1) -> void: set_zoom(_zoom - step)
 
 func _calc_draw_params() -> Dictionary:
-    var vp: Vector2i = get_viewport_rect().size
-    var ts: Vector2i = (base_map.get_size() if base_map else Vector2i(1,1))
-    var fit: float = min(float(vp.x) / float(ts.x), float(vp.y) / float(ts.y))
+    var vp: Vector2i = viewport_override_size
+    if vp.x <= 0 or vp.y <= 0:
+        vp = get_viewport_rect().size
+
+    var ts: Vector2i = Vector2i(1, 1)
+    if base_map != null:
+        ts = base_map.get_size()
+
+    var fit_x: float = float(vp.x) / float(ts.x)
+    var fit_y: float = float(vp.y) / float(ts.y)
+    var fit: float = min(fit_x, fit_y)
+
     var scale: float = fit * _zoom
     var draw_size: Vector2 = Vector2(ts) * scale
     var offset0: Vector2 = (Vector2(vp) - draw_size) * 0.5
     var pan: Vector2 = _pan
+
     if draw_size.x <= float(vp.x):
         pan.x = 0.0
     else:
@@ -229,6 +248,7 @@ func _calc_draw_params() -> Dictionary:
         var max_off_x: float = 0.0
         var off_x: float = clamp(offset0.x + pan.x, min_off_x, max_off_x)
         pan.x = off_x - offset0.x
+
     if draw_size.y <= float(vp.y):
         pan.y = 0.0
     else:
@@ -236,9 +256,15 @@ func _calc_draw_params() -> Dictionary:
         var max_off_y: float = 0.0
         var off_y: float = clamp(offset0.y + pan.y, min_off_y, max_off_y)
         pan.y = off_y - offset0.y
+
     _pan = pan
     var offset: Vector2 = offset0 + pan
-    return {"scale": scale, "draw_size": draw_size, "offset": offset}
+
+    return {
+        "scale": scale,
+        "draw_size": draw_size,
+        "offset": offset,
+    }
 
 func _tex_to_screen(p: Vector2) -> Vector2:
     var d := _calc_draw_params()

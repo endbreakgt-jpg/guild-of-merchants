@@ -1,0 +1,1115 @@
+商人ゲーム制作 / MAP画面足回りパッチ
+対象:
+- res://ui/game_hud.gd
+- res://scripts/map_layer.gd
+
+目的:
+- 現在の popup Window ベースの Map 表示を、まずは「HUD 内でヘッダー下から画面下まで使う」形へ寄せる
+- ただし今回の差分は足回り整備の暫定段階
+- MAP_TRAVEL_PREP の左パネル置換やルート比較UIまではまだ含めない
+
+前提:
+- 現行 GitHub の game_hud.gd / map_layer.gd をベースにした置換差分
+- world.gd の責務は増やさず、game_hud 側で MAP 領域を持ち、map_layer は与えられた描画サイズに従う
+
+
+==================================================
+1. res://scripts/map_layer.gd
+==================================================
+
+【変数追加】
+`var _last_vp_size: Vector2i = Vector2i.ZERO` の直下あたりに追加してください。
+
+```gdscript
+var viewport_override_size: Vector2i = Vector2i.ZERO
+```
+
+【新規関数追加】
+`func _to_string_path(v) -> Array[String]:` の前後どこでもよいので追加してください。
+
+```gdscript
+func set_viewport_override_size(size: Vector2i) -> void:
+    viewport_override_size = size
+    queue_redraw()
+
+func clear_viewport_override_size() -> void:
+    viewport_override_size = Vector2i.ZERO
+    queue_redraw()
+```
+
+【関数置換】`_calc_draw_params`
+丸ごと置換してください。
+
+```gdscript
+func _calc_draw_params() -> Dictionary:
+    var vp: Vector2i = viewport_override_size
+    if vp.x <= 0 or vp.y <= 0:
+        vp = get_viewport_rect().size
+
+    var ts: Vector2i = Vector2i(1, 1)
+    if base_map != null:
+        ts = base_map.get_size()
+
+    var fit_x: float = float(vp.x) / float(ts.x)
+    var fit_y: float = float(vp.y) / float(ts.y)
+    var fit: float = min(fit_x, fit_y)
+
+    var scale: float = fit * _zoom
+    var draw_size: Vector2 = Vector2(ts) * scale
+    var offset0: Vector2 = (Vector2(vp) - draw_size) * 0.5
+
+    var pan: Vector2 = _pan
+
+    if draw_size.x <= float(vp.x):
+        pan.x = 0.0
+    else:
+        var min_off_x: float = float(vp.x) - draw_size.x
+        var max_off_x: float = 0.0
+        var off_x: float = clamp(offset0.x + pan.x, min_off_x, max_off_x)
+        pan.x = off_x - offset0.x
+
+    if draw_size.y <= float(vp.y):
+        pan.y = 0.0
+    else:
+        var min_off_y: float = float(vp.y) - draw_size.y
+        var max_off_y: float = 0.0
+        var off_y: float = clamp(offset0.y + pan.y, min_off_y, max_off_y)
+        pan.y = off_y - offset0.y
+
+    _pan = pan
+    var offset: Vector2 = offset0 + pan
+
+    return {
+        "scale": scale,
+        "draw_size": draw_size,
+        "offset": offset,
+    }
+```
+
+
+==================================================
+2. res://ui/game_hud.gd
+==================================================
+
+このファイルは長いので、完成ファイルではなく置換単位で返します。
+今回の責務は
+- game_hud = MAP表示領域を持つ
+- map_layer = その領域の中で描く
+です。
+
+--------------------------------------------------
+2-1. 変数追加
+--------------------------------------------------
+
+【追加位置】
+`var inventory_window: Window = null` の直後あたりに追加してください。
+
+```gdscript
+var map_mode_root: Control = null
+var map_mode_overlay: Control = null
+var embedded_map_layer: MapLayer = null
+var _map_mode_for_move: bool = false
+```
+
+--------------------------------------------------
+2-2. _ready 追記
+--------------------------------------------------
+
+【追記位置】
+`_ensure_event_log_panel()` の直後、`_refresh()` の前あたりに追記してください。
+
+```gdscript
+    _ensure_map_mode_root()
+    _refresh_map_mode_layout()
+```
+
+--------------------------------------------------
+2-3. 新規関数追加
+--------------------------------------------------
+
+`# ---- placement ----` の前後どこでもよいので、以下をまとめて追加してください。
+
+```gdscript
+func _is_map_mode_open() -> bool:
+    if map_mode_root == null:
+        return false
+    if not is_instance_valid(map_mode_root):
+        return false
+    return map_mode_root.visible
+
+func _ensure_map_mode_root() -> void:
+    var vb := $Margin/VBox as VBoxContainer
+    if vb == null:
+        return
+
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        return
+
+    var root := Control.new()
+    root.name = "MapModeRoot"
+    root.visible = false
+    root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    root.mouse_filter = Control.MOUSE_FILTER_STOP
+    vb.add_child(root)
+
+    var overlay := Control.new()
+    overlay.name = "MapModeOverlay"
+    overlay.anchor_left = 0.0
+    overlay.anchor_top = 0.0
+    overlay.anchor_right = 1.0
+    overlay.anchor_bottom = 1.0
+    overlay.offset_left = 0
+    overlay.offset_top = 0
+    overlay.offset_right = 0
+    overlay.offset_bottom = 0
+    overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    root.add_child(overlay)
+
+    map_mode_root = root
+    map_mode_overlay = overlay
+
+    if not map_mode_root.resized.is_connected(Callable(self, "_on_map_mode_root_resized")):
+        map_mode_root.resized.connect(_on_map_mode_root_resized)
+
+func _on_map_mode_root_resized() -> void:
+    _refresh_map_mode_layout()
+
+func _ensure_embedded_map_layer() -> void:
+    _ensure_map_mode_root()
+    if map_mode_root == null or not is_instance_valid(map_mode_root):
+        return
+
+    if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
+        _refresh_map_mode_layout()
+        return
+
+    var MapLayerScript: Script = preload("res://scripts/map_layer.gd")
+    var map: MapLayer = MapLayerScript.new()
+    map.name = "MapLayer"
+    map.world = world
+    map.position = Vector2.ZERO
+    map_mode_root.add_child(map)
+    map_mode_root.move_child(map, 0)
+
+    embedded_map_layer = map
+
+    if embedded_map_layer.has_signal("city_picked"):
+        var cb_pick := Callable(self, "_on_map_city_picked")
+        if not embedded_map_layer.is_connected("city_picked", cb_pick):
+            embedded_map_layer.connect("city_picked", cb_pick)
+
+    if embedded_map_layer.has_signal("background_clicked"):
+        var cb_bg := Callable(self, "_on_map_background_clicked")
+        if not embedded_map_layer.is_connected("background_clicked", cb_bg):
+            embedded_map_layer.connect("background_clicked", cb_bg)
+
+    _refresh_map_mode_layout()
+
+func _refresh_map_mode_layout() -> void:
+    if map_mode_root == null or not is_instance_valid(map_mode_root):
+        return
+    if embedded_map_layer == null or not is_instance_valid(embedded_map_layer):
+        return
+
+    embedded_map_layer.position = Vector2.ZERO
+
+    if embedded_map_layer.has_method("set_viewport_override_size"):
+        embedded_map_layer.call("set_viewport_override_size", Vector2i(map_mode_root.size))
+
+    if map_mode_overlay != null and is_instance_valid(map_mode_overlay):
+        map_mode_overlay.anchor_left = 0.0
+        map_mode_overlay.anchor_top = 0.0
+        map_mode_overlay.anchor_right = 1.0
+        map_mode_overlay.anchor_bottom = 1.0
+        map_mode_overlay.offset_left = 0
+        map_mode_overlay.offset_top = 0
+        map_mode_overlay.offset_right = 0
+        map_mode_overlay.offset_bottom = 0
+
+func _set_map_mode_visible(visible: bool) -> void:
+    _ensure_map_mode_root()
+
+    if city_mode_ui != null and is_instance_valid(city_mode_ui):
+        city_mode_ui.visible = not visible
+
+    if city_action_bar != null and is_instance_valid(city_action_bar):
+        city_action_bar.visible = not visible
+
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        map_mode_root.visible = visible
+
+    if visible:
+        _refresh_map_mode_layout()
+
+func _get_map_layer() -> MapLayer:
+    if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
+        return embedded_map_layer
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        var map := map_mode_root.get_node_or_null("MapLayer")
+        if map != null and map is MapLayer:
+            embedded_map_layer = map as MapLayer
+            return embedded_map_layer
+    return null
+
+func _get_map_overlay_root() -> Control:
+    if map_mode_overlay != null and is_instance_valid(map_mode_overlay):
+        return map_mode_overlay
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        return map_mode_root
+    return null
+
+func _get_map_dialog_parent() -> Node:
+    var overlay := _get_map_overlay_root()
+    if overlay != null:
+        return overlay
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        return map_mode_root
+    return self
+
+func _clear_map_overlay_children() -> void:
+    var overlay := _get_map_overlay_root()
+    if overlay == null or not is_instance_valid(overlay):
+        return
+
+    for child in overlay.get_children():
+        child.queue_free()
+
+    _map_city_list_panel = null
+    _map_city_list_body = null
+
+func _close_map_mode() -> void:
+    var map := _get_map_layer()
+    if map != null:
+        if map.has_method("end_pick"):
+            map.call("end_pick")
+        if map.has_method("clear_pick_highlight"):
+            map.call("clear_pick_highlight")
+
+    if is_instance_valid(_move_confirm_dlg):
+        _move_confirm_dlg.queue_free()
+    _move_confirm_dlg = null
+
+    _close_escort_confirm_if_any(false)
+    _clear_map_overlay_children()
+
+    _last_move_pick_cid = ""
+    _map_mode_for_move = false
+    _set_map_mode_visible(false)
+    _on_popup_visibility_changed()
+```
+
+--------------------------------------------------
+2-4. 関数置換: _open_map_popup
+--------------------------------------------------
+
+```gdscript
+func _open_map_popup(for_move: bool = false) -> void:
+    _ensure_map_mode_root()
+    _ensure_embedded_map_layer()
+
+    _map_mode_for_move = for_move
+    _set_map_mode_visible(true)
+    _refresh_map_mode_layout()
+
+    var map := _get_map_layer()
+    if map != null:
+        map.position = Vector2.ZERO
+        if map.has_method("clear_pick_highlight"):
+            map.call("clear_pick_highlight")
+
+    _clear_map_overlay_children()
+
+    if for_move:
+        _ensure_map_city_list_ui()
+
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        map_mode_root.grab_focus()
+
+    _on_popup_visibility_changed()
+```
+
+--------------------------------------------------
+2-5. 関数置換: _open_move_window
+--------------------------------------------------
+
+```gdscript
+func _open_move_window() -> void:
+    _open_map_popup(true)
+
+    var map := _get_map_layer()
+    if map != null and map.has_method("begin_pick_for_player"):
+        map.call("begin_pick_for_player")
+
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        map_mode_root.grab_focus()
+```
+
+--------------------------------------------------
+2-6. 関数置換: _ensure_map_city_list_ui
+--------------------------------------------------
+
+```gdscript
+func _ensure_map_city_list_ui() -> void:
+    var overlay := _get_map_overlay_root()
+    if overlay == null or not is_instance_valid(overlay):
+        return
+
+    if _map_city_list_panel != null and is_instance_valid(_map_city_list_panel):
+        return
+
+    var ui_root := overlay.get_node_or_null("MoveMapUI") as Control
+    if ui_root == null:
+        ui_root = Control.new()
+        ui_root.name = "MoveMapUI"
+        ui_root.anchor_left = 0.0
+        ui_root.anchor_top = 0.0
+        ui_root.anchor_right = 1.0
+        ui_root.anchor_bottom = 1.0
+        ui_root.offset_left = 0
+        ui_root.offset_top = 0
+        ui_root.offset_right = 0
+        ui_root.offset_bottom = 0
+        ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        overlay.add_child(ui_root)
+
+    var top_bar := HBoxContainer.new()
+    top_bar.name = "TopBar"
+    top_bar.anchor_left = 0.0
+    top_bar.anchor_top = 0.0
+    top_bar.anchor_right = 1.0
+    top_bar.anchor_bottom = 0.0
+    top_bar.offset_left = 16
+    top_bar.offset_top = 8
+    top_bar.offset_right = -16
+    top_bar.offset_bottom = 40
+    ui_root.add_child(top_bar)
+
+    var back_btn := Button.new()
+    back_btn.text = "戻る"
+    back_btn.focus_mode = Control.FOCUS_ALL
+    top_bar.add_child(back_btn)
+
+    var list_btn := Button.new()
+    list_btn.text = "一覧"
+    list_btn.focus_mode = Control.FOCUS_ALL
+    top_bar.add_child(list_btn)
+
+    var spacer := Control.new()
+    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    top_bar.add_child(spacer)
+
+    var panel := PanelContainer.new()
+    panel.name = "CityListPanel"
+    panel.anchor_left = 1.0
+    panel.anchor_right = 1.0
+    panel.anchor_top = 0.0
+    panel.anchor_bottom = 1.0
+    panel.offset_left = -320
+    panel.offset_right = -16
+    panel.offset_top = 48
+    panel.offset_bottom = -16
+    panel.visible = false
+    panel.mouse_filter = Control.MOUSE_FILTER_STOP
+    ui_root.add_child(panel)
+
+    var scroll := ScrollContainer.new()
+    scroll.name = "Scroll"
+    scroll.anchor_left = 0.0
+    scroll.anchor_top = 0.0
+    scroll.anchor_right = 1.0
+    scroll.anchor_bottom = 1.0
+    scroll.offset_left = 8
+    scroll.offset_top = 8
+    scroll.offset_right = -8
+    scroll.offset_bottom = -8
+    panel.add_child(scroll)
+
+    var body := VBoxContainer.new()
+    body.name = "Body"
+    body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    body.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    scroll.add_child(body)
+
+    _map_city_list_panel = panel
+    _map_city_list_body = body
+
+    back_btn.pressed.connect(func():
+        _close_map_mode()
+    )
+
+    list_btn.pressed.connect(func():
+        if not panel.visible:
+            _populate_map_city_list()
+        panel.visible = not panel.visible
+    )
+```
+
+--------------------------------------------------
+2-7. 関数置換: _populate_map_city_list
+--------------------------------------------------
+
+```gdscript
+func _populate_map_city_list() -> void:
+    if world == null:
+        return
+    if _map_city_list_body == null or not is_instance_valid(_map_city_list_body):
+        return
+
+    for child in _map_city_list_body.get_children():
+        child.queue_free()
+
+    var entries: Array = []
+    for cid in world.cities.keys():
+        var cid_s := String(cid)
+        if world.has_method("is_city_unlocked"):
+            if not world.is_city_unlocked(cid_s):
+                continue
+
+        var info: Dictionary = world.cities.get(cid, {})
+        entries.append({
+            "id": cid_s,
+            "name": String(info.get("name", cid_s)),
+            "province": String(info.get("province", "")),
+        })
+
+    if entries.is_empty():
+        var label := Label.new()
+        label.text = "移動可能な都市がありません。"
+        _map_city_list_body.add_child(label)
+        return
+
+    entries.sort_custom(Callable(self, "_compare_city_list_entry"))
+
+    var current_prov: String = ""
+    for row in entries:
+        var prov: String = String(row.get("province", ""))
+        if prov != "" and prov != current_prov:
+            current_prov = prov
+            var header := Label.new()
+            header.text = prov
+            _map_city_list_body.add_child(header)
+
+        var cid_value := String(row.get("id", ""))
+
+        var btn := Button.new()
+        btn.text = String(row.get("name", ""))
+        btn.focus_mode = Control.FOCUS_ALL
+        btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        btn.mouse_filter = Control.MOUSE_FILTER_STOP
+        btn.set_meta("city_id", cid_value)
+
+        btn.mouse_entered.connect(func(cid_local := cid_value):
+            var map := _get_map_layer()
+            if map != null and map.has_method("preview_move_target"):
+                map.call("preview_move_target", cid_local)
+        )
+
+        btn.mouse_exited.connect(func():
+            if is_instance_valid(_move_confirm_dlg) and _move_confirm_dlg.visible:
+                return
+            var map := _get_map_layer()
+            if map != null and map.has_method("preview_move_target"):
+                map.call("preview_move_target", "")
+        )
+
+        btn.pressed.connect(func(cid_local := cid_value):
+            var map := _get_map_layer()
+            if map != null and map.has_method("preview_move_target"):
+                map.call("preview_move_target", cid_local)
+
+            _on_map_city_picked(cid_local)
+        )
+
+        _map_city_list_body.add_child(btn)
+```
+
+--------------------------------------------------
+2-8. 関数置換: _depart_with_escort_selection
+--------------------------------------------------
+
+```gdscript
+func _depart_with_escort_selection(selected_offers: Array) -> void:
+    if world == null:
+        return
+
+    var cid: String = String(_escort_offer_context.get("cid", ""))
+    var use_path: Array[String] = []
+    var raw_path: Array = _escort_offer_context.get("use_path", []) as Array
+    for step_any in raw_path:
+        use_path.append(String(step_any))
+
+    var days: int = int(_escort_offer_context.get("days", 0))
+    var base_total: float = float(_escort_offer_context.get("base_total", 0.0))
+    var cash: float = float(world.player.get("cash", 0.0))
+    var parent := _get_map_dialog_parent()
+
+    var escort_level: int = selected_offers.size()
+    if world.has_method("get_escort_level_from_offer_count"):
+        escort_level = int(world.get_escort_level_from_offer_count(selected_offers.size()))
+
+    var level_cost: float = 0.0
+    if world.has_method("get_escort_cost"):
+        level_cost = float(world.get_escort_cost(escort_level, days))
+
+    var hire_fee: float = 0.0
+    if world.has_method("get_escort_total_base_fee_from_offers"):
+        hire_fee = float(world.get_escort_total_base_fee_from_offers(selected_offers))
+
+    var total_cost: float = base_total + level_cost + hire_fee
+    if cash < total_cost:
+        var err := AcceptDialog.new()
+        err.title = "出発できません"
+        err.dialog_text = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total_cost, cash]
+        parent.add_child(err)
+        err.popup_centered(Vector2i(320, 140))
+        return
+
+    var res_ok := false
+    if world.has_method("player_move_via") and use_path.size() >= 2:
+        if int(world.player.get("last_arrival_day", -999)) != world.day:
+            res_ok = world.player_move_via(cid, use_path, escort_level)
+    else:
+        var r := world.can_player_move_to(cid, escort_level)
+        if bool(r.get("ok", false)):
+            res_ok = world.player_move(cid, escort_level)
+
+    if not res_ok:
+        var err2 := AcceptDialog.new()
+        err2.title = "出発できません"
+        err2.dialog_text = "出発処理に失敗しました。"
+        parent.add_child(err2)
+        err2.popup_centered(Vector2i(320, 140))
+        return
+
+    if selected_offers.size() > 0 and world.has_method("apply_escort_offer_selection"):
+        var ok_apply: bool = bool(world.apply_escort_offer_selection(selected_offers))
+        if not ok_apply:
+            var err3 := AcceptDialog.new()
+            err3.title = "護衛雇用に失敗"
+            err3.dialog_text = "護衛の雇用処理に失敗しました。"
+            parent.add_child(err3)
+            err3.popup_centered(Vector2i(320, 140))
+            return
+
+    _close_escort_confirm_if_any(false)
+
+    if is_instance_valid(_move_confirm_dlg):
+        _move_confirm_dlg.hide()
+        _move_confirm_dlg.queue_free()
+        _move_confirm_dlg = null
+
+    _close_map_mode()
+    start_auto_travel()
+    _refresh()
+```
+
+--------------------------------------------------
+2-9. 関数置換: _open_escort_confirm_for_move
+--------------------------------------------------
+
+```gdscript
+func _open_escort_confirm_for_move(
+    cid: String,
+    use_path: Array[String],
+    days: int,
+    base_total: float,
+    cash: float
+) -> void:
+    if world == null or not _is_map_mode_open():
+        return
+
+    _close_escort_confirm_if_any(false)
+    _set_move_confirm_interactable(false)
+
+    var parent := _get_map_dialog_parent()
+
+    var panel := PanelContainer.new()
+    _escort_confirm_dlg = panel
+    panel.name = "EscortOfferPanel"
+    panel.mouse_filter = Control.MOUSE_FILTER_STOP
+    panel.focus_mode = Control.FOCUS_ALL
+    panel.anchor_left = 1.0
+    panel.anchor_right = 1.0
+    panel.anchor_top = 0.0
+    panel.anchor_bottom = 1.0
+    panel.offset_left = -700
+    panel.offset_right = -20
+    panel.offset_top = 60
+    panel.offset_bottom = -20
+    panel.z_index = 200
+    parent.add_child(panel)
+
+    var margin := MarginContainer.new()
+    margin.anchor_left = 0.0
+    margin.anchor_top = 0.0
+    margin.anchor_right = 1.0
+    margin.anchor_bottom = 1.0
+    margin.offset_left = 12
+    margin.offset_top = 12
+    margin.offset_right = -12
+    margin.offset_bottom = -12
+    panel.add_child(margin)
+
+    var root := VBoxContainer.new()
+    root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    root.add_theme_constant_override("separation", 8)
+    margin.add_child(root)
+
+    var title := Label.new()
+    title.text = "護衛の雇用"
+    root.add_child(title)
+
+    var sub := Label.new()
+    sub.text = "候補から最大3人まで選べます。"
+    root.add_child(sub)
+
+    var body := HBoxContainer.new()
+    body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    body.add_theme_constant_override("separation", 10)
+    root.add_child(body)
+
+    var left_box := VBoxContainer.new()
+    left_box.custom_minimum_size = Vector2(250, 0)
+    left_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    body.add_child(left_box)
+
+    var list_label := Label.new()
+    list_label.text = "雇用可能一覧"
+    left_box.add_child(list_label)
+
+    var offer_list := ItemList.new()
+    offer_list.select_mode = ItemList.SELECT_SINGLE
+    offer_list.custom_minimum_size = Vector2(250, 220)
+    offer_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    offer_list.allow_rmb_select = false
+    left_box.add_child(offer_list)
+    _escort_offer_list = offer_list
+
+    var left_btns := HBoxContainer.new()
+    left_box.add_child(left_btns)
+
+    var toggle_btn := Button.new()
+    toggle_btn.text = "選択"
+    left_btns.add_child(toggle_btn)
+    _escort_toggle_btn = toggle_btn
+
+    var clear_btn := Button.new()
+    clear_btn.text = "全解除"
+    left_btns.add_child(clear_btn)
+
+    var right_box := VBoxContainer.new()
+    right_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    right_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    body.add_child(right_box)
+
+    var detail_label := Label.new()
+    detail_label.text = "護衛詳細"
+    right_box.add_child(detail_label)
+
+    var detail := RichTextLabel.new()
+    detail.fit_content = false
+    detail.scroll_active = true
+    detail.custom_minimum_size = Vector2(0, 170)
+    detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    right_box.add_child(detail)
+    _escort_offer_detail = detail
+
+    var summary_label := Label.new()
+    summary_label.text = "編成状況"
+    right_box.add_child(summary_label)
+
+    var summary := RichTextLabel.new()
+    summary.fit_content = false
+    summary.scroll_active = true
+    summary.custom_minimum_size = Vector2(0, 130)
+    right_box.add_child(summary)
+    _escort_offer_summary = summary
+
+    var bottom := HBoxContainer.new()
+    bottom.alignment = BoxContainer.ALIGNMENT_END
+    bottom.add_theme_constant_override("separation", 8)
+    root.add_child(bottom)
+
+    var back_btn := Button.new()
+    back_btn.text = "戻る"
+    bottom.add_child(back_btn)
+
+    var no_escort_btn := Button.new()
+    no_escort_btn.text = "護衛なしで出発"
+    bottom.add_child(no_escort_btn)
+
+    var depart_btn := Button.new()
+    depart_btn.text = "この編成で出発"
+    bottom.add_child(depart_btn)
+    _escort_depart_btn = depart_btn
+
+    var offers: Array = []
+    if world.has_method("get_current_city_escort_offers"):
+        offers = world.get_current_city_escort_offers()
+
+    _escort_offer_context = {
+        "cid": cid,
+        "use_path": use_path.duplicate(true),
+        "days": days,
+        "base_total": base_total,
+        "cash": cash,
+        "offers": offers.duplicate(true),
+    }
+
+    _escort_refresh_offer_list()
+    _escort_refresh_offer_detail()
+    _escort_refresh_offer_summary()
+
+    offer_list.item_selected.connect(func(_index: int):
+        _escort_refresh_offer_detail()
+    )
+
+    toggle_btn.pressed.connect(func():
+        _escort_toggle_current_offer()
+    )
+
+    clear_btn.pressed.connect(func():
+        _escort_clear_selection()
+    )
+
+    back_btn.pressed.connect(func():
+        _close_escort_confirm_if_any(true)
+    )
+
+    no_escort_btn.pressed.connect(func():
+        _depart_with_escort_selection([])
+    )
+
+    depart_btn.pressed.connect(func():
+        _depart_with_escort_selection(_escort_selected_offers_array())
+    )
+
+    panel.grab_focus()
+    if offer_list.item_count > 0:
+        offer_list.select(0)
+    _escort_refresh_offer_detail()
+    offer_list.grab_focus()
+```
+
+--------------------------------------------------
+2-10. 関数置換: _on_map_city_picked
+--------------------------------------------------
+
+```gdscript
+func _on_map_city_picked(cid: String) -> void:
+    if is_instance_valid(_escort_confirm_dlg):
+        if _escort_confirm_dlg.visible and _last_move_pick_cid == cid:
+            _escort_confirm_dlg.grab_focus()
+            return
+        _close_escort_confirm_if_any()
+
+    if is_instance_valid(_move_confirm_dlg):
+        if _move_confirm_dlg.visible and _last_move_pick_cid == cid:
+            _move_confirm_dlg.grab_focus()
+            return
+        _move_confirm_dlg.queue_free()
+        _move_confirm_dlg = null
+
+    _last_move_pick_cid = cid
+
+    if world == null or not _is_map_mode_open():
+        return
+
+    var parent := _get_map_dialog_parent()
+    var origin: String = String(world.player.get("city", ""))
+    var days: int = 0
+    var travel_cost: float = 0.0
+    var travel_tax: float = 0.0
+    var toll: float = 0.0
+    var use_path: Array[String] = []
+
+    if world.has_method("compute_path"):
+        var res: Dictionary = world.compute_path(origin, cid, "fastest")
+        var raw_path: Array = res.get("path", []) as Array
+        for step_any in raw_path:
+            use_path.append(String(step_any))
+
+        if use_path.size() < 2:
+            var err := AcceptDialog.new()
+            err.title = "行けません"
+            err.dialog_text = "その都市へ通じる道がありません。"
+            parent.add_child(err)
+            err.popup_centered()
+            return
+
+        var cap_used: int = 0
+        if world.has_method("_cargo_used"):
+            cap_used = world._cargo_used(world.player)
+
+        if cap_used <= 0 and world.player.has("cargo"):
+            var cargo := world.player["cargo"] as Dictionary
+            for pid in cargo.keys():
+                var q: int = int(cargo[pid])
+                var size: int = 1
+                if world.products.has(pid):
+                    size = int(world.products[pid].get("size", 1))
+                cap_used += q * size
+
+        for i in range(use_path.size() - 1):
+            var u := String(use_path[i])
+            var v := String(use_path[i + 1])
+
+            if world.has_method("_calc_edge_travel_cost"):
+                var edge_cost: Dictionary = world._calc_edge_travel_cost(u, v, cap_used)
+                days += int(edge_cost.get("days", world._route_days(u, v)))
+                travel_cost += float(edge_cost.get("travel", 0.0))
+                travel_tax += float(edge_cost.get("tax", 0.0))
+                toll += float(edge_cost.get("toll", 0.0))
+            else:
+                var d_edge: int = world._route_days(u, v)
+                days += d_edge
+                travel_cost += world.travel_cost_per_day * float(d_edge)
+                if world.pay_toll_on_depart:
+                    toll += float(world._route_toll(u, v))
+    else:
+        use_path = [origin, cid]
+
+        var cap_used_fallback: int = 0
+        if world.has_method("_cargo_used"):
+            cap_used_fallback = world._cargo_used(world.player)
+
+        if world.has_method("_calc_edge_travel_cost"):
+            var edge := world._calc_edge_travel_cost(origin, cid, cap_used_fallback)
+            days = int(edge.get("days", world._route_days(origin, cid)))
+            travel_cost = float(edge.get("travel", 0.0))
+            travel_tax = float(edge.get("tax", 0.0))
+            toll = float(edge.get("toll", 0.0))
+        else:
+            days = world._route_days(origin, cid)
+            travel_cost = world.travel_cost_per_day * float(days)
+            if world.pay_toll_on_depart:
+                toll = float(world._route_toll(origin, cid))
+
+    var total: float = travel_cost + travel_tax + toll
+    var cash: float = float(world.player.get("cash", 0.0))
+
+    var dest_name: String = cid
+    var origin_name: String = origin
+    if world.cities.has(cid):
+        dest_name = String(world.cities[cid].get("name", cid))
+    if world.cities.has(origin):
+        origin_name = String(world.cities[origin].get("name", origin))
+
+    var dlg := ConfirmationDialog.new()
+    dlg.transient = true
+    dlg.transient_to_focused = true
+    dlg.always_on_top = true
+    dlg.exclusive = true
+    _move_confirm_dlg = dlg
+    dlg.title = "移動の確認"
+
+    var text: String = "次の都市へ移動しますか？\n"
+    text += "%s → %s\n" % [origin_name, dest_name]
+    text += "日数: %d\n" % days
+    text += "宿・雑費: %.1f\n" % travel_cost
+    text += "関税(容量ベース): %.1f\n" % travel_tax
+    text += "通行料: %.1f\n" % toll
+    text += "――――――――――\n"
+    text += "合計: %.1f\n" % total
+    text += "所持金: %.1f" % cash
+    if cash < total:
+        text += "\n\n※所持金が足りません。"
+    dlg.dialog_text = text
+
+    parent.add_child(dlg)
+    dlg.popup_centered()
+
+    if dlg.get_ok_button():
+        dlg.get_ok_button().text = "移動する"
+    if dlg.get_cancel_button():
+        dlg.get_cancel_button().text = "やめる"
+
+    dlg.confirmed.connect(func():
+        if is_instance_valid(_move_confirm_dlg):
+            _move_confirm_dlg.show()
+        _open_escort_confirm_for_move(cid, use_path, days, total, cash)
+    )
+
+    _sync_pause_state()
+    dlg.confirmed.connect(_sync_pause_state)
+    dlg.canceled.connect(_sync_pause_state)
+    dlg.close_requested.connect(_sync_pause_state)
+
+    var clear_map_highlight := func():
+        var map := _get_map_layer()
+        if map != null and map.has_method("clear_pick_highlight"):
+            map.call("clear_pick_highlight")
+
+    dlg.canceled.connect(clear_map_highlight)
+    dlg.close_requested.connect(clear_map_highlight)
+    dlg.grab_focus()
+```
+
+--------------------------------------------------
+2-11. 関数置換: _any_popup_visible
+--------------------------------------------------
+
+今回の足回り段階では、MAPを HUD 内表示に変えても、
+従来の安全性を優先して「開いている間は pause 対象」に寄せます。
+後で MAP を完全なモード扱いにする時に再整理してください。
+
+```gdscript
+func _any_popup_visible() -> bool:
+    var a := trade_win != null and bool(trade_win.get("visible"))
+    var b := menu_win != null and bool(menu_win.get("visible"))
+    var c := _is_map_mode_open()
+    var d := is_instance_valid(move_window) and move_window.visible
+    var e := is_instance_valid(inventory_window) and inventory_window.visible
+    var f := is_instance_valid(_save_load_win) and _save_load_win.visible
+    var g := is_instance_valid(_move_confirm_dlg) and _move_confirm_dlg.visible
+    var h := is_instance_valid(_escort_confirm_dlg) and _escort_confirm_dlg.visible
+    return a or b or c or d or e or f or g or h
+```
+
+--------------------------------------------------
+2-12. 関数置換: _handle_esc_event
+--------------------------------------------------
+
+```gdscript
+func _handle_esc_event(event: InputEvent) -> void:
+    if event.is_action_pressed("ui_cancel"):
+        var closed := false
+
+        if _is_map_mode_open():
+            _close_map_mode()
+            closed = true
+
+        if is_instance_valid(move_window) and move_window.visible:
+            move_window.hide()
+            closed = true
+
+        if is_instance_valid(inventory_window) and inventory_window.visible:
+            inventory_window.hide()
+            closed = true
+
+        if trade_win != null and bool(trade_win.get("visible")):
+            if trade_win.has_method("reset_to_menu"):
+                trade_win.call("reset_to_menu")
+            if trade_win.has_method("hide"):
+                trade_win.call("hide")
+            else:
+                trade_win.set("visible", false)
+            closed = true
+
+        if menu_win != null and bool(menu_win.get("visible")):
+            if menu_win.has_method("hide"):
+                menu_win.call("hide")
+            else:
+                menu_win.set("visible", false)
+            closed = true
+
+        if is_instance_valid(debug_window) and debug_window.visible:
+            debug_window.hide()
+            closed = true
+
+        if closed:
+            get_viewport().set_input_as_handled()
+            _on_popup_visibility_changed()
+```
+
+--------------------------------------------------
+2-13. 関数置換: _refresh_city_action_bar
+--------------------------------------------------
+
+MAP表示中は都市アクションバーを消すようにします。
+これで「ヘッダーだけ残し、その下を MAP 専用領域にする」形になります。
+
+```gdscript
+func _refresh_city_action_bar() -> void:
+    if city_action_bar == null or world == null:
+        return
+
+    city_action_bar.visible = show_city_mode_ui and not _is_map_mode_open()
+    if not city_action_bar.visible:
+        return
+
+    var moving := bool(world.player.get("enroute", false))
+
+    if city_action_step_btn:
+        city_action_step_btn.disabled = moving
+    if city_action_step_turn_btn:
+        city_action_step_turn_btn.disabled = moving
+    if city_action_move_btn:
+        city_action_move_btn.disabled = moving
+    if city_action_contract_btn:
+        city_action_contract_btn.disabled = moving
+    if city_action_inv_btn:
+        city_action_inv_btn.disabled = moving
+    if city_action_trust_btn:
+        city_action_trust_btn.disabled = moving
+    if city_action_maint_btn:
+        city_action_maint_btn.disabled = moving
+
+    if city_action_maint_btn:
+        var convoy_enabled := true
+        if world.get("convoy_condition_enabled") != null:
+            convoy_enabled = bool(world.get("convoy_condition_enabled"))
+        city_action_maint_btn.visible = convoy_enabled
+```
+
+--------------------------------------------------
+2-14. 既存の map_window はどうするか
+--------------------------------------------------
+
+今回の差分では `map_window` 変数は残ったままで構いません。
+ただし MAP 表示本体はもう使いません。
+
+後段で整理するなら、
+- `var map_window: Window = null`
+を
+- `# 廃止予定: popup MapWindow 旧実装`
+のようにコメントしておくと次回見失いにくいです。
+
+
+==================================================
+3. この段階で得られる状態
+==================================================
+
+- TopBar は残る
+- CityActionBar と CityModeUI は MAP 表示中だけ隠れる
+- MapModeRoot が VBox の残り領域を全部使う
+- MapLayer はその領域サイズを `viewport_override_size` で受け取って描画する
+- 結果として、見た目としては「ヘッダー下から画面下まで MAP」が実現できる
+
+ただし、まだ暫定です。
+現時点では
+- 都市情報左パネル
+- MAP_BROWSE / MAP_CITY_FOCUS / MAP_TRAVEL_PREP の状態分離
+- 左パネル置換型の移動準備
+- 右側一覧の常設化
+までは入っていません。
+
+今回はあくまで
+「中央 popup の 1120x640 をやめて、MAP を本体領域に広げる」
+ための土台です。
+
+
+==================================================
+4. 先に確認した方がよい点
+==================================================
+
+1.
+`MapLayer` の `base_map_path` が現行 GitHub では
+`res://ui/back/Worldmap.png`
+になっています。
+手元が `WorldMap.png` なら大文字小文字差で読めない環境があるので、
+ここは別件で一度そろえた方が安全です。
+
+2.
+今回のパッチでは MAP を `_any_popup_visible()` に含めています。
+つまり「見た目はモード寄り、内部はまだ pause 対象」です。
+これは足回り優先の暫定です。
+
+3.
+`_on_map_city_picked` 以降の移動確認はまだ ConfirmationDialog ベースです。
+今回の目的はレイアウト土台なのでそのまま残しています。
+次段で左パネル方式へ移すのが本筋です。

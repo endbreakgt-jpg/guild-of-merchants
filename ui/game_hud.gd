@@ -95,9 +95,13 @@ var _save_load_win: Window = null
 # Runtime-only UIs (ツリーにプリセット不要)
 var menu_win: Node = null            # res://ui/menu_panel.gd（通常 Control）
 var trade_win: Node = null           # res://ui/trade_window.gd（Control もしくは Window）
-var map_window: Window = null        # Map用サブウィンドウ
+var map_window: Window = null        # 廃止予定: popup MapWindow 旧実装
 var move_window: Window = null       # Move用サブウィンドウ
 var inventory_window: Window = null  # Inventory用サブウィンドウ
+var map_mode_root: Control = null
+var map_mode_overlay: Control = null
+var embedded_map_layer: MapLayer = null
+var _map_mode_for_move: bool = false
 var debug_panel: DebugPanel = null
 var debug_window: Window = null     # ← デバッグ専用サブウィンドウ
 
@@ -213,6 +217,8 @@ func _ready() -> void:
     _ensure_debug_toggle()
     _ensure_toast_layer()
     _ensure_event_log_panel()  # ★ 追加：HUD右下のログ欄（非ポップアップ）
+    _ensure_map_mode_root()
+    _refresh_map_mode_layout()
     _refresh()
     call_deferred("_place_popups")
     get_tree().root.size_changed.connect(_place_popups)
@@ -516,6 +522,178 @@ func _city_name(cid: String) -> String:
         return String(world.cities[cid]["name"])
     return cid
 
+func _is_map_mode_open() -> bool:
+    if map_mode_root == null:
+        return false
+    if not is_instance_valid(map_mode_root):
+        return false
+    return map_mode_root.visible
+
+func _ensure_map_mode_root() -> void:
+    var vb := $Margin/VBox as VBoxContainer
+    if vb == null:
+        return
+
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        return
+
+    var root := Control.new()
+    root.name = "MapModeRoot"
+    root.visible = false
+    root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    root.mouse_filter = Control.MOUSE_FILTER_STOP
+    vb.add_child(root)
+
+    var overlay := Control.new()
+    overlay.name = "MapModeOverlay"
+    overlay.anchor_left = 0.0
+    overlay.anchor_top = 0.0
+    overlay.anchor_right = 1.0
+    overlay.anchor_bottom = 1.0
+    overlay.offset_left = 0
+    overlay.offset_top = 0
+    overlay.offset_right = 0
+    overlay.offset_bottom = 0
+    overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    root.add_child(overlay)
+
+    map_mode_root = root
+    map_mode_overlay = overlay
+
+    if not map_mode_root.resized.is_connected(Callable(self, "_on_map_mode_root_resized")):
+        map_mode_root.resized.connect(_on_map_mode_root_resized)
+
+func _on_map_mode_root_resized() -> void:
+    _refresh_map_mode_layout()
+
+func _ensure_embedded_map_layer() -> void:
+    _ensure_map_mode_root()
+    if map_mode_root == null or not is_instance_valid(map_mode_root):
+        return
+
+    if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
+        _refresh_map_mode_layout()
+        return
+
+    var map := preload("res://scripts/map_layer.gd").new() as MapLayer
+    if map == null:
+        return
+
+    map.name = "MapLayer"
+    map.world = world
+    map.position = Vector2.ZERO
+    map_mode_root.add_child(map)
+    map_mode_root.move_child(map, 0)
+
+    embedded_map_layer = map
+
+    if embedded_map_layer.has_signal("city_picked"):
+        var cb_pick := Callable(self, "_on_map_city_picked")
+        if not embedded_map_layer.is_connected("city_picked", cb_pick):
+            embedded_map_layer.connect("city_picked", cb_pick)
+
+    if embedded_map_layer.has_signal("background_clicked"):
+        var cb_bg := Callable(self, "_on_map_background_clicked")
+        if not embedded_map_layer.is_connected("background_clicked", cb_bg):
+            embedded_map_layer.connect("background_clicked", cb_bg)
+
+    _refresh_map_mode_layout()
+
+func _refresh_map_mode_layout() -> void:
+    if map_mode_root == null or not is_instance_valid(map_mode_root):
+        return
+    if embedded_map_layer == null or not is_instance_valid(embedded_map_layer):
+        return
+
+    embedded_map_layer.position = Vector2.ZERO
+
+    if embedded_map_layer.has_method("set_viewport_override_size"):
+        embedded_map_layer.call("set_viewport_override_size", Vector2i(map_mode_root.size))
+
+    if map_mode_overlay != null and is_instance_valid(map_mode_overlay):
+        map_mode_overlay.anchor_left = 0.0
+        map_mode_overlay.anchor_top = 0.0
+        map_mode_overlay.anchor_right = 1.0
+        map_mode_overlay.anchor_bottom = 1.0
+        map_mode_overlay.offset_left = 0
+        map_mode_overlay.offset_top = 0
+        map_mode_overlay.offset_right = 0
+        map_mode_overlay.offset_bottom = 0
+
+func _set_map_mode_visible(visible: bool) -> void:
+    _ensure_map_mode_root()
+
+    if city_mode_ui != null and is_instance_valid(city_mode_ui):
+        city_mode_ui.visible = show_city_mode_ui and not visible
+
+    if city_action_bar != null and is_instance_valid(city_action_bar):
+        city_action_bar.visible = not visible
+
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        map_mode_root.visible = visible
+
+    if visible:
+        _refresh_map_mode_layout()
+
+    _refresh_city_action_bar()
+
+func _get_map_layer() -> MapLayer:
+    if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
+        return embedded_map_layer
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        var map := map_mode_root.get_node_or_null("MapLayer")
+        if map != null and map is MapLayer:
+            embedded_map_layer = map as MapLayer
+            return embedded_map_layer
+    return null
+
+func _get_map_overlay_root() -> Control:
+    if map_mode_overlay != null and is_instance_valid(map_mode_overlay):
+        return map_mode_overlay
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        return map_mode_root
+    return null
+
+func _get_map_dialog_parent() -> Node:
+    var overlay := _get_map_overlay_root()
+    if overlay != null:
+        return overlay
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        return map_mode_root
+    return self
+
+func _clear_map_overlay_children() -> void:
+    var overlay := _get_map_overlay_root()
+    if overlay == null or not is_instance_valid(overlay):
+        return
+
+    for child in overlay.get_children():
+        child.queue_free()
+
+    _map_city_list_panel = null
+    _map_city_list_body = null
+
+func _close_map_mode() -> void:
+    var map := _get_map_layer()
+    if map != null:
+        if map.has_method("end_pick"):
+            map.call("end_pick")
+        if map.has_method("clear_pick_highlight"):
+            map.call("clear_pick_highlight")
+
+    if is_instance_valid(_move_confirm_dlg):
+        _move_confirm_dlg.queue_free()
+    _move_confirm_dlg = null
+
+    _close_escort_confirm_if_any(false)
+    _clear_map_overlay_children()
+
+    _last_move_pick_cid = ""
+    _map_mode_for_move = false
+    _set_map_mode_visible(false)
+    _on_popup_visibility_changed()
+
 # ---- placement ----
 func _place_popups() -> void:
     var vp := get_viewport_rect()
@@ -689,12 +867,14 @@ func _toggle_popup(win: Node) -> void:
 
 func _any_popup_visible() -> bool:
     var a := trade_win != null and bool(trade_win.get("visible"))
-    var b := menu_win  != null and bool(menu_win.get("visible"))
-    var c := is_instance_valid(map_window) and map_window.visible
+    var b := menu_win != null and bool(menu_win.get("visible"))
+    var c := _is_map_mode_open()
     var d := is_instance_valid(move_window) and move_window.visible
     var e := is_instance_valid(inventory_window) and inventory_window.visible
     var f := is_instance_valid(_save_load_win) and _save_load_win.visible
-    return a or b or c or d or e or f
+    var g := is_instance_valid(_move_confirm_dlg) and _move_confirm_dlg.visible
+    var h := is_instance_valid(_escort_confirm_dlg) and _escort_confirm_dlg.visible
+    return a or b or c or d or e or f or g or h
 
 func _on_popup_visibility_changed() -> void:
     _sync_pause_state()
@@ -716,18 +896,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _handle_esc_event(event: InputEvent) -> void:
     if event.is_action_pressed("ui_cancel"):
         var closed := false
-        if is_instance_valid(map_window) and map_window.visible:
-            var map := map_window.get_node_or_null("MapLayer")
-            if map and map.has_method("end_pick"):
-                map.call("end_pick")
-            if is_instance_valid(_move_confirm_dlg):
-                _move_confirm_dlg.queue_free()
-                _move_confirm_dlg = null
-            _close_escort_confirm_if_any(false)
-            _map_city_list_panel = null
-            _map_city_list_body = null
-            map_window.hide()
+
+        if _is_map_mode_open():
+            _close_map_mode()
             closed = true
+
         if is_instance_valid(move_window) and move_window.visible:
             move_window.hide()
             closed = true
@@ -872,80 +1045,28 @@ func _spawn_debug_if_needed() -> void:
             debug_panel.call("_update_stats")
 
 func _open_map_popup(for_move: bool = false) -> void:
-    # 既にウィンドウがある場合は再利用
-    if is_instance_valid(map_window):
-        if for_move:
-            _ensure_map_city_list_ui()
-        map_window.popup_centered()
-        map_window.grab_focus()
-        return
+    _ensure_map_mode_root()
+    _ensure_embedded_map_layer()
 
-    # ウィンドウの新規作成と設定
-    map_window = Window.new()
-    map_window.name = "MapWindow"
-    map_window.title = "Map"
-    map_window.size = Vector2i(1120, 640)
-    map_window.min_size = Vector2i(1120, 640)
-    map_window.unresizable = true
+    _map_mode_for_move = for_move
+    _set_map_mode_visible(true)
+    _refresh_map_mode_layout()
 
-    var main := get_window()
-    if main:
-        main.add_child(map_window)
-    else:
-        get_tree().root.add_child(map_window)
+    var map := _get_map_layer()
+    if map != null:
+        map.position = Vector2.ZERO
+        if map.has_method("clear_pick_highlight"):
+            map.call("clear_pick_highlight")
 
-    # MapLayer の追加
-    var DiceOverlayScript: Script = preload("res://ui/dice_overlay.gd") # これは未使用のようです（元コード踏襲）
-    var MapLayerScript: Script = preload("res://scripts/map_layer.gd")
-    var map: Node = MapLayerScript.new()
-    map.name = "MapLayer"
-    map.world = world
-    map_window.add_child(map)
+    _clear_map_overlay_children()
 
-    # レイアウト設定（元コード踏襲）
-    if map.has_method("set_anchors_preset"):
-        map.call("set_anchors_preset", Control.PRESET_FULL_RECT)
-        if map.has_method("set"):
-            map.set("offset_left", 0)
-            map.set("offset_top", 0)
-            map.set("offset_right", 0)
-            map.set("offset_bottom", 0)
-
-    # シグナル接続
-    if map.has_signal("city_picked"):
-        var cb := Callable(self, "_on_map_city_picked")
-        if not map.is_connected("city_picked", cb):
-            map.connect("city_picked", cb)
-
-    if map.has_signal("background_clicked"):
-        var cb_bg := Callable(self, "_on_map_background_clicked")
-        if not map.is_connected("background_clicked", cb_bg):
-            map.connect("background_clicked", cb_bg)
-
-    # Move 経由で開いたときだけ都市一覧UIを用意
     if for_move:
         _ensure_map_city_list_ui()
 
-    map_window.popup_centered()
-    map_window.grab_focus()
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        map_mode_root.grab_focus()
 
-    # 閉じるときの後片付け
-    map_window.close_requested.connect(func():
-        var m := map_window.get_node_or_null("MapLayer")
-        if m and m.has_method("end_pick"):
-            m.call("end_pick")
-        if is_instance_valid(_move_confirm_dlg):
-            _move_confirm_dlg.queue_free()
-            _move_confirm_dlg = null
-        _close_escort_confirm_if_any(false)
-
-        _map_city_list_panel = null
-        _map_city_list_body = null
-
-        if is_instance_valid(map_window):
-            map_window.queue_free()
-        map_window = null
-    )
+    _on_popup_visibility_changed()
 
 
 
@@ -1033,26 +1154,24 @@ func _size_and_center_window(win: Window) -> void:
     win.position = (screen_size - target) / 2
 
 func _open_move_window() -> void:
-    _open_map_popup(true)  # ← Move 経由では一覧ボタン付きのモードで開く
-    if not is_instance_valid(map_window):
-        return
-    var map := map_window.get_node_or_null("MapLayer")
-    if map == null and map_window.get_child_count() > 0:
-        map = map_window.get_child(0)
-    if map and map.has_method("begin_pick_for_player"):
+    _open_map_popup(true)
+
+    var map := _get_map_layer()
+    if map != null and map.has_method("begin_pick_for_player"):
         map.call("begin_pick_for_player")
-    map_window.popup_centered()
-    map_window.grab_focus()
+
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        map_mode_root.grab_focus()
 
 func _ensure_map_city_list_ui() -> void:
-    if not is_instance_valid(map_window):
+    var overlay := _get_map_overlay_root()
+    if overlay == null or not is_instance_valid(overlay):
         return
 
-    if _map_city_list_panel and is_instance_valid(_map_city_list_panel):
-        return  # 既に作ってあれば何もしない
+    if _map_city_list_panel != null and is_instance_valid(_map_city_list_panel):
+        return
 
-    # ルートのUIコンテナ（地図の上にかぶせる）
-    var ui_root: Control = map_window.get_node_or_null("MoveMapUI")
+    var ui_root := overlay.get_node_or_null("MoveMapUI") as Control
     if ui_root == null:
         ui_root = Control.new()
         ui_root.name = "MoveMapUI"
@@ -1065,9 +1184,8 @@ func _ensure_map_city_list_ui() -> void:
         ui_root.offset_right = 0
         ui_root.offset_bottom = 0
         ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        map_window.add_child(ui_root)
+        overlay.add_child(ui_root)
 
-    # 上部バー（一覧ボタンを置く）
     var top_bar := HBoxContainer.new()
     top_bar.name = "TopBar"
     top_bar.anchor_left = 0.0
@@ -1079,6 +1197,11 @@ func _ensure_map_city_list_ui() -> void:
     top_bar.offset_right = -16
     top_bar.offset_bottom = 40
     ui_root.add_child(top_bar)
+
+    var back_btn := Button.new()
+    back_btn.text = "戻る"
+    back_btn.focus_mode = Control.FOCUS_ALL
+    top_bar.add_child(back_btn)
 
     var list_btn := Button.new()
     list_btn.text = "一覧"
@@ -1126,7 +1249,10 @@ func _ensure_map_city_list_ui() -> void:
     _map_city_list_panel = panel
     _map_city_list_body = body
 
-    # ボタンで開閉＆開くときにリストを再構築
+    back_btn.pressed.connect(func():
+        _close_map_mode()
+    )
+
     list_btn.pressed.connect(func():
         if not panel.visible:
             _populate_map_city_list()
@@ -1139,24 +1265,22 @@ func _populate_map_city_list() -> void:
     if _map_city_list_body == null or not is_instance_valid(_map_city_list_body):
         return
 
-    # 既存の行をクリア
     for child in _map_city_list_body.get_children():
         child.queue_free()
 
-    # アンロック済み都市を集める
     var entries: Array = []
     for cid in world.cities.keys():
         var cid_s := String(cid)
         if world.has_method("is_city_unlocked"):
             if not world.is_city_unlocked(cid_s):
                 continue
+
         var info: Dictionary = world.cities.get(cid, {})
-        var row := {
+        entries.append({
             "id": cid_s,
             "name": String(info.get("name", cid_s)),
-            "province": String(info.get("province", ""))
-        }
-        entries.append(row)
+            "province": String(info.get("province", "")),
+        })
 
     if entries.is_empty():
         var label := Label.new()
@@ -1164,7 +1288,6 @@ func _populate_map_city_list() -> void:
         _map_city_list_body.add_child(label)
         return
 
-    # プロヴィンス → 都市名 の順でソート
     entries.sort_custom(Callable(self, "_compare_city_list_entry"))
 
     var current_prov: String = ""
@@ -1185,41 +1308,24 @@ func _populate_map_city_list() -> void:
         btn.mouse_filter = Control.MOUSE_FILTER_STOP
         btn.set_meta("city_id", cid_value)
 
-        # マウスオーバー時：都市ノードにホバーしたときと同様に経路プレビュー/ハイライト
         btn.mouse_entered.connect(func(cid_local := cid_value):
-            if not is_instance_valid(map_window):
-                return
-            var map := map_window.get_node_or_null("MapLayer")
-            if map == null and map_window.get_child_count() > 0:
-                map = map_window.get_child(0)
-            if map and map.has_method("preview_move_target"):
+            var map := _get_map_layer()
+            if map != null and map.has_method("preview_move_target"):
                 map.call("preview_move_target", cid_local)
         )
 
-        # 行からフォーカスが外れたらプレビュー解除
         btn.mouse_exited.connect(func():
-            # 都市ノードと同様に、移動確認ダイアログ表示中はハイライトを維持する
             if is_instance_valid(_move_confirm_dlg) and _move_confirm_dlg.visible:
                 return
-            if not is_instance_valid(map_window):
-                return
-            var map := map_window.get_node_or_null("MapLayer")
-            if map == null and map_window.get_child_count() > 0:
-                map = map_window.get_child(0)
-            if map and map.has_method("preview_move_target"):
+            var map := _get_map_layer()
+            if map != null and map.has_method("preview_move_target"):
                 map.call("preview_move_target", "")
         )
 
-        # クリック時：
-        #  1) まず MAP 側にプレビューを出す
-        #  2) その後、都市ノードクリックと同じ確認ダイアログを開く
         btn.pressed.connect(func(cid_local := cid_value):
-            if is_instance_valid(map_window):
-                var map := map_window.get_node_or_null("MapLayer")
-                if map == null and map_window.get_child_count() > 0:
-                    map = map_window.get_child(0)
-                if map and map.has_method("preview_move_target"):
-                    map.call("preview_move_target", cid_local)
+            var map := _get_map_layer()
+            if map != null and map.has_method("preview_move_target"):
+                map.call("preview_move_target", cid_local)
 
             _on_map_city_picked(cid_local)
         )
@@ -1264,7 +1370,8 @@ func _close_escort_confirm_if_any(restore_move_focus: bool = true) -> void:
         _move_confirm_dlg.grab_focus()
 
 func _ensure_escort_modal_blocker() -> void:
-    if not is_instance_valid(map_window):
+    var overlay := _get_map_overlay_root()
+    if overlay == null or not is_instance_valid(overlay):
         return
 
     if is_instance_valid(_escort_modal_blocker):
@@ -1284,7 +1391,7 @@ func _ensure_escort_modal_blocker() -> void:
     blocker.mouse_filter = Control.MOUSE_FILTER_STOP
     blocker.focus_mode = Control.FOCUS_ALL
     blocker.z_index = 180
-    map_window.add_child(blocker)
+    overlay.add_child(blocker)
     blocker.grab_focus()
     _escort_modal_blocker = blocker
 
@@ -1522,6 +1629,7 @@ func _depart_with_escort_selection(selected_offers: Array) -> void:
     var days: int = int(_escort_offer_context.get("days", 0))
     var base_total: float = float(_escort_offer_context.get("base_total", 0.0))
     var cash: float = float(world.player.get("cash", 0.0))
+    var parent := _get_map_dialog_parent()
 
     var escort_level: int = selected_offers.size()
     if world.has_method("get_escort_level_from_offer_count"):
@@ -1540,12 +1648,12 @@ func _depart_with_escort_selection(selected_offers: Array) -> void:
         var err := AcceptDialog.new()
         err.title = "出発できません"
         err.dialog_text = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total_cost, cash]
-        map_window.add_child(err)
+        parent.add_child(err)
         err.popup_centered(Vector2i(320, 140))
         return
 
     var res_ok := false
-    if world and world.has_method("player_move_via") and use_path.size() >= 2:
+    if world.has_method("player_move_via") and use_path.size() >= 2:
         if int(world.player.get("last_arrival_day", -999)) != world.day:
             res_ok = world.player_move_via(cid, use_path, escort_level)
     else:
@@ -1557,7 +1665,7 @@ func _depart_with_escort_selection(selected_offers: Array) -> void:
         var err2 := AcceptDialog.new()
         err2.title = "出発できません"
         err2.dialog_text = "出発処理に失敗しました。"
-        map_window.add_child(err2)
+        parent.add_child(err2)
         err2.popup_centered(Vector2i(320, 140))
         return
 
@@ -1567,25 +1675,18 @@ func _depart_with_escort_selection(selected_offers: Array) -> void:
             var err3 := AcceptDialog.new()
             err3.title = "護衛雇用に失敗"
             err3.dialog_text = "護衛の雇用処理に失敗しました。"
-            map_window.add_child(err3)
+            parent.add_child(err3)
             err3.popup_centered(Vector2i(320, 140))
             return
 
     _close_escort_confirm_if_any(false)
-
-    if is_instance_valid(map_window):
-        var map := map_window.get_node_or_null("MapLayer")
-        if map and map.has_method("end_pick"):
-            map.call("end_pick")
-        map_window.hide()
-        map_window.queue_free()
-        map_window = null
 
     if is_instance_valid(_move_confirm_dlg):
         _move_confirm_dlg.hide()
         _move_confirm_dlg.queue_free()
         _move_confirm_dlg = null
 
+    _close_map_mode()
     start_auto_travel()
     _refresh()
 
@@ -1597,12 +1698,12 @@ func _open_escort_confirm_for_move(
     base_total: float,
     cash: float
 ) -> void:
-    if world == null or not is_instance_valid(map_window):
+    if world == null or not _is_map_mode_open():
         return
 
     _close_escort_confirm_if_any(false)
     _set_move_confirm_interactable(false)
-    _ensure_escort_modal_blocker()
+    var parent := _get_map_dialog_parent()
 
     var panel := PanelContainer.new()
     _escort_confirm_dlg = panel
@@ -1618,7 +1719,7 @@ func _open_escort_confirm_for_move(
     panel.offset_top = 60
     panel.offset_bottom = -20
     panel.z_index = 200
-    map_window.add_child(panel)
+    parent.add_child(panel)
 
     var margin := MarginContainer.new()
     margin.anchor_left = 0.0
@@ -1774,48 +1875,50 @@ func _open_escort_confirm_for_move(
     offer_list.grab_focus()
 
 func _on_map_city_picked(cid: String) -> void:
-
-    # 二重生成防止：同じ都市で確認ダイアログが開いているならフォーカスだけ戻す
     if is_instance_valid(_escort_confirm_dlg):
         if _escort_confirm_dlg.visible and _last_move_pick_cid == cid:
             _escort_confirm_dlg.grab_focus()
             return
         _close_escort_confirm_if_any()
+
     if is_instance_valid(_move_confirm_dlg):
         if _move_confirm_dlg.visible and _last_move_pick_cid == cid:
             _move_confirm_dlg.grab_focus()
             return
         _move_confirm_dlg.queue_free()
         _move_confirm_dlg = null
+
     _last_move_pick_cid = cid
-    if world == null or not is_instance_valid(map_window):
+
+    if world == null or not _is_map_mode_open():
         return
 
+    var parent := _get_map_dialog_parent()
     var origin: String = String(world.player.get("city", ""))
     var days: int = 0
-    var travel_cost: float = 0.0        # 宿代・雑費（travel_cost_per_dayベース）
-    var travel_tax: float = 0.0         # 容量ベースの関税・通行税
-    var toll: float = 0.0               # ルート固有のtoll
+    var travel_cost: float = 0.0
+    var travel_tax: float = 0.0
+    var toll: float = 0.0
     var use_path: Array[String] = []
 
-    # 経路は World.compute_path で決めるが、コスト計算は
-    # World._calc_edge_travel_cost(RANK係数+容量ベース税)で再集計する
-    if world and world.has_method("compute_path"):
+    if world.has_method("compute_path"):
         var res: Dictionary = world.compute_path(origin, cid, "fastest")
-        use_path = res.get("path", [])
+        var raw_path: Array = res.get("path", []) as Array
+        for step_any in raw_path:
+            use_path.append(String(step_any))
+
         if use_path.size() < 2:
             var err := AcceptDialog.new()
             err.title = "行けません"
             err.dialog_text = "その都市へ通じる道がありません。"
-            map_window.add_child(err)
+            parent.add_child(err)
             err.popup_centered()
             return
 
-        # 現在の積載量（容量ベース）
         var cap_used: int = 0
         if world.has_method("_cargo_used"):
             cap_used = world._cargo_used(world.player)
-        # 念のためのフォールバック（_cargo_used が無い場合）
+
         if cap_used <= 0 and world.player.has("cargo"):
             var cargo := world.player["cargo"] as Dictionary
             for pid in cargo.keys():
@@ -1825,10 +1928,10 @@ func _on_map_city_picked(cid: String) -> void:
                     size = int(world.products[pid].get("size", 1))
                 cap_used += q * size
 
-        # 各辺ごとに World._calc_edge_travel_cost で集計
         for i in range(use_path.size() - 1):
             var u := String(use_path[i])
             var v := String(use_path[i + 1])
+
             if world.has_method("_calc_edge_travel_cost"):
                 var edge_cost: Dictionary = world._calc_edge_travel_cost(u, v, cap_used)
                 days += int(edge_cost.get("days", world._route_days(u, v)))
@@ -1842,11 +1945,12 @@ func _on_map_city_picked(cid: String) -> void:
                 if world.pay_toll_on_depart:
                     toll += float(world._route_toll(u, v))
     else:
-        # compute_path が無い環境向けのフォールバック（隣接前提）
         use_path = [origin, cid]
+
         var cap_used_fallback: int = 0
         if world.has_method("_cargo_used"):
             cap_used_fallback = world._cargo_used(world.player)
+
         if world.has_method("_calc_edge_travel_cost"):
             var edge := world._calc_edge_travel_cost(origin, cid, cap_used_fallback)
             days = int(edge.get("days", world._route_days(origin, cid)))
@@ -1890,8 +1994,9 @@ func _on_map_city_picked(cid: String) -> void:
         text += "\n\n※所持金が足りません。"
     dlg.dialog_text = text
 
-    map_window.add_child(dlg)
+    parent.add_child(dlg)
     dlg.popup_centered()
+
     if dlg.get_ok_button():
         dlg.get_ok_button().text = "移動する"
     if dlg.get_cancel_button():
@@ -1909,27 +2014,14 @@ func _on_map_city_picked(cid: String) -> void:
     dlg.canceled.connect(_sync_pause_state)
     dlg.close_requested.connect(_sync_pause_state)
 
-    # キャンセル/×閉じる時に地図側のラベル/ハイライトを消す
-    var _clear_map_highlight := func():
-        if is_instance_valid(map_window):
-            var map := map_window.get_node_or_null("MapLayer")
-            if map and map.has_method("clear_pick_highlight"):
-                map.call("clear_pick_highlight")
+    var clear_map_highlight := func():
+        var map := _get_map_layer()
+        if map != null and map.has_method("clear_pick_highlight"):
+            map.call("clear_pick_highlight")
 
-    dlg.canceled.connect(_clear_map_highlight)
-    dlg.close_requested.connect(_clear_map_highlight)
+    dlg.canceled.connect(clear_map_highlight)
+    dlg.close_requested.connect(clear_map_highlight)
     dlg.grab_focus()
-    var view_size: Vector2i = map_window.get_visible_rect().size
-    var dlg_size: Vector2i = dlg.size
-    if dlg_size.x <= 0:
-        dlg_size.x = 260
-    if dlg_size.y <= 0:
-        dlg_size.y = 300
-
-    dlg.position = Vector2i(
-        max(24, int(view_size.x * 0.08)),
-        max(72, int(view_size.y * 0.18))
-    )
 
 
 
@@ -3561,7 +3653,8 @@ func _wire_city_action_buttons() -> void:
 func _refresh_city_action_bar() -> void:
     if city_action_bar == null or world == null:
         return
-    city_action_bar.visible = show_city_mode_ui
+
+    city_action_bar.visible = show_city_mode_ui and not _is_map_mode_open()
     if not city_action_bar.visible:
         return
 
