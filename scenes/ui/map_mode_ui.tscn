@@ -1,0 +1,61 @@
+[gd_scene format=3 uid="uid://d2hi03dj2en"]
+
+[node name="MapModeUi_tscn" type="Node2D"]
+
+[node name="MapModeUI" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="RootMargin" type="MarginContainer" parent="MapModeUI"]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 8
+
+[node name="RootVBox" type="VBoxContainer" parent="MapModeUI/RootMargin"]
+layout_mode = 2
+
+[node name="MapHeader" type="PanelContainer" parent="MapModeUI/RootMargin/RootVBox"]
+clip_contents = true
+custom_minimum_size = Vector2(1900, 72)
+layout_mode = 2
+
+[node name="MainArea" type="HBoxContainer" parent="MapModeUI/RootMargin/RootVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MapColumn" type="VBoxContainer" parent="MapModeUI/RootMargin/RootVBox/MainArea"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MapFrame" type="PanelContainer" parent="MapModeUI/RootMargin/RootVBox/MainArea/MapColumn"]
+custom_minimum_size = Vector2(600, 300)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MapHost" type="Control" parent="MapModeUI/RootMargin/RootVBox/MainArea/MapColumn/MapFrame"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="RightPanel" type="PanelContainer" parent="MapModeUI/RootMargin/RootVBox/MainArea"]
+custom_minimum_size = Vector2(320, 0)
+layout_mode = 2
+
+[node name="情報パネル" type="Label" parent="MapModeUI/RootMargin/RootVBox/MainArea/RightPanel"]
+custom_minimum_size = Vector2(0, 500)
+layout_mode = 2
+text = "ここに情報パネル"
+
+[node name="FooterPanel" type="PanelContainer" parent="MapModeUI/RootMargin/RootVBox"]
+custom_minimum_size = Vector2(0, 150)
+layout_mode = 2
+
+[node name="MAP画面用フッター" type="Label" parent="MapModeUI/RootMargin/RootVBox/FooterPanel"]
+layout_mode = 2
