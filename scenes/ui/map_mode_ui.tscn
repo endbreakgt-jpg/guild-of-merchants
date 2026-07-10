@@ -1,4 +1,4 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://cfo602dd7swhg"]
 
 [node name="MapModeUI" type="Control"]
 layout_mode = 3
@@ -117,10 +117,10 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="MapHost" type="Control" parent="RootMargin/RootVBox/MainArea/MapColumn/MapFrame"]
+clip_contents = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-clip_contents = true
 mouse_filter = 1
 
 [node name="RightPanel" type="PanelContainer" parent="RootMargin/RootVBox/MainArea"]
