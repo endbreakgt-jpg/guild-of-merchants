@@ -60,7 +60,7 @@ E. UI
 - menu_panel.gd は契約・信用など既存ウィンドウの補助
 - map_layer.gd が地図操作と描画を担当
 - 2026-04-30時点でHUD内MAP埋め込みの途中実装あり
-- 2026-07-10 MAP3状態パッチを反映済み
+- 2026-07-10 MAP3状態パッチを作成
   - map_mode_ui.tscn を3カラム構成へ変更
   - MAP_BROWSE / MAP_CITY_FOCUS / MAP_TRAVEL_PREP を追加
   - 都市情報、経路、日数、費用、危険度、整備度、護衛を左パネルへ統合
@@ -86,6 +86,7 @@ E. UI
 
 4) 次タスク
 最優先:
+- MAP3状態パッチを VS Code で適用
 - Godot 4.3 実画面確認
   - MAPを開く
   - 都市ノード / 都市一覧を選ぶ
@@ -114,12 +115,8 @@ MAP確認後:
 
 5) 検証状況
 - 既存のworld.gd / game_hud.gdは過去にheadless parse確認済み
-- 2026-07-10 MAP3状態パッチを反映し、参照パス・重複宣言・関数境界を静的確認済み
-- Godot 4.3 の headless check で map_layer.gd / game_hud.gd の parse error なし
-- プロジェクト全体の editor headless 起動・終了に成功
-- メインシーンの短時間headless起動で World ready まで到達
-- 既存の ui/dialog_player.gd による `Panel(Dialog.gd)::raise` の遅延呼出エラーは継続（今回変更外）
-- 実画面確認は未実施
+- 2026-07-10 MAP3状態パッチは参照パス・重複宣言・関数境界を静的確認
+- 現作業環境にGodot実行ファイルがないため、今回パッチのGodot parse / 実画面確認は未実施
 - Windows側で問題が出た場合は、実行コマンド・stdout/stderr・操作手順を記録する
 
 6) 実装運用メモ
@@ -133,5 +130,5 @@ MAP確認後:
 
 7) 一言メモ
 - 護衛単体の実装段階は終了
-- 現在はMAP3状態の実画面確認段階
+- 現在はMAP内で都市確認から移動準備までを一続きにする段階
 - MAP確認後は、TUT1で「契約→移動→納品→信用→解放」を一本につなぐ

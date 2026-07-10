@@ -51,7 +51,8 @@ var _wr_tog_watch: CheckButton = null
 var _wr_sections_cache: Dictionary = {}  # {basis:String, rise:String, fall:String, watch:String}
 
 @export var show_city_mode_ui: bool = true
-@export var city_mode_ui_scene: PackedScene = preload("res://scenes/city_mode_ui.tscn")
+@export var city_mode_ui_scene: PackedScene = preload("res://scenes/ui/city_mode_ui.tscn")
+@export var map_mode_ui_scene: PackedScene = preload("res://scenes/ui/map_mode_ui.tscn")
 
 # --- Header extras ---
 var cargo_label: Label = null
@@ -98,10 +99,28 @@ var trade_win: Node = null           # res://ui/trade_window.gd（Control もし
 var map_window: Window = null        # 廃止予定: popup MapWindow 旧実装
 var move_window: Window = null       # Move用サブウィンドウ
 var inventory_window: Window = null  # Inventory用サブウィンドウ
+
+enum MapScreenState {
+    BROWSE,
+    CITY_FOCUS,
+    TRAVEL_PREP,
+}
+
 var map_mode_root: Control = null
-var map_mode_overlay: Control = null
+var map_mode_overlay: Control = null  # 旧導線互換。新MAPでは map_mode_root を返す。
 var embedded_map_layer: MapLayer = null
 var _map_mode_for_move: bool = false
+var _map_screen_state: int = MapScreenState.BROWSE
+var _map_selected_city_id: String = ""
+var _map_travel_context: Dictionary = {}
+var _map_host: Control = null
+var _map_state_label: Label = null
+var _map_state_title: Label = null
+var _map_state_body: VBoxContainer = null
+var _map_city_list_body: VBoxContainer = null
+var _map_hint_label: Label = null
+var _map_back_btn: Button = null
+var _map_close_btn: Button = null
 var debug_panel: DebugPanel = null
 var debug_window: Window = null     # ← デバッグ専用サブウィンドウ
 
@@ -537,7 +556,15 @@ func _ensure_map_mode_root() -> void:
     if map_mode_root != null and is_instance_valid(map_mode_root):
         return
 
-    var root := Control.new()
+    if map_mode_ui_scene == null:
+        push_warning("GameHUD: map_mode_ui_scene が未設定です。")
+        return
+
+    var root := map_mode_ui_scene.instantiate() as Control
+    if root == null:
+        push_warning("GameHUD: MapModeUI の生成に失敗しました。")
+        return
+
     root.name = "MapModeRoot"
     root.visible = false
     root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -545,31 +572,30 @@ func _ensure_map_mode_root() -> void:
     root.mouse_filter = Control.MOUSE_FILTER_STOP
     vb.add_child(root)
 
-    var overlay := Control.new()
-    overlay.name = "MapModeOverlay"
-    overlay.anchor_left = 0.0
-    overlay.anchor_top = 0.0
-    overlay.anchor_right = 1.0
-    overlay.anchor_bottom = 1.0
-    overlay.offset_left = 0
-    overlay.offset_top = 0
-    overlay.offset_right = 0
-    overlay.offset_bottom = 0
-    overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    root.add_child(overlay)
-
     map_mode_root = root
-    map_mode_overlay = overlay
+    map_mode_overlay = root
+    _map_host = root.get_node_or_null("RootMargin/RootVBox/MainArea/MapColumn/MapFrame/MapHost") as Control
+    _map_state_label = root.get_node_or_null("RootMargin/RootVBox/MapHeader/HeaderMargin/HeaderRow/StateLabel") as Label
+    _map_state_title = root.get_node_or_null("RootMargin/RootVBox/MainArea/LeftPanel/LeftMargin/LeftVBox/StateTitle") as Label
+    _map_state_body = root.get_node_or_null("RootMargin/RootVBox/MainArea/LeftPanel/LeftMargin/LeftVBox/StateScroll/StateBody") as VBoxContainer
+    _map_city_list_body = root.get_node_or_null("RootMargin/RootVBox/MainArea/RightPanel/RightMargin/RightVBox/CityListScroll/CityListBody") as VBoxContainer
+    _map_hint_label = root.get_node_or_null("RootMargin/RootVBox/FooterPanel/FooterMargin/HintLabel") as Label
+    _map_back_btn = root.get_node_or_null("RootMargin/RootVBox/MapHeader/HeaderMargin/HeaderRow/BackBtn") as Button
+    _map_close_btn = root.get_node_or_null("RootMargin/RootVBox/MapHeader/HeaderMargin/HeaderRow/CloseBtn") as Button
 
-    if not map_mode_root.resized.is_connected(Callable(self, "_on_map_mode_root_resized")):
-        map_mode_root.resized.connect(_on_map_mode_root_resized)
+    if _map_host != null and not _map_host.resized.is_connected(Callable(self, "_on_map_mode_root_resized")):
+        _map_host.resized.connect(_on_map_mode_root_resized)
+    if _map_back_btn != null and not _map_back_btn.pressed.is_connected(Callable(self, "_on_map_header_back_pressed")):
+        _map_back_btn.pressed.connect(_on_map_header_back_pressed)
+    if _map_close_btn != null and not _map_close_btn.pressed.is_connected(Callable(self, "_close_map_mode")):
+        _map_close_btn.pressed.connect(_close_map_mode)
 
 func _on_map_mode_root_resized() -> void:
     _refresh_map_mode_layout()
 
 func _ensure_embedded_map_layer() -> void:
     _ensure_map_mode_root()
-    if map_mode_root == null or not is_instance_valid(map_mode_root):
+    if _map_host == null or not is_instance_valid(_map_host):
         return
 
     if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
@@ -583,8 +609,8 @@ func _ensure_embedded_map_layer() -> void:
     map.name = "MapLayer"
     map.world = world
     map.position = Vector2.ZERO
-    map_mode_root.add_child(map)
-    map_mode_root.move_child(map, 0)
+    _map_host.add_child(map)
+    _map_host.move_child(map, 0)
 
     embedded_map_layer = map
 
@@ -601,7 +627,7 @@ func _ensure_embedded_map_layer() -> void:
     _refresh_map_mode_layout()
 
 func _refresh_map_mode_layout() -> void:
-    if map_mode_root == null or not is_instance_valid(map_mode_root):
+    if _map_host == null or not is_instance_valid(_map_host):
         return
     if embedded_map_layer == null or not is_instance_valid(embedded_map_layer):
         return
@@ -609,17 +635,7 @@ func _refresh_map_mode_layout() -> void:
     embedded_map_layer.position = Vector2.ZERO
 
     if embedded_map_layer.has_method("set_viewport_override_size"):
-        embedded_map_layer.call("set_viewport_override_size", Vector2i(map_mode_root.size))
-
-    if map_mode_overlay != null and is_instance_valid(map_mode_overlay):
-        map_mode_overlay.anchor_left = 0.0
-        map_mode_overlay.anchor_top = 0.0
-        map_mode_overlay.anchor_right = 1.0
-        map_mode_overlay.anchor_bottom = 1.0
-        map_mode_overlay.offset_left = 0
-        map_mode_overlay.offset_top = 0
-        map_mode_overlay.offset_right = 0
-        map_mode_overlay.offset_bottom = 0
+        embedded_map_layer.call("set_viewport_override_size", Vector2i(_map_host.size))
 
 func _set_map_mode_visible(visible: bool) -> void:
     _ensure_map_mode_root()
@@ -641,16 +657,14 @@ func _set_map_mode_visible(visible: bool) -> void:
 func _get_map_layer() -> MapLayer:
     if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
         return embedded_map_layer
-    if map_mode_root != null and is_instance_valid(map_mode_root):
-        var map := map_mode_root.get_node_or_null("MapLayer")
+    if _map_host != null and is_instance_valid(_map_host):
+        var map := _map_host.get_node_or_null("MapLayer")
         if map != null and map is MapLayer:
             embedded_map_layer = map as MapLayer
             return embedded_map_layer
     return null
 
 func _get_map_overlay_root() -> Control:
-    if map_mode_overlay != null and is_instance_valid(map_mode_overlay):
-        return map_mode_overlay
     if map_mode_root != null and is_instance_valid(map_mode_root):
         return map_mode_root
     return null
@@ -664,22 +678,20 @@ func _get_map_dialog_parent() -> Node:
     return self
 
 func _clear_map_overlay_children() -> void:
-    var overlay := _get_map_overlay_root()
-    if overlay == null or not is_instance_valid(overlay):
+    if _map_state_body == null or not is_instance_valid(_map_state_body):
         return
-
-    for child in overlay.get_children():
+    for child in _map_state_body.get_children():
+        _map_state_body.remove_child(child)
         child.queue_free()
-
-    _map_city_list_panel = null
-    _map_city_list_body = null
 
 func _close_map_mode() -> void:
     var map := _get_map_layer()
     if map != null:
         if map.has_method("end_pick"):
             map.call("end_pick")
-        if map.has_method("clear_pick_highlight"):
+        if map.has_method("reset_map_focus"):
+            map.call("reset_map_focus")
+        elif map.has_method("clear_pick_highlight"):
             map.call("clear_pick_highlight")
 
     if is_instance_valid(_move_confirm_dlg):
@@ -687,12 +699,72 @@ func _close_map_mode() -> void:
     _move_confirm_dlg = null
 
     _close_escort_confirm_if_any(false)
-    _clear_map_overlay_children()
-
+    _map_travel_context.clear()
+    _map_selected_city_id = ""
+    _map_screen_state = MapScreenState.BROWSE
     _last_move_pick_cid = ""
     _map_mode_for_move = false
     _set_map_mode_visible(false)
     _on_popup_visibility_changed()
+
+func _on_map_header_back_pressed() -> void:
+    if _map_screen_state == MapScreenState.TRAVEL_PREP:
+        _set_map_screen_state(MapScreenState.CITY_FOCUS)
+        return
+    if _map_screen_state == MapScreenState.CITY_FOCUS:
+        _map_selected_city_id = ""
+        _set_map_screen_state(MapScreenState.BROWSE)
+        return
+    _close_map_mode()
+
+func _set_map_screen_state(next_state: int) -> void:
+    _map_screen_state = next_state
+    if _map_state_label != null:
+        match _map_screen_state:
+            MapScreenState.CITY_FOCUS:
+                _map_state_label.text = "都市確認"
+            MapScreenState.TRAVEL_PREP:
+                _map_state_label.text = "移動準備"
+            _:
+                _map_state_label.text = "地図閲覧"
+
+    var map := _get_map_layer()
+    if map != null:
+        if _map_screen_state == MapScreenState.BROWSE:
+            if map.has_method("set_focus_city"):
+                map.call("set_focus_city", "")
+            if map.has_method("set_selected_route"):
+                map.call("set_selected_route", [])
+        elif _map_screen_state == MapScreenState.CITY_FOCUS:
+            if map.has_method("set_focus_city"):
+                map.call("set_focus_city", _map_selected_city_id)
+            if map.has_method("set_selected_route"):
+                map.call("set_selected_route", [])
+        elif _map_screen_state == MapScreenState.TRAVEL_PREP:
+            if map.has_method("set_focus_city"):
+                map.call("set_focus_city", _map_selected_city_id)
+            if map.has_method("set_selected_route"):
+                map.call("set_selected_route", _map_travel_context.get("path", []))
+            if map.has_method("frame_route"):
+                map.call("frame_route", _map_travel_context.get("path", []))
+
+    _refresh_map_state_ui()
+
+func _refresh_map_state_ui() -> void:
+    if _map_state_body == null or not is_instance_valid(_map_state_body):
+        return
+    _clear_map_overlay_children()
+    match _map_screen_state:
+        MapScreenState.CITY_FOCUS:
+            _build_map_city_focus_panel(_map_selected_city_id)
+        MapScreenState.TRAVEL_PREP:
+            _build_map_travel_prep_panel()
+        _:
+            _build_map_browse_panel()
+
+func _set_map_footer_message(message: String) -> void:
+    if _map_hint_label != null:
+        _map_hint_label.text = message
 
 # ---- placement ----
 func _place_popups() -> void:
@@ -898,7 +970,7 @@ func _handle_esc_event(event: InputEvent) -> void:
         var closed := false
 
         if _is_map_mode_open():
-            _close_map_mode()
+            _on_map_header_back_pressed()
             closed = true
 
         if is_instance_valid(move_window) and move_window.visible:
@@ -1055,31 +1127,27 @@ func _open_map_popup(for_move: bool = false) -> void:
     var map := _get_map_layer()
     if map != null:
         map.position = Vector2.ZERO
-        if map.has_method("clear_pick_highlight"):
-            map.call("clear_pick_highlight")
-
-    _clear_map_overlay_children()
-
-    if for_move:
-        _ensure_map_city_list_ui()
+        if map.has_method("begin_pick_for_player"):
+            map.call("begin_pick_for_player")
+        if map.has_method("reset_map_focus"):
+            map.call("reset_map_focus")
 
     if map_mode_root != null and is_instance_valid(map_mode_root):
         map_mode_root.grab_focus()
 
+    _map_selected_city_id = ""
+    _map_travel_context.clear()
+    _populate_map_city_list()
+    _set_map_screen_state(MapScreenState.BROWSE)
     _on_popup_visibility_changed()
 
 
 
 func _on_map_background_clicked() -> void:
-    # 背景クリック時、まだ表示中の確認ダイアログがあれば前面化してフォーカスを戻す
-    if is_instance_valid(_move_confirm_dlg) and _move_confirm_dlg.visible:
-        _move_confirm_dlg.show()
-        _move_confirm_dlg.popup_centered()
-        _move_confirm_dlg.grab_focus()
-        get_viewport().set_input_as_handled()
+    if _map_screen_state == MapScreenState.TRAVEL_PREP:
         return
-
-    # 何も選択されていない場合は、特に何もしない（必要ならここで拡張）
+    _map_selected_city_id = ""
+    _set_map_screen_state(MapScreenState.BROWSE)
 
 
 func _spawn_menu_if_needed() -> void:
@@ -1139,9 +1207,6 @@ var _escort_selected_offer_map: Dictionary = {}
 var _escort_offer_context: Dictionary = {}
 var _escort_modal_blocker: Control = null
 
-var _map_city_list_panel: PanelContainer = null
-var _map_city_list_body: VBoxContainer = null
-
 func _size_and_center_window(win: Window) -> void:
     var main: Window = get_window()
     var screen_size: Vector2i
@@ -1156,108 +1221,8 @@ func _size_and_center_window(win: Window) -> void:
 func _open_move_window() -> void:
     _open_map_popup(true)
 
-    var map := _get_map_layer()
-    if map != null and map.has_method("begin_pick_for_player"):
-        map.call("begin_pick_for_player")
-
-    if map_mode_root != null and is_instance_valid(map_mode_root):
-        map_mode_root.grab_focus()
-
 func _ensure_map_city_list_ui() -> void:
-    var overlay := _get_map_overlay_root()
-    if overlay == null or not is_instance_valid(overlay):
-        return
-
-    if _map_city_list_panel != null and is_instance_valid(_map_city_list_panel):
-        return
-
-    var ui_root := overlay.get_node_or_null("MoveMapUI") as Control
-    if ui_root == null:
-        ui_root = Control.new()
-        ui_root.name = "MoveMapUI"
-        ui_root.anchor_left = 0.0
-        ui_root.anchor_top = 0.0
-        ui_root.anchor_right = 1.0
-        ui_root.anchor_bottom = 1.0
-        ui_root.offset_left = 0
-        ui_root.offset_top = 0
-        ui_root.offset_right = 0
-        ui_root.offset_bottom = 0
-        ui_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        overlay.add_child(ui_root)
-
-    var top_bar := HBoxContainer.new()
-    top_bar.name = "TopBar"
-    top_bar.anchor_left = 0.0
-    top_bar.anchor_top = 0.0
-    top_bar.anchor_right = 1.0
-    top_bar.anchor_bottom = 0.0
-    top_bar.offset_left = 16
-    top_bar.offset_top = 8
-    top_bar.offset_right = -16
-    top_bar.offset_bottom = 40
-    ui_root.add_child(top_bar)
-
-    var back_btn := Button.new()
-    back_btn.text = "戻る"
-    back_btn.focus_mode = Control.FOCUS_ALL
-    top_bar.add_child(back_btn)
-
-    var list_btn := Button.new()
-    list_btn.text = "一覧"
-    list_btn.focus_mode = Control.FOCUS_ALL
-    top_bar.add_child(list_btn)
-
-    var spacer := Control.new()
-    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    top_bar.add_child(spacer)
-
-    # 右上の一覧パネル
-    var panel := PanelContainer.new()
-    panel.name = "CityListPanel"
-    panel.anchor_left = 1.0
-    panel.anchor_right = 1.0
-    panel.anchor_top = 0.0
-    panel.anchor_bottom = 1.0
-    panel.offset_left = -320
-    panel.offset_right = -16
-    panel.offset_top = 48
-    panel.offset_bottom = -16
-    panel.visible = false
-    panel.mouse_filter = Control.MOUSE_FILTER_STOP
-    ui_root.add_child(panel)
-
-    var scroll := ScrollContainer.new()
-    scroll.name = "Scroll"
-    scroll.anchor_left = 0.0
-    scroll.anchor_top = 0.0
-    scroll.anchor_right = 1.0
-    scroll.anchor_bottom = 1.0
-    scroll.offset_left = 8
-    scroll.offset_top = 8
-    scroll.offset_right = -8
-    scroll.offset_bottom = -8
-    panel.add_child(scroll)
-
-    var body := VBoxContainer.new()
-    body.name = "Body"
-    body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    body.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-    scroll.add_child(body)
-
-    _map_city_list_panel = panel
-    _map_city_list_body = body
-
-    back_btn.pressed.connect(func():
-        _close_map_mode()
-    )
-
-    list_btn.pressed.connect(func():
-        if not panel.visible:
-            _populate_map_city_list()
-        panel.visible = not panel.visible
-    )
+    _populate_map_city_list()
 
 func _populate_map_city_list() -> void:
     if world == null:
@@ -1266,6 +1231,7 @@ func _populate_map_city_list() -> void:
         return
 
     for child in _map_city_list_body.get_children():
+        _map_city_list_body.remove_child(child)
         child.queue_free()
 
     var entries: Array = []
@@ -1315,11 +1281,14 @@ func _populate_map_city_list() -> void:
         )
 
         btn.mouse_exited.connect(func():
-            if is_instance_valid(_move_confirm_dlg) and _move_confirm_dlg.visible:
+            if _map_screen_state == MapScreenState.TRAVEL_PREP:
                 return
             var map := _get_map_layer()
             if map != null and map.has_method("preview_move_target"):
-                map.call("preview_move_target", "")
+                if _map_selected_city_id == "":
+                    map.call("preview_move_target", "")
+                else:
+                    map.call("preview_move_target", _map_selected_city_id)
         )
 
         btn.pressed.connect(func(cid_local := cid_value):
@@ -1344,6 +1313,287 @@ func _compare_city_list_entry(a: Dictionary, b: Dictionary) -> bool:
         return na < nb
 
     return pa < pb
+
+func _map_add_text(parent: Control, text: String, wrap: bool = true) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    if wrap:
+        label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    parent.add_child(label)
+    return label
+
+func _build_map_browse_panel() -> void:
+    if _map_state_body == null:
+        return
+    if _map_state_title != null:
+        _map_state_title.text = "世界地図"
+    _map_add_text(_map_state_body, "都市を選択すると、位置・所属地域・移動の手掛かりを確認できます。")
+    _map_state_body.add_child(HSeparator.new())
+    _map_add_text(_map_state_body, "操作")
+    _map_add_text(_map_state_body, "・都市ノードまたは右側一覧を選択\n・ホイールで拡大／縮小\n・拡大中は地図をドラッグして移動")
+    _set_map_footer_message("都市を選択してください。中央の地図はいつでも確認できます。")
+
+func _build_map_city_focus_panel(city_id: String) -> void:
+    if _map_state_body == null or world == null:
+        return
+    if city_id == "" or not world.cities.has(city_id):
+        _set_map_screen_state(MapScreenState.BROWSE)
+        return
+
+    var info: Dictionary = world.cities.get(city_id, {}) as Dictionary
+    var city_name: String = String(info.get("name", city_id))
+    var province: String = String(info.get("province", ""))
+    var note: String = String(info.get("note", "")).strip_edges()
+    var rank_text: String = String(info.get("CityRANK", info.get("rank", "")))
+    var current_city: String = String(world.player.get("city", ""))
+
+    if _map_state_title != null:
+        _map_state_title.text = city_name
+    _map_add_text(_map_state_body, city_id)
+    if province != "":
+        _map_add_text(_map_state_body, "所属: %s" % province)
+    if rank_text != "":
+        _map_add_text(_map_state_body, "都市規模: %s" % rank_text)
+    _map_state_body.add_child(HSeparator.new())
+    if note != "":
+        _map_add_text(_map_state_body, note)
+    else:
+        _map_add_text(_map_state_body, "この都市の詳しい情報はまだ登録されていません。")
+
+    var spacer := Control.new()
+    spacer.custom_minimum_size = Vector2(0, 8)
+    _map_state_body.add_child(spacer)
+
+    var move_btn := Button.new()
+    move_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    if city_id == current_city:
+        move_btn.text = "現在地"
+        move_btn.disabled = true
+    else:
+        move_btn.text = "この都市への移動準備"
+        move_btn.pressed.connect(func():
+            _open_map_travel_prep(city_id)
+        )
+    _map_state_body.add_child(move_btn)
+
+    var browse_btn := Button.new()
+    browse_btn.text = "選択を解除"
+    browse_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    browse_btn.pressed.connect(func():
+        _map_selected_city_id = ""
+        _set_map_screen_state(MapScreenState.BROWSE)
+    )
+    _map_state_body.add_child(browse_btn)
+    _set_map_footer_message("%sを確認中です。移動準備へ進んでも地図は表示されたままです。" % city_name)
+
+func _calculate_map_travel_context(city_id: String) -> Dictionary:
+    if world == null:
+        return {"ok": false, "message": "世界データを取得できません。"}
+
+    var origin: String = String(world.player.get("city", ""))
+    if city_id == "" or city_id == origin:
+        return {"ok": false, "message": "現在地以外の都市を選択してください。"}
+    if world.has_method("is_city_unlocked") and not world.is_city_unlocked(city_id):
+        return {"ok": false, "message": "まだ移動できない都市です。"}
+    if not world.has_method("compute_path"):
+        return {"ok": false, "message": "経路計算APIが見つかりません。"}
+
+    var path_result: Dictionary = world.compute_path(origin, city_id, "fastest")
+    var raw_path: Array = path_result.get("path", []) as Array
+    var use_path: Array[String] = []
+    for step_any in raw_path:
+        use_path.append(String(step_any))
+    if use_path.size() < 2:
+        return {"ok": false, "message": "その都市へ通じる道がありません。"}
+
+    var cap_used: int = 0
+    if world.has_method("_cargo_used"):
+        cap_used = int(world._cargo_used(world.player))
+
+    var days: int = 0
+    var travel_cost: float = 0.0
+    var travel_tax: float = 0.0
+    var toll: float = 0.0
+    for i in range(use_path.size() - 1):
+        var u: String = use_path[i]
+        var v: String = use_path[i + 1]
+        if world.has_method("_calc_edge_travel_cost"):
+            var edge_cost: Dictionary = world._calc_edge_travel_cost(u, v, cap_used)
+            days += int(edge_cost.get("days", 1))
+            travel_cost += float(edge_cost.get("travel", 0.0))
+            travel_tax += float(edge_cost.get("tax", 0.0))
+            toll += float(edge_cost.get("toll", 0.0))
+        else:
+            var edge_days: int = int(world._route_days(u, v))
+            days += edge_days
+            travel_cost += float(world.travel_cost_per_day) * float(edge_days)
+            if bool(world.pay_toll_on_depart):
+                toll += float(world._route_toll(u, v))
+
+    var hazard: float = clampf(float(path_result.get("hazard", 0.0)), 0.0, 1.0)
+    var total: float = travel_cost + travel_tax + toll
+    var offers: Array = []
+    if world.has_method("get_current_city_escort_offers"):
+        offers = world.get_current_city_escort_offers()
+
+    return {
+        "ok": true,
+        "cid": city_id,
+        "origin": origin,
+        "path": use_path,
+        "days": days,
+        "travel_cost": travel_cost,
+        "travel_tax": travel_tax,
+        "toll": toll,
+        "base_total": total,
+        "hazard": hazard,
+        "cash": float(world.player.get("cash", 0.0)),
+        "offers": offers.duplicate(true),
+    }
+
+func _open_map_travel_prep(city_id: String) -> void:
+    var context := _calculate_map_travel_context(city_id)
+    if not bool(context.get("ok", false)):
+        _set_map_footer_message(String(context.get("message", "移動準備を開始できません。")))
+        return
+    _map_selected_city_id = city_id
+    _map_travel_context = context
+    _escort_selected_offer_ids.clear()
+    _escort_selected_offer_map.clear()
+    _set_map_screen_state(MapScreenState.TRAVEL_PREP)
+
+func _map_route_names(path: Array) -> String:
+    var names: PackedStringArray = []
+    for cid_any in path:
+        var cid: String = String(cid_any)
+        if world != null and world.has_method("get_city_name"):
+            names.append(String(world.get_city_name(cid)))
+        else:
+            names.append(cid)
+    return " → ".join(names)
+
+func _map_hazard_label(hazard: float) -> String:
+    if hazard < 0.20:
+        return "低"
+    if hazard < 0.45:
+        return "中"
+    if hazard < 0.70:
+        return "高"
+    return "非常に高い"
+
+func _build_map_travel_prep_panel() -> void:
+    if _map_state_body == null or world == null:
+        return
+    if not bool(_map_travel_context.get("ok", false)):
+        _set_map_screen_state(MapScreenState.CITY_FOCUS)
+        return
+
+    var city_id: String = String(_map_travel_context.get("cid", ""))
+    var destination_name: String = city_id
+    if world.has_method("get_city_name"):
+        destination_name = String(world.get_city_name(city_id))
+    var days: int = int(_map_travel_context.get("days", 0))
+    var travel_cost: float = float(_map_travel_context.get("travel_cost", 0.0))
+    var travel_tax: float = float(_map_travel_context.get("travel_tax", 0.0))
+    var toll: float = float(_map_travel_context.get("toll", 0.0))
+    var hazard: float = float(_map_travel_context.get("hazard", 0.0))
+
+    if _map_state_title != null:
+        _map_state_title.text = "移動準備: %s" % destination_name
+    _map_add_text(_map_state_body, _map_route_names(_map_travel_context.get("path", []) as Array))
+    _map_state_body.add_child(HSeparator.new())
+    _map_add_text(_map_state_body, "日数: %d日" % days)
+    _map_add_text(_map_state_body, "宿・雑費: %.1fG" % travel_cost)
+    _map_add_text(_map_state_body, "関税: %.1fG" % travel_tax)
+    _map_add_text(_map_state_body, "通行料: %.1fG" % toll)
+    _map_add_text(_map_state_body, "基礎費用: %.1fG" % float(_map_travel_context.get("base_total", 0.0)))
+    _map_add_text(_map_state_body, "危険度: %s（%.0f%%）" % [_map_hazard_label(hazard), hazard * 100.0])
+
+    var convoy_condition: int = int(world.player.get("convoy_condition", 100))
+    if world.has_method("get_convoy_condition"):
+        convoy_condition = int(world.get_convoy_condition())
+    _map_add_text(_map_state_body, "整備度: %d" % convoy_condition)
+    _map_state_body.add_child(HSeparator.new())
+    _map_add_text(_map_state_body, "護衛候補（最大3人）")
+
+    var offer_list := ItemList.new()
+    offer_list.select_mode = ItemList.SELECT_SINGLE
+    offer_list.custom_minimum_size = Vector2(0, 132)
+    offer_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _map_state_body.add_child(offer_list)
+    _escort_offer_list = offer_list
+
+    var offer_buttons := HBoxContainer.new()
+    offer_buttons.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _map_state_body.add_child(offer_buttons)
+    var toggle_btn := Button.new()
+    toggle_btn.text = "選択"
+    toggle_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    offer_buttons.add_child(toggle_btn)
+    _escort_toggle_btn = toggle_btn
+    var clear_btn := Button.new()
+    clear_btn.text = "全解除"
+    clear_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    offer_buttons.add_child(clear_btn)
+
+    var detail := RichTextLabel.new()
+    detail.custom_minimum_size = Vector2(0, 118)
+    detail.fit_content = false
+    detail.scroll_active = true
+    _map_state_body.add_child(detail)
+    _escort_offer_detail = detail
+
+    var summary := RichTextLabel.new()
+    summary.custom_minimum_size = Vector2(0, 150)
+    summary.fit_content = false
+    summary.scroll_active = true
+    _map_state_body.add_child(summary)
+    _escort_offer_summary = summary
+
+    var no_escort_btn := Button.new()
+    no_escort_btn.text = "護衛なしで出発"
+    no_escort_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _map_state_body.add_child(no_escort_btn)
+
+    var depart_btn := Button.new()
+    depart_btn.text = "この編成で出発"
+    depart_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _map_state_body.add_child(depart_btn)
+    _escort_depart_btn = depart_btn
+
+    var back_btn := Button.new()
+    back_btn.text = "都市情報へ戻る"
+    back_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _map_state_body.add_child(back_btn)
+
+    _escort_offer_context = {
+        "cid": city_id,
+        "use_path": (_map_travel_context.get("path", []) as Array).duplicate(true),
+        "days": days,
+        "base_total": float(_map_travel_context.get("base_total", 0.0)),
+        "cash": float(world.player.get("cash", 0.0)),
+        "offers": (_map_travel_context.get("offers", []) as Array).duplicate(true),
+    }
+    _escort_refresh_offer_list()
+    _escort_refresh_offer_detail()
+    _escort_refresh_offer_summary()
+
+    offer_list.item_selected.connect(func(_index: int):
+        _escort_refresh_offer_detail()
+    )
+    toggle_btn.pressed.connect(_escort_toggle_current_offer)
+    clear_btn.pressed.connect(_escort_clear_selection)
+    no_escort_btn.pressed.connect(func():
+        _depart_with_escort_selection([])
+    )
+    depart_btn.pressed.connect(func():
+        _depart_with_escort_selection(_escort_selected_offers_array())
+    )
+    back_btn.pressed.connect(func():
+        _set_map_screen_state(MapScreenState.CITY_FOCUS)
+    )
+    _set_map_footer_message("経路・費用・危険・護衛を確認して出発してください。")
 
 func _close_escort_confirm_if_any(restore_move_focus: bool = true) -> void:
     if is_instance_valid(_escort_confirm_dlg):
@@ -1613,7 +1863,7 @@ func _escort_refresh_offer_summary() -> void:
 
     if _escort_depart_btn:
         _escort_depart_btn.text = "この編成で出発"
-        _escort_depart_btn.disabled = false
+        _escort_depart_btn.disabled = cash < total_cost
 
 
 func _depart_with_escort_selection(selected_offers: Array) -> void:
@@ -1629,7 +1879,6 @@ func _depart_with_escort_selection(selected_offers: Array) -> void:
     var days: int = int(_escort_offer_context.get("days", 0))
     var base_total: float = float(_escort_offer_context.get("base_total", 0.0))
     var cash: float = float(world.player.get("cash", 0.0))
-    var parent := _get_map_dialog_parent()
 
     var escort_level: int = selected_offers.size()
     if world.has_method("get_escort_level_from_offer_count"):
@@ -1645,11 +1894,7 @@ func _depart_with_escort_selection(selected_offers: Array) -> void:
 
     var total_cost: float = base_total + level_cost + hire_fee
     if cash < total_cost:
-        var err := AcceptDialog.new()
-        err.title = "出発できません"
-        err.dialog_text = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total_cost, cash]
-        parent.add_child(err)
-        err.popup_centered(Vector2i(320, 140))
+        _set_map_footer_message("資金不足です。必要 %.1fG／所持 %.1fG" % [total_cost, cash])
         return
 
     var res_ok := false
@@ -1662,21 +1907,13 @@ func _depart_with_escort_selection(selected_offers: Array) -> void:
             res_ok = world.player_move(cid, escort_level)
 
     if not res_ok:
-        var err2 := AcceptDialog.new()
-        err2.title = "出発できません"
-        err2.dialog_text = "出発処理に失敗しました。"
-        parent.add_child(err2)
-        err2.popup_centered(Vector2i(320, 140))
+        _set_map_footer_message("出発できません。同日到着制限・経路・資金を確認してください。")
         return
 
     if selected_offers.size() > 0 and world.has_method("apply_escort_offer_selection"):
         var ok_apply: bool = bool(world.apply_escort_offer_selection(selected_offers))
         if not ok_apply:
-            var err3 := AcceptDialog.new()
-            err3.title = "護衛雇用に失敗"
-            err3.dialog_text = "護衛の雇用処理に失敗しました。"
-            parent.add_child(err3)
-            err3.popup_centered(Vector2i(320, 140))
+            _set_map_footer_message("護衛の雇用処理に失敗しました。")
             return
 
     _close_escort_confirm_if_any(false)
@@ -1875,156 +2112,20 @@ func _open_escort_confirm_for_move(
     offer_list.grab_focus()
 
 func _on_map_city_picked(cid: String) -> void:
-    if is_instance_valid(_escort_confirm_dlg):
-        if _escort_confirm_dlg.visible and _last_move_pick_cid == cid:
-            _escort_confirm_dlg.grab_focus()
-            return
-        _close_escort_confirm_if_any()
-
-    if is_instance_valid(_move_confirm_dlg):
-        if _move_confirm_dlg.visible and _last_move_pick_cid == cid:
-            _move_confirm_dlg.grab_focus()
-            return
-        _move_confirm_dlg.queue_free()
-        _move_confirm_dlg = null
-
-    _last_move_pick_cid = cid
-
     if world == null or not _is_map_mode_open():
         return
+    if cid == "" or not world.cities.has(cid):
+        return
+    if world.has_method("is_city_unlocked") and not world.is_city_unlocked(cid):
+        _set_map_footer_message("まだ確認できない都市です。")
+        return
 
-    var parent := _get_map_dialog_parent()
-    var origin: String = String(world.player.get("city", ""))
-    var days: int = 0
-    var travel_cost: float = 0.0
-    var travel_tax: float = 0.0
-    var toll: float = 0.0
-    var use_path: Array[String] = []
-
-    if world.has_method("compute_path"):
-        var res: Dictionary = world.compute_path(origin, cid, "fastest")
-        var raw_path: Array = res.get("path", []) as Array
-        for step_any in raw_path:
-            use_path.append(String(step_any))
-
-        if use_path.size() < 2:
-            var err := AcceptDialog.new()
-            err.title = "行けません"
-            err.dialog_text = "その都市へ通じる道がありません。"
-            parent.add_child(err)
-            err.popup_centered()
-            return
-
-        var cap_used: int = 0
-        if world.has_method("_cargo_used"):
-            cap_used = world._cargo_used(world.player)
-
-        if cap_used <= 0 and world.player.has("cargo"):
-            var cargo := world.player["cargo"] as Dictionary
-            for pid in cargo.keys():
-                var q: int = int(cargo[pid])
-                var size: int = 1
-                if world.products.has(pid):
-                    size = int(world.products[pid].get("size", 1))
-                cap_used += q * size
-
-        for i in range(use_path.size() - 1):
-            var u := String(use_path[i])
-            var v := String(use_path[i + 1])
-
-            if world.has_method("_calc_edge_travel_cost"):
-                var edge_cost: Dictionary = world._calc_edge_travel_cost(u, v, cap_used)
-                days += int(edge_cost.get("days", world._route_days(u, v)))
-                travel_cost += float(edge_cost.get("travel", 0.0))
-                travel_tax += float(edge_cost.get("tax", 0.0))
-                toll += float(edge_cost.get("toll", 0.0))
-            else:
-                var d_edge: int = world._route_days(u, v)
-                days += d_edge
-                travel_cost += world.travel_cost_per_day * float(d_edge)
-                if world.pay_toll_on_depart:
-                    toll += float(world._route_toll(u, v))
-    else:
-        use_path = [origin, cid]
-
-        var cap_used_fallback: int = 0
-        if world.has_method("_cargo_used"):
-            cap_used_fallback = world._cargo_used(world.player)
-
-        if world.has_method("_calc_edge_travel_cost"):
-            var edge := world._calc_edge_travel_cost(origin, cid, cap_used_fallback)
-            days = int(edge.get("days", world._route_days(origin, cid)))
-            travel_cost = float(edge.get("travel", 0.0))
-            travel_tax = float(edge.get("tax", 0.0))
-            toll = float(edge.get("toll", 0.0))
-        else:
-            days = world._route_days(origin, cid)
-            travel_cost = world.travel_cost_per_day * float(days)
-            if world.pay_toll_on_depart:
-                toll = float(world._route_toll(origin, cid))
-
-    var total: float = travel_cost + travel_tax + toll
-    var cash: float = float(world.player.get("cash", 0.0))
-
-    var dest_name: String = cid
-    var origin_name: String = origin
-    if world.cities.has(cid):
-        dest_name = String(world.cities[cid].get("name", cid))
-    if world.cities.has(origin):
-        origin_name = String(world.cities[origin].get("name", origin))
-
-    var dlg := ConfirmationDialog.new()
-    dlg.transient = true
-    dlg.transient_to_focused = true
-    dlg.always_on_top = true
-    dlg.exclusive = true
-    _move_confirm_dlg = dlg
-    dlg.title = "移動の確認"
-
-    var text: String = "次の都市へ移動しますか？\n"
-    text += "%s → %s\n" % [origin_name, dest_name]
-    text += "日数: %d\n" % days
-    text += "宿・雑費: %.1f\n" % travel_cost
-    text += "関税(容量ベース): %.1f\n" % travel_tax
-    text += "通行料: %.1f\n" % toll
-    text += "――――――――――\n"
-    text += "合計: %.1f\n" % total
-    text += "所持金: %.1f" % cash
-    if cash < total:
-        text += "\n\n※所持金が足りません。"
-    dlg.dialog_text = text
-
-    parent.add_child(dlg)
-    dlg.popup_centered()
-
-    if dlg.get_ok_button():
-        dlg.get_ok_button().text = "移動する"
-    if dlg.get_cancel_button():
-        dlg.get_cancel_button().text = "やめる"
-
-    dlg.confirmed.connect(func():
-        if is_instance_valid(_move_confirm_dlg):
-            _move_confirm_dlg.show()
-
-        _open_escort_confirm_for_move(cid, use_path, days, total, cash)
-    )
-
-    _sync_pause_state()
-    dlg.confirmed.connect(_sync_pause_state)
-    dlg.canceled.connect(_sync_pause_state)
-    dlg.close_requested.connect(_sync_pause_state)
-
-    var clear_map_highlight := func():
-        var map := _get_map_layer()
-        if map != null and map.has_method("clear_pick_highlight"):
-            map.call("clear_pick_highlight")
-
-    dlg.canceled.connect(clear_map_highlight)
-    dlg.close_requested.connect(clear_map_highlight)
-    dlg.grab_focus()
-
-
-
+    _map_selected_city_id = cid
+    _last_move_pick_cid = cid
+    _map_travel_context.clear()
+    _escort_selected_offer_ids.clear()
+    _escort_selected_offer_map.clear()
+    _set_map_screen_state(MapScreenState.CITY_FOCUS)
 func _open_inventory_window() -> void:
     if is_instance_valid(inventory_window):
         _size_and_center_window(inventory_window)

@@ -42,6 +42,9 @@ var _probe_screen: Vector2 = Vector2.ZERO
 @export var preview_path_on_hover: bool = true
 @export var path_preview_color: Color = Color(0.2, 1.0, 0.6, 0.60)
 @export var path_preview_width: float = 3.0
+@export var selected_route_color: Color = Color(1.0, 0.78, 0.18, 0.95)
+@export var selected_route_width: float = 5.0
+@export var focus_city_color: Color = Color(1.0, 0.85, 0.25, 0.85)
 
 # ---- Label 表示モード ----
 @export_enum("Always","HoverOrPick","None") var labels_mode: int = 1
@@ -63,6 +66,8 @@ var _hover_cid: String = ""
 var _hover_path: Array[String] = []
 var _last_clicked_cid: String = ""
 var _external_preview: bool = false
+var _focus_cid: String = ""
+var _selected_route: Array[String] = []
 
 # ---- Data ----
 @export var city_positions: Dictionary = {
@@ -195,6 +200,92 @@ func preview_move_target(cid: String) -> void:
 
     queue_redraw()
 
+func set_focus_city(cid: String) -> void:
+    _focus_cid = cid
+    if cid != "" and city_positions.has(cid):
+        frame_city(cid)
+    queue_redraw()
+
+func set_selected_route(path_value: Variant) -> void:
+    _selected_route = _to_string_path(path_value)
+    queue_redraw()
+
+func reset_map_focus() -> void:
+    _focus_cid = ""
+    _selected_route.clear()
+    _hover_cid = ""
+    _hover_path.clear()
+    _last_clicked_cid = ""
+    _external_preview = false
+    _zoom = clamp(initial_zoom, zoom_min, zoom_max)
+    _pan = Vector2.ZERO
+    queue_redraw()
+
+func frame_city(cid: String) -> void:
+    if not city_positions.has(cid):
+        return
+    var vp: Vector2i = viewport_override_size
+    if vp.x <= 0 or vp.y <= 0:
+        vp = get_viewport_rect().size
+    var ts: Vector2i = Vector2i(1, 1)
+    if base_map != null:
+        ts = base_map.get_size()
+    var fit: float = min(float(vp.x) / float(ts.x), float(vp.y) / float(ts.y))
+    _zoom = clamp(max(initial_zoom, 1.28), zoom_min, zoom_max)
+    var scale: float = fit * _zoom
+    var draw_size: Vector2 = Vector2(ts) * scale
+    var offset0: Vector2 = (Vector2(vp) - draw_size) * 0.5
+    var target_screen: Vector2 = Vector2(vp) * 0.5
+    var city_pos: Vector2 = city_positions[cid]
+    _pan = target_screen - offset0 - city_pos * scale
+    _calc_draw_params()
+    queue_redraw()
+
+func frame_route(path_value: Variant) -> void:
+    var path: Array[String] = _to_string_path(path_value)
+    if path.is_empty():
+        return
+    if path.size() == 1:
+        frame_city(path[0])
+        return
+
+    var min_tex := Vector2(INF, INF)
+    var max_tex := Vector2(-INF, -INF)
+    for cid in path:
+        if not city_positions.has(cid):
+            continue
+        var p: Vector2 = city_positions[cid]
+        min_tex.x = min(min_tex.x, p.x)
+        min_tex.y = min(min_tex.y, p.y)
+        max_tex.x = max(max_tex.x, p.x)
+        max_tex.y = max(max_tex.y, p.y)
+    if min_tex.x == INF:
+        return
+
+    var vp: Vector2i = viewport_override_size
+    if vp.x <= 0 or vp.y <= 0:
+        vp = get_viewport_rect().size
+    var ts: Vector2i = Vector2i(1, 1)
+    if base_map != null:
+        ts = base_map.get_size()
+    var fit: float = min(float(vp.x) / float(ts.x), float(vp.y) / float(ts.y))
+    var bounds: Vector2 = max_tex - min_tex
+    bounds.x = max(bounds.x, 480.0)
+    bounds.y = max(bounds.y, 360.0)
+    var desired_scale: float = min(
+        float(vp.x) * 0.76 / bounds.x,
+        float(vp.y) * 0.76 / bounds.y
+    )
+    _zoom = clamp(desired_scale / max(fit, 0.0001), zoom_min, zoom_max)
+
+    var scale: float = fit * _zoom
+    var draw_size: Vector2 = Vector2(ts) * scale
+    var offset0: Vector2 = (Vector2(vp) - draw_size) * 0.5
+    var center_tex: Vector2 = (min_tex + max_tex) * 0.5
+    _pan = Vector2(vp) * 0.5 - offset0 - center_tex * scale
+    _calc_draw_params()
+    queue_redraw()
+
 # ---- helpers ----
 func _to_string_path(v) -> Array[String]:
     var out: Array[String] = []
@@ -278,6 +369,9 @@ func _screen_to_tex(p: Vector2) -> Vector2:
 
 func _is_pickable(origin: String, target: String) -> bool:
     if origin == "" or target == "" or origin == target: return false
+    if world != null and world.has_method("is_city_unlocked"):
+        if not world.is_city_unlocked(target):
+            return false
     match pick_policy:
         0: # 隣接のみ
             return (world != null and world.adj.has(origin) and (target in world.adj[origin]))
@@ -390,6 +484,49 @@ func _city_at_point_screen(p_screen: Vector2) -> String:
             return String(cid)
     return ""
 
+func _route_draw_points(u: String, v: String) -> Array[Vector2]:
+    var points: Array[Vector2] = []
+    if not city_positions.has(u) or not city_positions.has(v):
+        return points
+    points.append(city_positions[u])
+    if world != null and not route_waypoints_by_id.is_empty():
+        for route_any in world.routes:
+            var route: Dictionary = route_any
+            var a: String = String(route.get("from", ""))
+            var b: String = String(route.get("to", ""))
+            if not ((a == u and b == v) or (a == v and b == u)):
+                continue
+            var route_id: String = String(route.get("route_id", ""))
+            if route_id == "" or not route_waypoints_by_id.has(route_id):
+                break
+            var waypoints: Array = route_waypoints_by_id.get(route_id, []) as Array
+            if a == u:
+                for waypoint_any in waypoints:
+                    if waypoint_any is Vector2:
+                        points.append(waypoint_any)
+            else:
+                var reversed: Array = waypoints.duplicate()
+                reversed.reverse()
+                for waypoint_any in reversed:
+                    if waypoint_any is Vector2:
+                        points.append(waypoint_any)
+            break
+    points.append(city_positions[v])
+    return points
+
+func _draw_route_path(path: Array[String], color: Color, width: float) -> void:
+    if path.size() < 2:
+        return
+    for i in range(path.size() - 1):
+        var points: Array[Vector2] = _route_draw_points(path[i], path[i + 1])
+        for j in range(points.size() - 1):
+            draw_line(
+                _tex_to_screen(points[j]),
+                _tex_to_screen(points[j + 1]),
+                color,
+                width
+            )
+
 # ---- drawing ----
 func _draw() -> void:
     if base_map != null:
@@ -441,6 +578,9 @@ func _draw() -> void:
             var pa: Vector2 = _tex_to_screen(pa_tex)
             var pb: Vector2 = _tex_to_screen(pb_tex)
             draw_line(pa, pb, col, route_width)
+
+    if _selected_route.size() >= 2:
+        _draw_route_path(_selected_route, selected_route_color, selected_route_width)
 
     # 経路プレビュー（ホバー）
     if _pick_mode and preview_path_on_hover and _hover_path.size() >= 2:
@@ -516,6 +656,8 @@ func _draw() -> void:
         var p: Vector2 = _tex_to_screen(city_positions[cid])
         var col := city_color
         draw_circle(p, city_radius, col)
+        if cid == _focus_cid:
+            draw_arc(p, city_radius + 9.0, 0.0, TAU, 40, focus_city_color, 4.0)
         # ホバー強調
         if _pick_mode and hover_highlight and cid == _hover_cid:
             draw_circle(p, city_radius + 6.0, hover_color)
@@ -537,6 +679,8 @@ func _draw() -> void:
             if _pick_mode:
                 if _pick_origin != "":
                     show_ids.append(_pick_origin)
+                if _focus_cid != "" and not show_ids.has(_focus_cid):
+                    show_ids.append(_focus_cid)
                 if _hover_cid != "":
                     show_ids.append(_hover_cid)
                 if _last_clicked_cid != "":
