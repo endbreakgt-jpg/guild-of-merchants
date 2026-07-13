@@ -1,11 +1,17 @@
 [gd_scene load_steps=2 format=3 uid="uid://ct2rc1g3fsgf1"]
 
-[ext_resource type="PackedScene" path="res://scenes/ui/map_mode_ui.tscn" id="1_eieu2"]
+[ext_resource type="PackedScene" uid="uid://cfo602dd7swhg" path="res://scenes/ui/map_mode_ui.tscn" id="1_eieu2"]
 
-[node name="MapLayoutPreview_tscn" type="Node2D"]
+[node name="MapLayoutPreview_tscn" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 
 [node name="MapLayoutPreview" type="Control" parent="."]
-layout_mode = 3
+layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -27,8 +33,6 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_right = 630.0
-offset_bottom = 132.0
 grow_horizontal = 2
 grow_vertical = 2
 size_flags_horizontal = 3
@@ -42,9 +46,8 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="GlobalHeaderMock" type="PanelContainer" parent="MapLayoutPreview/SafeMargin/RootVBox"]
-custom_minimum_size = Vector2(0, 100)
+custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
-size_flags_vertical = 3
 
 [node name="HeaderRow" type="HBoxContainer" parent="MapLayoutPreview/SafeMargin/RootVBox/GlobalHeaderMock"]
 layout_mode = 2

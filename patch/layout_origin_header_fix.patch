@@ -1,0 +1,99 @@
+diff --git a/scenes/dev/map_layout_preview.tscn.tscn b/scenes/dev/map_layout_preview.tscn.tscn
+--- a/scenes/dev/map_layout_preview.tscn.tscn
++++ b/scenes/dev/map_layout_preview.tscn.tscn
+@@ -2,7 +2,13 @@
+ 
+ [ext_resource type="PackedScene" path="res://scenes/ui/map_mode_ui.tscn" id="1_eieu2"]
+ 
+-[node name="MapLayoutPreview_tscn" type="Node2D"]
++[node name="MapLayoutPreview_tscn" type="Control"]
++layout_mode = 3
++anchors_preset = 15
++anchor_right = 1.0
++anchor_bottom = 1.0
++grow_horizontal = 2
++grow_vertical = 2
+ 
+ [node name="MapLayoutPreview" type="Control" parent="."]
+ layout_mode = 3
+@@ -27,8 +33,6 @@
+ anchors_preset = 15
+ anchor_right = 1.0
+ anchor_bottom = 1.0
+-offset_right = 630.0
+-offset_bottom = 132.0
+ grow_horizontal = 2
+ grow_vertical = 2
+ size_flags_horizontal = 3
+@@ -41,9 +45,8 @@
+ theme_override_constants/separation = 8
+ 
+ [node name="GlobalHeaderMock" type="PanelContainer" parent="MapLayoutPreview/SafeMargin/RootVBox"]
+-custom_minimum_size = Vector2(0, 100)
++custom_minimum_size = Vector2(0, 44)
+ layout_mode = 2
+-size_flags_vertical = 3
+ 
+ [node name="HeaderRow" type="HBoxContainer" parent="MapLayoutPreview/SafeMargin/RootVBox/GlobalHeaderMock"]
+ layout_mode = 2
+diff --git a/scenes/ui/map_mode_ui.tscn b/scenes/ui/map_mode_ui.tscn
+--- a/scenes/ui/map_mode_ui.tscn
++++ b/scenes/ui/map_mode_ui.tscn
+@@ -18,17 +18,17 @@
+ anchor_bottom = 1.0
+ grow_horizontal = 2
+ grow_vertical = 2
+-theme_override_constants/margin_left = 8
+-theme_override_constants/margin_top = 8
+-theme_override_constants/margin_right = 8
+-theme_override_constants/margin_bottom = 8
++theme_override_constants/margin_left = 0
++theme_override_constants/margin_top = 0
++theme_override_constants/margin_right = 0
++theme_override_constants/margin_bottom = 0
+ 
+ [node name="RootVBox" type="VBoxContainer" parent="RootMargin"]
+ layout_mode = 2
+ size_flags_horizontal = 3
+ size_flags_vertical = 3
+ theme_override_constants/separation = 6
+ 
+ [node name="MapHeader" type="PanelContainer" parent="RootMargin/RootVBox"]
+-custom_minimum_size = Vector2(0, 46)
++custom_minimum_size = Vector2(0, 44)
+ layout_mode = 2
+diff --git a/scenes/world.tscn b/scenes/world.tscn
+--- a/scenes/world.tscn
++++ b/scenes/world.tscn
+@@ -63,20 +63,25 @@
+ 
+ [node name="GameHUD" type="Control" parent="."]
+ layout_mode = 3
+-anchors_preset = 0
+-offset_right = 40.0
+-offset_bottom = 40.0
++anchors_preset = 15
++anchor_right = 1.0
++anchor_bottom = 1.0
++grow_horizontal = 2
++grow_vertical = 2
+ script = ExtResource("4_ns1fl")
+ show_decay_dialog = false
+ world_path = NodePath("..")
+ dialog_player_path = NodePath("../DialogPlayer")
+ show_supply_dialog = false
+ show_event_log_panel = false
+ 
+ [node name="Margin" type="MarginContainer" parent="GameHUD"]
+-layout_mode = 0
+-offset_right = 40.0
+-offset_bottom = 40.0
++layout_mode = 1
++anchors_preset = 15
++anchor_right = 1.0
++anchor_bottom = 1.0
++grow_horizontal = 2
++grow_vertical = 2
+ 
+ [node name="VBox" type="VBoxContainer" parent="GameHUD/Margin"]
+ layout_mode = 2
