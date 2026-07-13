@@ -158,9 +158,10 @@ func _ready() -> void:
 
     if dialog_player_path != NodePath():
         dialog_player = get_node_or_null(dialog_player_path)
-    _apply_full_rect(self)
+    _fit_hud_to_viewport()
     _apply_full_rect($Margin)
-    _apply_full_rect($Margin/VBox)
+    # VBoxはMarginContainerの直下なので、サイズとオフセットはContainerに任せる。
+    # ここでFull Rectを指定すると、実行時に最小サイズへ潰れる場合がある。
 
     var m := $Margin as MarginContainer
     if m:
@@ -240,7 +241,10 @@ func _ready() -> void:
     _refresh_map_mode_layout()
     _refresh()
     call_deferred("_place_popups")
-    get_tree().root.size_changed.connect(_place_popups)
+    var resize_cb := Callable(self, "_on_root_viewport_size_changed")
+    if not get_tree().root.size_changed.is_connected(resize_cb):
+        get_tree().root.size_changed.connect(resize_cb)
+    call_deferred("_on_root_viewport_size_changed")
 
     if debug_open_on_start:
         _spawn_debug_if_needed()
@@ -269,6 +273,30 @@ func _apply_full_rect(c: Control) -> void:
     c.offset_top = 0
     c.offset_right = 0
     c.offset_bottom = 0
+
+func _fit_hud_to_viewport() -> void:
+    # GameHUDはWorld(Node2D)の直下にある。
+    # Control親がない状態でFull Rectアンカーを使うと、基準矩形を取得できず
+    # HUDが最小サイズへ縮むことがあるため、ビューポート実寸を明示する。
+    if get_parent_control() != null:
+        _apply_full_rect(self)
+        return
+
+    var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+    anchor_left = 0.0
+    anchor_top = 0.0
+    anchor_right = 0.0
+    anchor_bottom = 0.0
+    offset_left = 0.0
+    offset_top = 0.0
+    offset_right = viewport_size.x
+    offset_bottom = viewport_size.y
+
+func _on_root_viewport_size_changed() -> void:
+    _fit_hud_to_viewport()
+    _place_popups()
+    if map_mode_root != null and is_instance_valid(map_mode_root):
+        call_deferred("_refresh_map_mode_layout")
 
 func _ensure_spacer_before_buttons() -> void:
     if not is_instance_valid(topbar):
