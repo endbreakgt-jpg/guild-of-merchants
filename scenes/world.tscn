@@ -70,7 +70,8 @@ text = "InfoText"
 fit_content = true
 
 [node name="GameHUD" type="Control" parent="."]
-layout_mode = 0
+layout_mode = 3
+anchors_preset = 0
 offset_right = 1920.0
 offset_bottom = 1080.0
 script = ExtResource("4_ns1fl")
