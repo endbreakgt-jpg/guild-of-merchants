@@ -1373,7 +1373,7 @@ func _build_map_city_focus_panel(city_id: String) -> void:
     var city_name: String = String(info.get("name", city_id))
     var province: String = String(info.get("province", ""))
     var note: String = String(info.get("note", "")).strip_edges()
-    var rank_text: String = String(info.get("CityRANK", info.get("rank", "")))
+    var rank_text: String = str(info.get("CityRANK", info.get("rank", "")))
     var current_city: String = String(world.player.get("city", ""))
 
     if _map_state_title != null:
