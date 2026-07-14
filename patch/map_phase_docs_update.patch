@@ -1,0 +1,228 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,19 +1,44 @@
+-# 商人ゲーム制作（Godot 4.3）GitHub スターター
++# Guild of Merchants
+ 
+-この3ファイルを Godot プロジェクトのルートに置いてから、GitHub Desktop で初回コミット→Publish してください。
++Godot 4.3で制作中の、PC向けファンタジー交易シミュレーションです。
++契約と信用を頼りに各地を巡り、地理と物流の詰まりを読み解いて交易路を切り開く体験を中心にしています。
+ 
+-## 収録物
+-- `.gitignore` — Godot 4.x/Mono/IDE/ビルド成果物を除外
+-- `.gitattributes` — テキスト正規化と Git LFS 設定（画像/音声/3D等）
+-- `README.md` — 最小の運用メモ
++## 現在の開発状態
+ 
+-## 初回の流れ（超要約）
+-1. 3ファイルをプロジェクト直下に配置
++- メインシーン: res://scenes/world.tscn
++- 基準解像度: 1920x1080
++- MAP画面: 3状態の骨格実装と実画面確認まで完了
++  - MAP_BROWSE: 地図閲覧
++  - MAP_CITY_FOCUS: 都市確認
++  - MAP_TRAVEL_PREP: 経路・費用・危険度・整備度・護衛を確認して出発
++- 次の主対象: TUT1で「契約→購入→移動→納品→信用→解放」を一本につなぐ
+ 
+-2. GitHub Desktop → **Add local repository...** → プロジェクトフォルダ
++数値調整、最短・最安・最安全の複数経路比較、Themeや装飾は後続フェーズです。
+ 
+-3. **Commit to main**（Summaryは `initial commit` など）
++## 実行
+ 
+-4. **Publish repository**（Private推奨）
++Godot 4.3でproject.godotを開き、メインシーンを実行します。
++
++Windowsでのheadless確認例:
++
++```powershell
++& 'C:\Godot_v4.3-stable_win64.exe\Godot_v4.3-stable_win64.exe' --headless --path . --editor --quit
++```
++
++## 主な構成
++
++- scripts/world.gd: 世界状態、経済、日次処理、移動計算
++- ui/game_hud.gd: UI母艦、CITY/MAPの状態遷移
++- scripts/map_layer.gd: 地図描画、ノード選択、経路表示、パン・ズーム
++- scenes/ui/map_mode_ui.tscn: 本番用MAPレイアウト
++- scenes/dev/map_layout_preview.tscn.tscn: MAPレイアウト確認用シーン
++- data/: 都市、商品、ルート、護衛などのCSV
++
++## 参照資料
++
++- others/はじめに.txt: 資料運用と参照優先順位
++- others/引継.txt: 現在有効な方針、実装状態、次タスク
++- Guild of Merchants 憲法 v1.0: 設計判断の最上位基準
++
++詳細な作業履歴は引継へ追記せず、必要に応じてothers/archive/へ分離します。
+ 
+-5. Repository Settings → **Git LFS** を有効化
+diff --git a/others/引継.txt b/others/引継.txt
+--- a/others/引継.txt
++++ b/others/引継.txt
+@@ -1,4 +1,4 @@
+-新規チャット用 引継サマリ（更新: 2026-07-10）
++新規チャット用 引継サマリ（更新: 2026-07-14）
+ 作業後は全文追記せず、各節を上書き更新してください。
+ 実装作業は Local で行い、ユーザーは VS Code で差分を適用します。
+ 
+@@ -6,8 +6,9 @@
+ - プロジェクト: guild-of-merchants
+ - Godot 4.3 / GDScript / PC向け体験版
+ - GitHub: https://github.com/endbreakgt-jpg/guild-of-merchants
+-- 基準コミット: 7bc33315165e213a8aa12d7190e7edee02a0af1b（2026-04-30）
++- 基準コミット: 595b152f8a38bf7e56752fa949218c1159ce1ed5（2026-07-14）
+ - メインシーン: res://scenes/world.tscn
++- 基準解像度: 1920x1080
+ - 文字コード: UTF-8
+ - 設計上の最上位基準: Guild of Merchants 憲法 v1.0
+ 
+@@ -15,7 +16,7 @@
+ - 本作の主役は「契約と信用を頼りに、自ら各地を巡る行商体験」
+ - 体験版は Pilton 圏で完結させる
+ - MAPは都市確認用と移動用に分離せず、同じ画面内の状態切替で扱う
+-- MAPの内部状態は次の3段階
++- MAPの内部状態
+   - MAP_BROWSE: 地図閲覧
+   - MAP_CITY_FOCUS: 都市確認
+   - MAP_TRAVEL_PREP: 移動準備
+@@ -35,13 +36,12 @@
+ - world.gd は状態管理と日次処理の中枢
+ 
+ B. 移動・リスク
+-- 天候と7日予報を実装済み
+-- TravelDiceV2 と route_hazards を実装済み
++- 天候と7日予報、TravelDiceV2、route_hazards を実装済み
+ - convoy_condition の導入、表示、回復、リスク反映まで実装済み
+ - 護衛レベル0〜3、日数費用、bandit軽減を実装済み
+ - data/escort_templates.csv の読込と都市別候補生成を実装済み
+ - 護衛は旅ごとに雇用し、到着時に解除する
+-- 護衛候補と escort_level は player 内に保持され、通常セーブの player 保存対象に含まれる
++- 護衛候補と escort_level は player 内に保持され、通常セーブ対象に含まれる
+ 
+ C. 契約・信用
+ - 通常契約の生成、受注、期限、到着時自動納品、現金報酬を実装済み
+@@ -55,47 +55,31 @@
+ - story.gd にプロローグとDEVコマンドの基礎あり
+ - TUT1〜TUT3の多くはDEV noteで、操作誘導・達成判定は未実装
+ 
+-E. UI
+-- game_hud.gd がUI母艦
+-- menu_panel.gd は契約・信用など既存ウィンドウの補助
+-- map_layer.gd が地図操作と描画を担当
+-- 2026-04-30時点でHUD内MAP埋め込みの途中実装あり
+-- 2026-07-10 MAP3状態パッチを反映済み
+-  - map_mode_ui.tscn を3カラム構成へ変更
+-  - MAP_BROWSE / MAP_CITY_FOCUS / MAP_TRAVEL_PREP を追加
+-  - 都市情報、経路、日数、費用、危険度、整備度、護衛を左パネルへ統合
+-  - 右側都市一覧を常設
+-  - 通常移動導線から中央確認ダイアログと独立護衛パネルを外す
+-  - ESC / 戻るを TRAVEL_PREP → CITY_FOCUS → BROWSE → CITY の順に統一
+-  - map_layer.gd に都市フォーカス、選択ルート強調、フレーミング、リセットAPIを追加
+-- 既存コミット内の都市UI preload 旧パスを scenes/ui/city_mode_ui.tscn へ修正
+-
+-3) MAP3状態パッチの責務
+-- game_hud.gd
+-  - MAP状態管理
+-  - 左右パネルの構築
+-  - 既存World APIを使った移動準備
+-  - 護衛選択と出発
+-- map_layer.gd
+-  - 都市フォーカス
+-  - 選択ルート表示
+-  - 都市 / ルートの自動フレーミング
+-- world.gd
+-  - 今回は変更なし
+-  - 経路、費用、危険度、護衛、出発処理の既存APIを継続利用
++E. UI / MAP
++- game_hud.gd がUI母艦、map_layer.gd が地図操作と描画を担当
++- MAP3状態の骨格実装と実画面確認を2026-07-14に完了
++  - scenes/ui/map_mode_ui.tscn を本番用レイアウトとする
++  - scenes/dev/map_layout_preview.tscn.tscn はレイアウト確認専用
++  - MAP_BROWSE → MAP_CITY_FOCUS → MAP_TRAVEL_PREP の遷移が成立
++  - 左パネルに都市情報、経路、日数、費用、危険度、整備度、護衛を統合
++  - 中央MAPと右側都市一覧を常設
++  - 通常移動導線から中央確認ダイアログと独立護衛パネルを外した
++  - ESC / 戻るは TRAVEL_PREP → CITY_FOCUS → BROWSE → CITY の順
++  - 都市フォーカス、選択ルート強調、自動フレーミング、リセットAPIを実装
++  - MAP領域外のクリックをmap_layer.gdが背景クリックとして扱わないよう制限済み
++- scenes/world.tscn は各機能へ移動できる統合テスト / メインシーンとして維持
++
++3) MAPフェーズの扱い
++- 今回対象だった「都市確認から移動判断まで一周できる3状態の骨格」は完了扱い
++- MAP_TRAVEL_PREPでは地図を隠すモーダルへ戻さず、左パネル内で判断を完結させる
++- 今後のレイアウト微調整、複数経路比較、危険区間表現は機能拡張として別管理する
++- 責務
++  - game_hud.gd: MAP状態、左右パネル、移動準備、護衛選択、出発
++  - map_layer.gd: 都市 / ルート描画、フォーカス、フレーミング、入力
++  - world.gd: 経路、費用、危険度、護衛、出発処理
+ 
+ 4) 次タスク
+ 最優先:
+-- Godot 4.3 実画面確認
+-  - MAPを開く
+-  - 都市ノード / 都市一覧を選ぶ
+-  - 都市確認から移動準備へ進む
+-  - 護衛なし / 護衛ありで出発する
+-  - 戻る / ESC を各状態で試す
+-  - 到着後に護衛が解除されることを確認
+-- 1920x1080 と実使用ウィンドウサイズでパネル崩れを確認
+-
+-MAP確認後:
+ - TUT1の最小縦切り
+   - 特別契約受注
+   - 商品購入
+@@ -105,6 +89,12 @@
+   - 次要素解放
+ - 契約結果と信用増減の共通API化
+ 
++MAP回帰確認:
++- 護衛なし / 護衛ありの出発
++- 戻る / ESC の各状態遷移
++- 到着時の護衛解除
++- 実使用ウィンドウサイズでの崩れ
++
+ 保留:
+ - route_hazards と護衛の数値調整
+ - escort trait_type / trait_value の実効果
+@@ -112,15 +102,19 @@
+ - TUT2 / TUT3
+ - Theme、色、フォント、装飾
+ 
+-5) 検証状況
+-- 既存のworld.gd / game_hud.gdは過去にheadless parse確認済み
+-- 2026-07-10 MAP3状態パッチを反映し、参照パス・重複宣言・関数境界を静的確認済み
+-- Godot 4.3 の headless check で map_layer.gd / game_hud.gd の parse error なし
+-- プロジェクト全体の editor headless 起動・終了に成功
+-- メインシーンの短時間headless起動で World ready まで到達
+-- 既存の ui/dialog_player.gd による `Panel(Dialog.gd)::raise` の遅延呼出エラーは継続（今回変更外）
+-- 実画面確認は未実施
+-- Windows側で問題が出た場合は、実行コマンド・stdout/stderr・操作手順を記録する
++5) 検証・運用
++- Godot 4.3実画面でMAP表示、3カラム構成、都市選択、移動準備への遷移を確認済み
++- world.tscn の画面サイズ追従とMAPの起点ずれを修正済み
++- map_layer.gd / game_hud.gd は過去のheadless checkでparse errorなし
++- headless例:
++  C:\Godot_v4.3-stable_win64.exe\Godot_v4.3-stable_win64.exe --headless --path . --editor --quit
++- 経済長期確認の主な範囲: Day121〜300、Day360
++- ログ: others/prodlog*.txt
++- 出力: World.export_economy_snapshot_csv() / World.export_economy_report_txt()
++  - 保存先: user://exports
++- Godot実行中に一時的に操作不能になる場合がある
++  - 新規エラーが増えていなければ、実行停止・再実行またはエディター再起動後に再現確認する
++- ui/dialog_player.gd の Panel(Dialog.gd)::_arise 遅延呼出エラーはMAPとは別件
+ 
+ 6) 実装運用メモ
+ - world.gd / game_hud.gd は1000行超のため完成ファイル全文では返さない
+@@ -132,7 +126,6 @@
+ - UIは見た目の装飾より、状態・責務・入力制御の成立を先に確認する
+ 
+ 7) 一言メモ
+-- 護衛単体の実装段階は終了
+-- 現在はMAP3状態の実画面確認段階
+-- MAP確認後は、TUT1で「契約→移動→納品→信用→解放」を一本につなぐ
++- 護衛単体とMAP3状態の骨格実装段階は終了
++- 次はTUT1で「契約→移動→納品→信用→解放」を一本につなぐ
+ 
+
