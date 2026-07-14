@@ -382,6 +382,17 @@ func _is_pickable(origin: String, target: String) -> bool:
         _:
             return true
 
+func _is_pointer_inside_map(screen_position: Vector2) -> bool:
+    var local_position: Vector2 = to_local(screen_position)
+    var map_size: Vector2i = viewport_override_size
+    if map_size.x <= 0 or map_size.y <= 0:
+        map_size = Vector2i(get_viewport_rect().size)
+
+    return Rect2(
+        Vector2.ZERO,
+        Vector2(map_size)
+    ).has_point(local_position)
+
 func _input(event: InputEvent) -> void:
     # ---- All labels toggle key（L）----
     var ke: InputEventKey = event as InputEventKey
@@ -393,6 +404,15 @@ func _input(event: InputEvent) -> void:
             return
 
     var mb: InputEventMouseButton = event as InputEventMouseButton
+    var mm: InputEventMouseMotion = event as InputEventMouseMotion
+
+    # MapLayer は _input() で画面全体の入力を受け取るため、
+    # 左右のUIパネル上のクリックを地図背景クリックとして扱わない。
+    if mb and mb.pressed and not _is_pointer_inside_map(mb.position):
+        return
+    if mm and not _panning and not _is_pointer_inside_map(mm.position):
+        return
+
     if mb and mb.pressed:
         if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
             zoom_in(0.08)
@@ -436,7 +456,6 @@ func _input(event: InputEvent) -> void:
         else:
             _panning = false
 
-    var mm: InputEventMouseMotion = event as InputEventMouseMotion
     if mm:
         if _pick_mode and not _panning:
             var local3: Vector2 = to_local(mm.position)
