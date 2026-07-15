@@ -16,11 +16,11 @@ enum ViewMode { GOODS, KEY_ITEMS }
 var _view_mode: int = ViewMode.GOODS
 
 # UI ノード参照
-@onready var info_label: Label = $Margin/VBox/Info
-@onready var header: HBoxContainer = $Margin/VBox/Header
-@onready var rows_sc: ScrollContainer = $Margin/VBox/RowsSC
-@onready var rows_box: VBoxContainer = $Margin/VBox/RowsSC/Rows
-@onready var totals_label: Label = $Margin/VBox/Totals
+var info_label: Label = null
+var header: HBoxContainer = null
+var rows_sc: ScrollContainer = null
+var rows_box: VBoxContainer = null
+var totals_label: Label = null
 
 var mode_bar: HBoxContainer
 var goods_button: Button
@@ -40,6 +40,13 @@ func _ready() -> void:
         var m := get_node_or_null("Margin") as MarginContainer
         if m:
             m.set_anchors_preset(Control.PRESET_FULL_RECT)
+        info_label = get_node_or_null("Margin/VBox/Info") as Label
+        header = get_node_or_null("Margin/VBox/Header") as HBoxContainer
+        rows_sc = get_node_or_null("Margin/VBox/RowsSC") as ScrollContainer
+        rows_box = get_node_or_null("Margin/VBox/RowsSC/Rows") as VBoxContainer
+        if rows_box == null:
+            rows_box = get_node_or_null("Margin/VBox/RowsSC/RowsPanel/Rows") as VBoxContainer
+        totals_label = get_node_or_null("Margin/VBox/Totals") as Label
 
     _rebuild()
 
@@ -301,6 +308,13 @@ func _rebuild() -> void:
     var used := _capacity_used()
     var cash := float(world.player.get("cash", 0.0))
     info_label.text = "Capacity: %d / %d   Cash: %.1f" % [used, cap, cash]
+    if world.has_method("debug_get_test_inventory_status"):
+        var test_status: Dictionary = world.debug_get_test_inventory_status()
+        if bool(test_status.get("active", false)):
+            info_label.text += "   [TEST 実量:%d / 除外:%d]" % [
+                int(test_status.get("used_raw", used)),
+                int(test_status.get("exempt_units", 0)),
+            ]
 
     # 一覧描画クリア
     for n in rows_box.get_children():
@@ -359,6 +373,9 @@ func _rebuild() -> void:
         totals_label.text = "大切なもの: %d種 / %d個" % [total_kinds, total_count]
 
 func _capacity_used() -> int:
+    if world != null and world.has_method("_cargo_used"):
+        return int(world._cargo_used(world.player))
+
     var total := 0
     var cargo := world.player.get("cargo", {}) as Dictionary
     for pid in cargo.keys():

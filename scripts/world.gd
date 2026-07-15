@@ -224,6 +224,12 @@ var water_routes: Array[Dictionary] = []      # {route_id, from, to, capacity, k
 
 # --- Key Items definitions (key_id -> row Dictionary) ---
 var key_items: Dictionary = {}
+
+# --- Debug test inventory (runtime only) ---
+var debug_test_inventory_active: bool = false
+var _debug_capacity_exempt_cargo: Dictionary = {}  # pid -> exempt qty
+var _debug_test_inventory_snapshot: Dictionary = {}
+
 # === Reputation / Trust ===
 @export_range(0.0, 100.0, 0.1) var rep_global: float = 0.0
 var rep_by_province: Dictionary = {}
@@ -3613,7 +3619,7 @@ func _update_shortage_ema(c: String, pid: String, s: float) -> void:
     d[pid] = prev + (s - prev) * clamp(shortage_alpha, 0.0, 1.0)
 
 
-func _cargo_used(t: Dictionary) -> int:
+func _cargo_used_raw(t: Dictionary) -> int:
     var total: int = 0
 
     # cargo が無い/型が違う場合でも落とさない
@@ -3636,6 +3642,230 @@ func _cargo_used(t: Dictionary) -> int:
             size = int(products[pid].get("size", 1))
         total += qty * size
     return total
+
+
+func _cargo_used(t: Dictionary) -> int:
+    var total: int = 0
+
+    var cargo_any: Variant = t.get("cargo", null)
+    if cargo_any == null:
+        t["cargo"] = {}
+        return 0
+    if not (cargo_any is Dictionary):
+        t["cargo"] = {}
+        return 0
+
+    var apply_debug_exemption: bool = false
+    if OS.is_debug_build() and debug_test_inventory_active:
+        apply_debug_exemption = String(t.get("id", "")) == String(player.get("id", "YOU"))
+
+    var cargo: Dictionary = cargo_any as Dictionary
+    for pid_any in cargo.keys():
+        var pid: String = String(pid_any)
+        var qty: int = int(cargo.get(pid_any, 0))
+        if qty <= 0:
+            continue
+
+        var counted_qty: int = qty
+        if apply_debug_exemption:
+            var exempt_qty: int = max(0, int(_debug_capacity_exempt_cargo.get(pid, 0)))
+            counted_qty = max(0, qty - min(qty, exempt_qty))
+
+        var size: int = 1
+        if products.has(pid):
+            size = int(products[pid].get("size", 1))
+        total += counted_qty * max(1, size)
+    return total
+
+
+func debug_test_inventory_begin() -> bool:
+    if not OS.is_debug_build():
+        return false
+    if debug_test_inventory_active:
+        return true
+
+    _ensure_player_integrity()
+    _debug_test_inventory_snapshot = {
+        "cargo": (player.get("cargo", {}) as Dictionary).duplicate(true),
+        "key_items": (player.get("key_items", {}) as Dictionary).duplicate(true),
+        "cargo_lots": cargo_lots.duplicate(true),
+        "cap": int(player.get("cap", 40)),
+    }
+    _debug_capacity_exempt_cargo.clear()
+    debug_test_inventory_active = true
+    _world_message("[TEST] テスト所持品モードを開始しました。")
+    world_updated.emit()
+    return true
+
+
+func debug_test_inventory_restore() -> bool:
+    if not OS.is_debug_build() or not debug_test_inventory_active:
+        return false
+    if _debug_test_inventory_snapshot.is_empty():
+        return false
+
+    player["cargo"] = (_debug_test_inventory_snapshot.get("cargo", {}) as Dictionary).duplicate(true)
+    player["key_items"] = (_debug_test_inventory_snapshot.get("key_items", {}) as Dictionary).duplicate(true)
+    cargo_lots = (_debug_test_inventory_snapshot.get("cargo_lots", {}) as Dictionary).duplicate(true)
+    player["cap"] = int(_debug_test_inventory_snapshot.get("cap", player.get("cap", 40)))
+
+    _debug_capacity_exempt_cargo.clear()
+    _debug_test_inventory_snapshot.clear()
+    debug_test_inventory_active = false
+    _world_message("[TEST] テスト開始時の所持品へ復元しました。")
+    world_updated.emit()
+    return true
+
+
+func debug_test_inventory_end_keep() -> bool:
+    if not OS.is_debug_build() or not debug_test_inventory_active:
+        return false
+    _debug_capacity_exempt_cargo.clear()
+    _debug_test_inventory_snapshot.clear()
+    debug_test_inventory_active = false
+    _world_message("[TEST] テスト所持品を保持してモードを終了しました。")
+    world_updated.emit()
+    return true
+
+
+func _debug_test_baseline_cargo_qty(pid: String) -> int:
+    if _debug_test_inventory_snapshot.is_empty():
+        return 0
+    var baseline: Dictionary = _debug_test_inventory_snapshot.get("cargo", {}) as Dictionary
+    return max(0, int(baseline.get(pid, 0)))
+
+
+func debug_set_player_cargo(pid: String, target_qty: int, capacity_exempt: bool = true) -> bool:
+    if not OS.is_debug_build() or not products.has(pid):
+        return false
+    if not debug_test_inventory_begin():
+        return false
+
+    target_qty = clampi(target_qty, 0, 999999)
+    var cargo: Dictionary = player.get("cargo", {}) as Dictionary
+    if target_qty > 0:
+        cargo[pid] = target_qty
+    else:
+        cargo.erase(pid)
+    player["cargo"] = cargo
+
+    if _is_perishable(pid):
+        if target_qty > 0:
+            cargo_lots[pid] = [{"qty": target_qty, "age": 0}]
+        else:
+            cargo_lots.erase(pid)
+    elif cargo_lots.has(pid):
+        cargo_lots.erase(pid)
+
+    if capacity_exempt and target_qty > 0:
+        var baseline_qty: int = _debug_test_baseline_cargo_qty(pid)
+        var exempt_qty: int = max(0, target_qty - baseline_qty)
+        if exempt_qty > 0:
+            _debug_capacity_exempt_cargo[pid] = exempt_qty
+        else:
+            _debug_capacity_exempt_cargo.erase(pid)
+    else:
+        _debug_capacity_exempt_cargo.erase(pid)
+
+    _world_message("[TEST] %s の所持数を %d に設定しました%s。" % [
+        get_product_name(pid),
+        target_qty,
+        "（積載除外）" if capacity_exempt else "",
+    ])
+    world_updated.emit()
+    return true
+
+
+func debug_adjust_player_cargo(pid: String, delta: int, capacity_exempt: bool = true) -> bool:
+    if not OS.is_debug_build() or not products.has(pid):
+        return false
+    var cargo: Dictionary = player.get("cargo", {}) as Dictionary
+    var current_qty: int = int(cargo.get(pid, 0))
+    return debug_set_player_cargo(pid, current_qty + delta, capacity_exempt)
+
+
+func debug_set_player_key_item(id: String, target_qty: int) -> bool:
+    if not OS.is_debug_build() or not key_items.has(id):
+        return false
+    if not debug_test_inventory_begin():
+        return false
+
+    var def: Dictionary = key_items.get(id, {}) as Dictionary
+    var max_stack: int = int(def.get("max_stack", 99))
+    if int(def.get("unique", 0)) == 1 or max_stack <= 0:
+        max_stack = 1
+    target_qty = clampi(target_qty, 0, max_stack)
+
+    var inv: Dictionary = player.get("key_items", {}) as Dictionary
+    if target_qty > 0:
+        inv[id] = target_qty
+    else:
+        inv.erase(id)
+    player["key_items"] = inv
+
+    var item_name: String = String(def.get("name_ja", def.get("name", id)))
+    _world_message("[TEST] %s の所持数を %d に設定しました（自動効果なし）。" % [item_name, target_qty])
+    world_updated.emit()
+    return true
+
+
+func debug_fill_active_contract_cargo() -> int:
+    if not OS.is_debug_build():
+        return 0
+    if not debug_test_inventory_begin():
+        return 0
+
+    var added_total: int = 0
+    var required_by_product: Dictionary = {}
+    var active_contracts: Array = contracts_get_active(false)
+    for contract_any in active_contracts:
+        if not (contract_any is Dictionary):
+            continue
+        var contract: Dictionary = contract_any as Dictionary
+        if String(contract.get("kind", "")) != "deliver":
+            continue
+        var pid: String = String(contract.get("pid", ""))
+        var need: int = max(0, int(contract.get("qty", 0)))
+        if pid == "" or need <= 0 or not products.has(pid):
+            continue
+
+        required_by_product[pid] = int(required_by_product.get(pid, 0)) + need
+
+    for pid_any in required_by_product.keys():
+        var pid: String = String(pid_any)
+        var need: int = max(0, int(required_by_product.get(pid, 0)))
+        var have: int = int((player.get("cargo", {}) as Dictionary).get(pid, 0))
+        if _is_perishable(pid):
+            have = _lots_total(pid)
+        var missing: int = max(0, need - have)
+        if missing <= 0:
+            continue
+        if debug_adjust_player_cargo(pid, missing, true):
+            added_total += missing
+
+    _world_message("[TEST] 受注中契約の不足品を合計 %d 個補充しました。" % added_total)
+    world_updated.emit()
+    return added_total
+
+
+func debug_get_test_inventory_status() -> Dictionary:
+    var exempt_units: int = 0
+    var cargo: Dictionary = player.get("cargo", {}) as Dictionary
+    for pid_any in _debug_capacity_exempt_cargo.keys():
+        var pid: String = String(pid_any)
+        var qty: int = max(0, int(_debug_capacity_exempt_cargo.get(pid, 0)))
+        qty = min(qty, max(0, int(cargo.get(pid, 0))))
+        var size: int = 1
+        if products.has(pid):
+            size = max(1, int(products[pid].get("size", 1)))
+        exempt_units += qty * size
+    return {
+        "active": debug_test_inventory_active,
+        "used_raw": _cargo_used_raw(player),
+        "used_effective": _cargo_used(player),
+        "capacity": int(player.get("cap", 0)),
+        "exempt_units": exempt_units,
+    }
 
 # -------- logging --------
 func _log_day_summary() -> void:
@@ -4963,6 +5193,7 @@ func _make_save_payload() -> Dictionary:
     var state: Dictionary = {
         "day": day,
         "player": player,
+        "cargo_lots": cargo_lots,
         "price": price,
         "stock": stock,
         "_shortage_ema": _shortage_ema,
@@ -5014,6 +5245,11 @@ func _make_save_payload() -> Dictionary:
 
 
 func _apply_save_payload(data: Dictionary) -> void:
+    # テスト所持品の積載除外と復元スナップショットはランタイム専用。
+    debug_test_inventory_active = false
+    _debug_capacity_exempt_cargo.clear()
+    _debug_test_inventory_snapshot.clear()
+
     var state: Dictionary = (data.get("state", {}) as Dictionary)
     day = int(state.get("day", day))
 
@@ -5022,6 +5258,18 @@ func _apply_save_payload(data: Dictionary) -> void:
 
     # ★ここでセーブ互換や不足キーを補完
     _ensure_player_integrity()
+
+    cargo_lots.clear()
+    if state.has("cargo_lots") and state.get("cargo_lots") is Dictionary:
+        cargo_lots = (state.get("cargo_lots") as Dictionary).duplicate(true)
+    else:
+        # 旧セーブ互換: 生鮮品の所持数から年齢0のロットを再構成する。
+        var loaded_cargo := player.get("cargo", {}) as Dictionary
+        for pid_any in loaded_cargo.keys():
+            var pid: String = String(pid_any)
+            var qty: int = max(0, int(loaded_cargo.get(pid_any, 0)))
+            if qty > 0 and _is_perishable(pid):
+                cargo_lots[pid] = [{"qty": qty, "age": 0}]
 
     if state.has("price"):
         price = state.get("price") as Dictionary
@@ -6848,7 +7096,7 @@ func _apply_key_item_effect(def: Dictionary, qty_added: int) -> void:
     var value_f: float = float(_num(def.get("effect_value", 0.0)))
 
     match effect_type:
-        "cap_add":
+        "cap_add", "cargo_cap_add":
             var delta: int = int(round(value_f)) * max(1, qty_added)
             if delta != 0:
                 player["cap"] = int(player.get("cap", 0)) + delta

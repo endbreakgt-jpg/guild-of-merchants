@@ -29,6 +29,7 @@ var _rt_supply_product: RichTextLabel
 var _rt_price_reason: RichTextLabel
 var _cb_reason_day_end: CheckButton
 var _cb_reason_detail: CheckButton
+var _test_inventory_window: Window
 
 func _ready() -> void:
     _setup_anchor()
@@ -46,10 +47,19 @@ func _ready() -> void:
     _update_stats()
     if world and not world.world_updated.is_connected(Callable(self, "_refresh_from_world")):
         world.world_updated.connect(_refresh_from_world)
+    if not visibility_changed.is_connected(Callable(self, "_on_debug_panel_visibility_changed")):
+        visibility_changed.connect(_on_debug_panel_visibility_changed)
 
 func _refresh_from_world() -> void:
     _populate_options()
     _update_stats()
+
+
+func _on_debug_panel_visibility_changed() -> void:
+    if visible:
+        return
+    if is_instance_valid(_test_inventory_window):
+        _test_inventory_window.hide()
 
 func _setup_anchor() -> void:
     name = "DebugPanel"
@@ -88,6 +98,13 @@ func _build_ui() -> void:
     title.text = "Debug: Price / Spread / Shortage"
     title.add_theme_font_size_override("font_size", 14)
     vb.add_child(title)
+
+    if OS.is_debug_build():
+        var test_inventory_btn := Button.new()
+        test_inventory_btn.text = "TEST INV — テスト所持品"
+        test_inventory_btn.tooltip_text = "積載上限に影響しないテスト商品と、大切なものを設定します。"
+        vb.add_child(test_inventory_btn)
+        test_inventory_btn.pressed.connect(_open_test_inventory_window)
 
     var sel := HBoxContainer.new()
     sel.add_theme_constant_override("separation", 8)
@@ -253,6 +270,25 @@ func _mk_label(t: String, size: int, minw: int) -> Label:
     l.custom_minimum_size = Vector2(minw, 0)
     l.add_theme_font_size_override("font_size", size)
     return l
+
+
+func _open_test_inventory_window() -> void:
+    if not OS.is_debug_build() or world == null:
+        return
+
+    if not is_instance_valid(_test_inventory_window):
+        var TestInventoryScript: Script = preload("res://ui/debug_inventory_window.gd")
+        _test_inventory_window = TestInventoryScript.new() as Window
+        if not is_instance_valid(_test_inventory_window):
+            return
+        _test_inventory_window.name = "DebugInventoryWindow"
+        _test_inventory_window.call("set_world", world)
+        add_child(_test_inventory_window)
+    else:
+        _test_inventory_window.call("set_world", world)
+
+    _test_inventory_window.call("refresh_from_world")
+    _test_inventory_window.popup_centered()
 
 func _mk_value_label(minw: int = 120, align_right: bool = true) -> Label:
     var l := Label.new()
