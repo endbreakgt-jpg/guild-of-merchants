@@ -1,0 +1,466 @@
+--- a/scripts/world.gd
++++ b/scripts/world.gd
+@@ -11,9 +11,18 @@
+ signal supply_event(city_id: String, product_id: String, qty: int, mode: String, flavor: String)
+ signal weekly_report(province: String, payload: Dictionary)
+ 
++# --- Player / contract integration signals ---
++signal player_arrived(city_id: String)
++signal player_trade_completed(action: String, city_id: String, product_id: String, qty: int)
++signal contract_accepted(contract: Dictionary)
++signal contract_resolved(contract: Dictionary, result: String)
++signal reputation_changed(province: String, previous_value: float, current_value: float, applied_delta: float, reason: String)
++signal city_unlocks_changed(city_ids: Array)
++
+ # --- Tutorial state / locks (TUT-STATE) ---
+ signal tutorial_state_changed(prev: String, cur: String)
+ signal tutorial_locks_changed(locks: Dictionary)
++signal tutorial_progress_changed(key: String, value: Variant)
+ 
+ const TUT_STATE_NONE := "none"
+ const TUT_STATE_PROLOGUE := "prologue"
+@@ -34,6 +43,7 @@
+ var tutorial_state: String = TUT_STATE_NONE
+ # key -> reason(String).  存在する=ロック中
+ var tutorial_locks: Dictionary = {}
++var tutorial_progress: Dictionary = {}
+ 
+ @export var data_dir: String = "res://data/"
+ @export var day_seconds: float = 0.5
+@@ -372,6 +382,8 @@
+ @export var contracts_deadline_min: int = 8
+ @export var contracts_deadline_max: int = 20
+ @export var contracts_reward_k: float = 0.25
++@export var contracts_rep_success_default: float = 1.0
++@export var contracts_rep_failure_default: float = -1.0
+ 
+ var _contracts_rarity_weights := {
+     "common": 55.0, "uncommon": 28.0, "rare": 12.0, "epic": 5.0
+@@ -677,6 +689,32 @@
+ func get_tutorial_locks() -> Dictionary:
+     return tutorial_locks.duplicate(true)
+ 
++func get_tutorial_progress(key: String, default_value: Variant = null) -> Variant:
++    return tutorial_progress.get(key, default_value)
++
++func set_tutorial_progress(key: String, value: Variant) -> void:
++    if key == "":
++        return
++    if tutorial_progress.has(key) and tutorial_progress.get(key) == value:
++        return
++    tutorial_progress[key] = value
++    tutorial_progress_changed.emit(key, value)
++    world_updated.emit()
++
++func clear_tutorial_progress(key: String = "") -> void:
++    if key == "":
++        if tutorial_progress.is_empty():
++            return
++        tutorial_progress.clear()
++        tutorial_progress_changed.emit("", null)
++        world_updated.emit()
++        return
++    if not tutorial_progress.has(key):
++        return
++    tutorial_progress.erase(key)
++    tutorial_progress_changed.emit(key, null)
++    world_updated.emit()
++
+ func is_tutorial_locked(key: String) -> bool:
+     return tutorial_locks.has(key)
+ 
+@@ -1469,6 +1507,28 @@
+         return true
+     return unlocked_city_ids.has(cid)
+ 
++func set_unlocked_city_ids(city_ids: Array) -> void:
++    var normalized: Array[String] = []
++    for city_id_any in city_ids:
++        var city_id := String(city_id_any)
++        if city_id == "" or not cities.has(city_id):
++            continue
++        if not normalized.has(city_id):
++            normalized.append(city_id)
++    unlocked_city_ids = normalized
++    city_unlocks_changed.emit(unlocked_city_ids.duplicate())
++    world_updated.emit()
++
++func unlock_city(city_id: String) -> bool:
++    if city_id == "" or not cities.has(city_id):
++        return false
++    if unlocked_city_ids.is_empty() or unlocked_city_ids.has(city_id):
++        return false
++    unlocked_city_ids.append(city_id)
++    city_unlocks_changed.emit(unlocked_city_ids.duplicate())
++    world_updated.emit()
++    return true
++
+ # --- Rank/Consumption helpers ---
+ func _rank_consume_mult(rank: int) -> float:
+     var r: int = clamp(rank, 1, 10)
+@@ -2567,6 +2627,14 @@
+     if rep_by_city == null:
+         rep_by_city = {}
+ 
++    for province_any in rep_by_province.keys():
++        var province_id := String(province_any)
++        rep_by_province[province_id] = clamp(
++            float(rep_by_province.get(province_id, 0.0)),
++            0.0,
++            100.0
++        )
++
+     # 都市一覧からプロヴィンス名を拾って rep_by_province を初期化
+     # 既に値が入っているキーはそのまま温存し、新しいプロヴィンスだけ 0.0 で追加する。
+     for cid in cities.keys():
+@@ -2577,6 +2645,35 @@
+         if not rep_by_province.has(prov):
+             rep_by_province[prov] = 0.0
+ 
++func get_city_province_id(city_id: String) -> String:
++    if city_id == "" or not cities.has(city_id):
++        return ""
++    var city_info: Dictionary = cities.get(city_id, {}) as Dictionary
++    return String(city_info.get("province", ""))
++
++func get_province_reputation(province: String) -> float:
++    if province == "":
++        return 0.0
++    return float(rep_by_province.get(province, 0.0))
++
++func change_province_reputation(province: String, delta: float, reason: String = "") -> float:
++    if province == "" or is_zero_approx(delta):
++        return 0.0
++
++    if not rep_by_province.has(province):
++        rep_by_province[province] = 0.0
++
++    var previous_value: float = float(rep_by_province.get(province, 0.0))
++    var current_value: float = clamp(previous_value + delta, 0.0, 100.0)
++    var applied_delta: float = current_value - previous_value
++    if is_zero_approx(applied_delta):
++        return 0.0
++
++    rep_by_province[province] = current_value
++    reputation_changed.emit(province, previous_value, current_value, applied_delta, reason)
++    world_updated.emit()
++    return applied_delta
++
+ 
+ func build_graph() -> void:
+     adj.clear()
+@@ -4004,8 +4101,10 @@
+     player["escort_level"] = 0
+     player["escort_offers"] = []
+     generate_escort_offers_for_city(String(player.get("city", "")))
++    var city_id := String(player.get("city", ""))
++    contracts_try_auto_deliver_at(city_id)
++    player_arrived.emit(city_id)
+     world_updated.emit()
+-    contracts_try_auto_deliver_at(String(player.get("city","")))
+ 
+ enum MoveErr { OK, ARRIVED_TODAY, NOT_ADJACENT, LACK_CASH }
+ 
+@@ -4320,6 +4419,7 @@
+     player["cargo"][pid] = int(player["cargo"].get(pid, 0)) + qty
+     _lots_add(pid, qty)
+     _update_price_for(city, pid)
++    player_trade_completed.emit("buy", city, pid, qty)
+     world_updated.emit()
+     return true
+ 
+@@ -4353,6 +4453,7 @@
+     player["cash"] = float(player["cash"]) + (gross - tax)
+     cities[city]["funds"] = float(cities[city]["funds"]) + tax
+     _update_price_for(city, pid)
++    player_trade_completed.emit("sell", city, pid, qty)
+     world_updated.emit()
+     return true
+ 
+@@ -4837,7 +4938,7 @@
+ 
+ func _make_save_payload() -> Dictionary:
+     var meta: Dictionary = {
+-        "ver": 1,
++        "ver": 2,
+         "date": (format_date() if has_method("format_date") else "Day %d" % day),
+         "day": day,
+         "player_city": String(player.get("city","")),
+@@ -4869,10 +4970,21 @@
+         "supply_count_by_pid": (supply_count_by_pid if "supply_count_by_pid" in self else {}),
+         "event_log": (event_log if "event_log" in self else []),
+ 
++        # --- reputation / unlocks ---
++        "reputation": {
++            "global": rep_global,
++            "by_province": rep_by_province,
++            "by_city": rep_by_city,
++        },
++        "unlocks": {
++            "city_ids": unlocked_city_ids,
++        },
++
+         # --- tutorial ---
+         "tutorial": {
+             "state": tutorial_state,
+             "locks": tutorial_locks,
++            "progress": tutorial_progress,
+         },
+ 
+         # --- contracts ---
+@@ -4937,12 +5049,32 @@
+     else:
+         _emergency_last_day = {}
+ 
++    # --- reputation / unlocks ---
++    if state.has("reputation"):
++        var reputation_state: Dictionary = state.get("reputation") as Dictionary
++        rep_global = clamp(float(reputation_state.get("global", rep_global)), 0.0, 100.0)
++        rep_by_province = (reputation_state.get("by_province", rep_by_province) as Dictionary)
++        rep_by_city = (reputation_state.get("by_city", rep_by_city) as Dictionary)
++    else:
++        rep_global = 0.0
++        rep_by_province = {}
++        rep_by_city = {}
++    _init_reputation()
++
++    if state.has("unlocks"):
++        var unlock_state: Dictionary = state.get("unlocks") as Dictionary
++        unlocked_city_ids = (unlock_state.get("city_ids", unlocked_city_ids) as Array)
++    else:
++        unlocked_city_ids = []
++    city_unlocks_changed.emit(unlocked_city_ids.duplicate())
++
+     # --- tutorial ---
+     if state.has("tutorial"):
+         var tut: Dictionary = state.get("tutorial") as Dictionary
+         var prev_state := tutorial_state
+         tutorial_state = String(tut.get("state", tutorial_state))
+         tutorial_locks = (tut.get("locks", {}) as Dictionary)
++        tutorial_progress = (tut.get("progress", {}) as Dictionary)
+         tutorial_state_changed.emit(prev_state, tutorial_state)
+         tutorial_locks_changed.emit(get_tutorial_locks())
+ 
+@@ -4953,6 +5085,7 @@
+         _contracts_active = (cst.get("active", []) as Array)
+         _contracts_next_id = int(cst.get("next_id", 1))
+         _contracts_last_month_key = String(cst.get("last_month", ""))
++        _contracts_last_sweep_day = -1
+ 
+ 
+ func _pick_daily_event_for_tier(tier: String) -> Dictionary:
+@@ -5876,6 +6009,75 @@
+     if base > contracts_offer_max: base = contracts_offer_max
+     return base
+ 
++func _contracts_is_active(contract: Dictionary) -> bool:
++    var state := String(contract.get("state", ""))
++    return state == "active" or state == "accepted"
++
++func _contracts_active_count() -> int:
++    var count := 0
++    for contract_any in _contracts_active:
++        var contract: Dictionary = contract_any
++        if _contracts_is_active(contract):
++            count += 1
++    return count
++
++func _contracts_reputation_province(contract: Dictionary) -> String:
++    var province := String(contract.get("issuer_province", contract.get("rep_province", "")))
++    if province != "":
++        return province
++    return get_city_province_id(String(contract.get("from", "")))
++
++func _contracts_reputation_delta(contract: Dictionary, result: String) -> float:
++    if result == "done":
++        return float(contract.get("rep_success", contracts_rep_success_default))
++    if result == "expired" or result == "failed":
++        return float(contract.get("rep_failure", contracts_rep_failure_default))
++    return 0.0
++
++func _contracts_apply_result(index: int, result: String) -> Dictionary:
++    if index < 0 or index >= _contracts_active.size():
++        return {}
++    if result != "done" and result != "expired" and result != "failed":
++        return {}
++
++    var contract: Dictionary = _contracts_active[index]
++    if not _contracts_is_active(contract):
++        return {}
++
++    contract["state"] = result
++    contract["resolved_day"] = day
++    if result == "done":
++        contract["done_day"] = day
++    elif result == "expired":
++        contract["expired_day"] = day
++    else:
++        contract["failed_day"] = day
++
++    var province := _contracts_reputation_province(contract)
++    var requested_delta := _contracts_reputation_delta(contract, result)
++    contract["rep_province"] = province
++    contract["rep_delta_requested"] = requested_delta
++    _contracts_active[index] = contract
++
++    var applied_delta := change_province_reputation(
++        province,
++        requested_delta,
++        "contract:%s:%s" % [String(contract.get("id", "")), result]
++    )
++    contract["rep_delta_applied"] = applied_delta
++    _contracts_active[index] = contract
++
++    if not is_zero_approx(applied_delta):
++        _world_message("%sの信用 %+0.1f（現在 %.1f）" % [
++            province,
++            applied_delta,
++            get_province_reputation(province)
++        ])
++
++    contract_resolved.emit(contract.duplicate(true), result)
++    world_updated.emit()
++    return contract.duplicate(true)
++
+ func _contracts_pick_rarity(rng: RandomNumberGenerator) -> String:
+     var keys := _contracts_rarity_weights.keys()
+     var total := 0.0
+@@ -5949,7 +6151,10 @@
+         "qty": offer_qty,
+         "deadline": deadline,
+         "rarity": rarity,
+-        "reward": reward
++        "reward": reward,
++        "issuer_province": get_city_province_id(cid),
++        "rep_success": contracts_rep_success_default,
++        "rep_failure": contracts_rep_failure_default,
+     }
+ 
+ func _contracts_generate_monthly_offers() -> void:
+@@ -5985,13 +6190,13 @@
+         if include_history:
+             out.append(c)
+         else:
+-            if String(c.get("state", "accepted")) == "accepted":
++            if _contracts_is_active(c):
+                 out.append(c)
+     return out
+ 
+ 
+ func contracts_can_accept() -> bool:
+-    return _contracts_active.size() < contracts_active_limit
++    return _contracts_active_count() < contracts_active_limit
+ 
+ func contracts_try_auto_deliver_at(city_id: String) -> void:
+     if _contracts_active.is_empty():
+@@ -6002,10 +6207,7 @@
+     for i in range(_contracts_active.size()):
+         var ct: Dictionary = _contracts_active[i]
+ 
+-        # 互換: "active" / "accepted" のどちらでも稼働中として扱う
+-        var st := String(ct.get("state",""))
+-        var is_active := (st == "active") or (st == "accepted")
+-        if not is_active:
++        if not _contracts_is_active(ct):
+             continue
+ 
+         # Deliver型のみ（将来の型追加を見越して厳格に）
+@@ -6047,14 +6249,13 @@
+             cargo[pid] = have - need
+ 
+         player["cash"] = float(player.get("cash",0.0)) + reward
+-        ct["state"] = "done"
+-        ct["done_day"] = day
+-        _contracts_active[i] = ct
+-        changed = true
+ 
+         _world_message("契約達成: %s を %s に %d 個 納品。報酬 %.0f" % [
+             get_product_name(pid), get_city_name(city_id), need, reward
+         ])
++        var resolved := _contracts_apply_result(i, "done")
++        if not resolved.is_empty():
++            changed = true
+ 
+     if changed:
+         player["cargo"] = cargo
+@@ -6068,10 +6269,7 @@
+     var changed := false
+     for i in range(_contracts_active.size()):
+         var ct: Dictionary = _contracts_active[i]
+-        # 互換: 稼働中は "active" か "accepted"
+-        var st := String(ct.get("state",""))
+-        var is_active := (st == "active") or (st == "accepted")
+-        if not is_active:
++        if not _contracts_is_active(ct):
+             continue
+ 
+         # 互換: deadline / deadline_day 両対応
+@@ -6080,16 +6278,15 @@
+             dl = int(ct.get("deadline_day"))
+ 
+         if day > dl:
+-            ct["state"] = "expired"  # 既存の状態語彙に合わせる
+-            ct["expired_day"] = day
+-            _contracts_active[i] = ct
+             var pid := String(ct.get("pid",""))
+             var qty := int(ct.get("qty",0))
+             var to_id := String(ct.get("to",""))
+             _world_message("契約失効: %s×%d を %s へ納品（期限切れ）" % [
+                 get_product_name(pid), qty, get_city_name(to_id)
+             ])
+-            changed = true
++            var resolved := _contracts_apply_result(i, "expired")
++            if not resolved.is_empty():
++                changed = true
+ 
+     if changed:
+         world_updated.emit()
+@@ -6126,6 +6323,8 @@
+         int(off.get("qty",0)),
+         format_date(int(off.get("deadline", day)))
+     ])
++    contract_accepted.emit(off.duplicate(true))
++    world_updated.emit()
+     return true
+ 
+ func contracts_get_offers_for(city_id: String) -> Array:
+@@ -6609,4 +6808,3 @@
+     else:
+         inv.erase(id)
+     player["key_items"] = inv
+-
+
+--- a/ui/menu_panel.gd
++++ b/ui/menu_panel.gd
+@@ -977,6 +977,17 @@
+     if world != null and lim > 0:
+         left = int(lim - int(world.day))
+     var reward := float(d.get("reward_cash", d.get("reward", 0.0)))
++    var rep_success := float(d.get("rep_success", 0.0))
++    var rep_failure := float(d.get("rep_failure", 0.0))
++    if world != null:
++        if not d.has("rep_success"):
++            rep_success = float(world.get("contracts_rep_success_default"))
++        if not d.has("rep_failure"):
++            rep_failure = float(world.get("contracts_rep_failure_default"))
++
++    var rep_province := String(d.get("issuer_province", d.get("rep_province", "")))
++    if rep_province == "" and world != null and world.has_method("get_city_province_id"):
++        rep_province = String(world.call("get_city_province_id", String(d.get("from", ""))))
+ 
+     var parts: Array[String] = []
+     if from != "" or to != "":
+@@ -993,6 +1004,13 @@
+     if reward > 0.0:
+         parts.append("報酬: %.0f" % reward)
+ 
++    if rep_province != "" and (not is_zero_approx(rep_success) or not is_zero_approx(rep_failure)):
++        parts.append("信用(%s): 達成 %+0.1f / 失敗 %+0.1f" % [
++            rep_province,
++            rep_success,
++            rep_failure
++        ])
++
+     return " / ".join(parts)
+ 
+ 

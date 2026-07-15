@@ -977,6 +977,17 @@ func _contract_sub_text(d: Dictionary) -> String:
     if world != null and lim > 0:
         left = int(lim - int(world.day))
     var reward := float(d.get("reward_cash", d.get("reward", 0.0)))
+    var rep_success := float(d.get("rep_success", 0.0))
+    var rep_failure := float(d.get("rep_failure", 0.0))
+    if world != null:
+        if not d.has("rep_success"):
+            rep_success = float(world.get("contracts_rep_success_default"))
+        if not d.has("rep_failure"):
+            rep_failure = float(world.get("contracts_rep_failure_default"))
+
+    var rep_province := String(d.get("issuer_province", d.get("rep_province", "")))
+    if rep_province == "" and world != null and world.has_method("get_city_province_id"):
+        rep_province = String(world.call("get_city_province_id", String(d.get("from", ""))))
 
     var parts: Array[String] = []
     if from != "" or to != "":
@@ -992,6 +1003,13 @@ func _contract_sub_text(d: Dictionary) -> String:
 
     if reward > 0.0:
         parts.append("報酬: %.0f" % reward)
+
+    if rep_province != "" and (not is_zero_approx(rep_success) or not is_zero_approx(rep_failure)):
+        parts.append("信用(%s): 達成 %+0.1f / 失敗 %+0.1f" % [
+            rep_province,
+            rep_success,
+            rep_failure
+        ])
 
     return " / ".join(parts)
 
