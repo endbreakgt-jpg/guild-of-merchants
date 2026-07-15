@@ -1,0 +1,907 @@
+diff --git a/others/引継.txt b/others/引継.txt
+index b206bae..a8e7987 100644
+--- a/others/引継.txt
++++ b/others/引継.txt
+@@ -6,7 +6,7 @@
+ - プロジェクト: guild-of-merchants
+ - Godot 4.3 / GDScript / PC向け体験版
+ - GitHub: https://github.com/endbreakgt-jpg/guild-of-merchants
+-- 適用元コミット: d905d414bff71080b2ecd654781186c40296d689（2026-07-15）
++- 適用元コミット: 2b996c8b7b0e36abd04b4d3c8f3cba69d8adfa23（2026-07-15）
+ - メインシーン: res://scenes/world.tscn
+ - 基準解像度: 1920x1080
+ - 文字コード: UTF-8
+@@ -77,7 +77,10 @@ E. UI / MAP
+ - scenes/world.tscn は各機能へ移動できる統合テスト / メインシーンとして維持
+ - 都市画面の再配置、都市情報、待機操作、メッセージ枠統合を2026-07-15に実画面確認
+ - 都市画面の各機能ボタンは動作確認済み
+-- 「1日待機」は日付が進むがメッセージが出ない。指定日待機はメッセージ表示あり
++- 日時・Day・ターン付き行動ログを最大200件保持し、待機、システムメッセージ、ダイス結果を記録
++- 行動ログのセーブ復元、TXT出力、EXPからの同時出力を実装済み
++- DBGパネルの不透明化と表示切替、契約ウィンドウの排他制御を修正・検証済み
++- TEST INV（テスト所持品モード）をパッチ実装済み。任意の商品・大切なもの・契約不足品を付与可能（実画面確認待ち）
+ 
+ 3) MAPフェーズの扱い
+ - 今回対象だった「都市確認から移動判断まで一周できる3状態の骨格」は完了扱い
+@@ -90,6 +93,13 @@ E. UI / MAP
+ 
+ 4) 次タスク
+ 最優先:
++- TEST INV の実画面確認
++  - 商品の追加 / 指定 / 0化
++  - 積載除外と実積載の表示
++  - 生鮮品ロット同期
++  - 大切なものの所持状態設定
++  - 受注中契約の不足品補充と通常経路での納品
++  - 開始時復元 / 所持品保持終了
+ - 契約・信用共通基盤の実画面回帰確認
+   - 通常契約の受注一覧表示
+   - 契約達成時の現金と信用加算
+@@ -134,6 +144,10 @@ MAP回帰確認:
+   - 契約受注、売買通知、到着通知、達成 / 失効、信用増減、二重適用防止、受注上限を確認
+   - 契約詳細の信用表示、ver 2保存復元、ver 1互換読込を確認
+   - 数値契約IDの文字列化とJSON由来の型なし配列復元を修正
++- 2026-07-15 行動ログ、契約ウィンドウ、DBGパネルを検証済み
++  - 契約ウィンドウ3回反復、詳細表示、行動ログ200件上限、保存復元、TXT出力、DBG表示切替を確認
++  - git diff --check、Godot 4.3全体読込、メインシーン World ready まで成功
++  - 短時間強制終了時の既存リソース解放警告のみ残存。通常終了で再現しない限り別件扱い
+ 
+ 6) 実装運用メモ
+ - world.gd / game_hud.gd は1000行超のため完成ファイル全文では返さない
+@@ -143,8 +157,10 @@ MAP回帰確認:
+ - インデントはスペース
+ - GitHubとユーザー報告が食い違う場合は、未コミット差分を考慮してユーザー報告を優先
+ - UIは見た目の装飾より、状態・責務・入力制御の成立を先に確認する
++- TEST INV の商品は実際の player.cargo に入り、テスト追加分のみ積載計算から除外する
++- TEST INV の大切なものは所持状態のみ変更し、自動効果は実行しない
++- テスト所持品はセーブにも含まれるため、専用スロットを使い、通常プレイへ戻る前に開始時復元する
+ 
+ 7) 一言メモ
+ - 都市画面とMAP3状態の骨格実装段階は終了
+-- 契約・信用共通基盤の実画面確認後、TUT1で「契約→購入→移動→納品→信用→TUT2解放」を一本につなぐ
+-
++- TEST INVで契約確認を効率化し、契約・信用共通基盤の実画面確認後、TUT1の縦切りへ進む
+diff --git a/scripts/world.gd b/scripts/world.gd
+index a3cf4e6..a3c9301 100644
+--- a/scripts/world.gd
++++ b/scripts/world.gd
+@@ -224,6 +224,12 @@ var water_routes: Array[Dictionary] = []      # {route_id, from, to, capacity, k
+ 
+ # --- Key Items definitions (key_id -> row Dictionary) ---
+ var key_items: Dictionary = {}
++
++# --- Debug test inventory (runtime only) ---
++var debug_test_inventory_active: bool = false
++var _debug_capacity_exempt_cargo: Dictionary = {}  # pid -> exempt qty
++var _debug_test_inventory_snapshot: Dictionary = {}
++
+ # === Reputation / Trust ===
+ @export_range(0.0, 100.0, 0.1) var rep_global: float = 0.0
+ var rep_by_province: Dictionary = {}
+@@ -3613,7 +3619,7 @@ func _update_shortage_ema(c: String, pid: String, s: float) -> void:
+     d[pid] = prev + (s - prev) * clamp(shortage_alpha, 0.0, 1.0)
+ 
+ 
+-func _cargo_used(t: Dictionary) -> int:
++func _cargo_used_raw(t: Dictionary) -> int:
+     var total: int = 0
+ 
+     # cargo が無い/型が違う場合でも落とさない
+@@ -3637,6 +3643,230 @@ func _cargo_used(t: Dictionary) -> int:
+         total += qty * size
+     return total
+ 
++
++func _cargo_used(t: Dictionary) -> int:
++    var total: int = 0
++
++    var cargo_any: Variant = t.get("cargo", null)
++    if cargo_any == null:
++        t["cargo"] = {}
++        return 0
++    if not (cargo_any is Dictionary):
++        t["cargo"] = {}
++        return 0
++
++    var apply_debug_exemption: bool = false
++    if OS.is_debug_build() and debug_test_inventory_active:
++        apply_debug_exemption = String(t.get("id", "")) == String(player.get("id", "YOU"))
++
++    var cargo: Dictionary = cargo_any as Dictionary
++    for pid_any in cargo.keys():
++        var pid: String = String(pid_any)
++        var qty: int = int(cargo.get(pid_any, 0))
++        if qty <= 0:
++            continue
++
++        var counted_qty: int = qty
++        if apply_debug_exemption:
++            var exempt_qty: int = max(0, int(_debug_capacity_exempt_cargo.get(pid, 0)))
++            counted_qty = max(0, qty - min(qty, exempt_qty))
++
++        var size: int = 1
++        if products.has(pid):
++            size = int(products[pid].get("size", 1))
++        total += counted_qty * max(1, size)
++    return total
++
++
++func debug_test_inventory_begin() -> bool:
++    if not OS.is_debug_build():
++        return false
++    if debug_test_inventory_active:
++        return true
++
++    _ensure_player_integrity()
++    _debug_test_inventory_snapshot = {
++        "cargo": (player.get("cargo", {}) as Dictionary).duplicate(true),
++        "key_items": (player.get("key_items", {}) as Dictionary).duplicate(true),
++        "cargo_lots": cargo_lots.duplicate(true),
++        "cap": int(player.get("cap", 40)),
++    }
++    _debug_capacity_exempt_cargo.clear()
++    debug_test_inventory_active = true
++    _world_message("[TEST] テスト所持品モードを開始しました。")
++    world_updated.emit()
++    return true
++
++
++func debug_test_inventory_restore() -> bool:
++    if not OS.is_debug_build() or not debug_test_inventory_active:
++        return false
++    if _debug_test_inventory_snapshot.is_empty():
++        return false
++
++    player["cargo"] = (_debug_test_inventory_snapshot.get("cargo", {}) as Dictionary).duplicate(true)
++    player["key_items"] = (_debug_test_inventory_snapshot.get("key_items", {}) as Dictionary).duplicate(true)
++    cargo_lots = (_debug_test_inventory_snapshot.get("cargo_lots", {}) as Dictionary).duplicate(true)
++    player["cap"] = int(_debug_test_inventory_snapshot.get("cap", player.get("cap", 40)))
++
++    _debug_capacity_exempt_cargo.clear()
++    _debug_test_inventory_snapshot.clear()
++    debug_test_inventory_active = false
++    _world_message("[TEST] テスト開始時の所持品へ復元しました。")
++    world_updated.emit()
++    return true
++
++
++func debug_test_inventory_end_keep() -> bool:
++    if not OS.is_debug_build() or not debug_test_inventory_active:
++        return false
++    _debug_capacity_exempt_cargo.clear()
++    _debug_test_inventory_snapshot.clear()
++    debug_test_inventory_active = false
++    _world_message("[TEST] テスト所持品を保持してモードを終了しました。")
++    world_updated.emit()
++    return true
++
++
++func _debug_test_baseline_cargo_qty(pid: String) -> int:
++    if _debug_test_inventory_snapshot.is_empty():
++        return 0
++    var baseline: Dictionary = _debug_test_inventory_snapshot.get("cargo", {}) as Dictionary
++    return max(0, int(baseline.get(pid, 0)))
++
++
++func debug_set_player_cargo(pid: String, target_qty: int, capacity_exempt: bool = true) -> bool:
++    if not OS.is_debug_build() or not products.has(pid):
++        return false
++    if not debug_test_inventory_begin():
++        return false
++
++    target_qty = clampi(target_qty, 0, 999999)
++    var cargo: Dictionary = player.get("cargo", {}) as Dictionary
++    if target_qty > 0:
++        cargo[pid] = target_qty
++    else:
++        cargo.erase(pid)
++    player["cargo"] = cargo
++
++    if _is_perishable(pid):
++        if target_qty > 0:
++            cargo_lots[pid] = [{"qty": target_qty, "age": 0}]
++        else:
++            cargo_lots.erase(pid)
++    elif cargo_lots.has(pid):
++        cargo_lots.erase(pid)
++
++    if capacity_exempt and target_qty > 0:
++        var baseline_qty: int = _debug_test_baseline_cargo_qty(pid)
++        var exempt_qty: int = max(0, target_qty - baseline_qty)
++        if exempt_qty > 0:
++            _debug_capacity_exempt_cargo[pid] = exempt_qty
++        else:
++            _debug_capacity_exempt_cargo.erase(pid)
++    else:
++        _debug_capacity_exempt_cargo.erase(pid)
++
++    _world_message("[TEST] %s の所持数を %d に設定しました%s。" % [
++        get_product_name(pid),
++        target_qty,
++        "（積載除外）" if capacity_exempt else "",
++    ])
++    world_updated.emit()
++    return true
++
++
++func debug_adjust_player_cargo(pid: String, delta: int, capacity_exempt: bool = true) -> bool:
++    if not OS.is_debug_build() or not products.has(pid):
++        return false
++    var cargo: Dictionary = player.get("cargo", {}) as Dictionary
++    var current_qty: int = int(cargo.get(pid, 0))
++    return debug_set_player_cargo(pid, current_qty + delta, capacity_exempt)
++
++
++func debug_set_player_key_item(id: String, target_qty: int) -> bool:
++    if not OS.is_debug_build() or not key_items.has(id):
++        return false
++    if not debug_test_inventory_begin():
++        return false
++
++    var def: Dictionary = key_items.get(id, {}) as Dictionary
++    var max_stack: int = int(def.get("max_stack", 99))
++    if int(def.get("unique", 0)) == 1 or max_stack <= 0:
++        max_stack = 1
++    target_qty = clampi(target_qty, 0, max_stack)
++
++    var inv: Dictionary = player.get("key_items", {}) as Dictionary
++    if target_qty > 0:
++        inv[id] = target_qty
++    else:
++        inv.erase(id)
++    player["key_items"] = inv
++
++    var item_name: String = String(def.get("name_ja", def.get("name", id)))
++    _world_message("[TEST] %s の所持数を %d に設定しました（自動効果なし）。" % [item_name, target_qty])
++    world_updated.emit()
++    return true
++
++
++func debug_fill_active_contract_cargo() -> int:
++    if not OS.is_debug_build():
++        return 0
++    if not debug_test_inventory_begin():
++        return 0
++
++    var added_total: int = 0
++    var required_by_product: Dictionary = {}
++    var active_contracts: Array = contracts_get_active(false)
++    for contract_any in active_contracts:
++        if not (contract_any is Dictionary):
++            continue
++        var contract: Dictionary = contract_any as Dictionary
++        if String(contract.get("kind", "")) != "deliver":
++            continue
++        var pid: String = String(contract.get("pid", ""))
++        var need: int = max(0, int(contract.get("qty", 0)))
++        if pid == "" or need <= 0 or not products.has(pid):
++            continue
++
++        required_by_product[pid] = int(required_by_product.get(pid, 0)) + need
++
++    for pid_any in required_by_product.keys():
++        var pid: String = String(pid_any)
++        var need: int = max(0, int(required_by_product.get(pid, 0)))
++        var have: int = int((player.get("cargo", {}) as Dictionary).get(pid, 0))
++        if _is_perishable(pid):
++            have = _lots_total(pid)
++        var missing: int = max(0, need - have)
++        if missing <= 0:
++            continue
++        if debug_adjust_player_cargo(pid, missing, true):
++            added_total += missing
++
++    _world_message("[TEST] 受注中契約の不足品を合計 %d 個補充しました。" % added_total)
++    world_updated.emit()
++    return added_total
++
++
++func debug_get_test_inventory_status() -> Dictionary:
++    var exempt_units: int = 0
++    var cargo: Dictionary = player.get("cargo", {}) as Dictionary
++    for pid_any in _debug_capacity_exempt_cargo.keys():
++        var pid: String = String(pid_any)
++        var qty: int = max(0, int(_debug_capacity_exempt_cargo.get(pid, 0)))
++        qty = min(qty, max(0, int(cargo.get(pid, 0))))
++        var size: int = 1
++        if products.has(pid):
++            size = max(1, int(products[pid].get("size", 1)))
++        exempt_units += qty * size
++    return {
++        "active": debug_test_inventory_active,
++        "used_raw": _cargo_used_raw(player),
++        "used_effective": _cargo_used(player),
++        "capacity": int(player.get("cap", 0)),
++        "exempt_units": exempt_units,
++    }
++
+ # -------- logging --------
+ func _log_day_summary() -> void:
+     var s: String = "Day %d | Prices:" % day
+@@ -4963,6 +5193,7 @@ func _make_save_payload() -> Dictionary:
+     var state: Dictionary = {
+         "day": day,
+         "player": player,
++        "cargo_lots": cargo_lots,
+         "price": price,
+         "stock": stock,
+         "_shortage_ema": _shortage_ema,
+@@ -5014,6 +5245,11 @@ func _make_save_payload() -> Dictionary:
+ 
+ 
+ func _apply_save_payload(data: Dictionary) -> void:
++    # テスト所持品の積載除外と復元スナップショットはランタイム専用。
++    debug_test_inventory_active = false
++    _debug_capacity_exempt_cargo.clear()
++    _debug_test_inventory_snapshot.clear()
++
+     var state: Dictionary = (data.get("state", {}) as Dictionary)
+     day = int(state.get("day", day))
+ 
+@@ -5023,6 +5259,18 @@ func _apply_save_payload(data: Dictionary) -> void:
+     # ★ここでセーブ互換や不足キーを補完
+     _ensure_player_integrity()
+ 
++    cargo_lots.clear()
++    if state.has("cargo_lots") and state.get("cargo_lots") is Dictionary:
++        cargo_lots = (state.get("cargo_lots") as Dictionary).duplicate(true)
++    else:
++        # 旧セーブ互換: 生鮮品の所持数から年齢0のロットを再構成する。
++        var loaded_cargo := player.get("cargo", {}) as Dictionary
++        for pid_any in loaded_cargo.keys():
++            var pid: String = String(pid_any)
++            var qty: int = max(0, int(loaded_cargo.get(pid_any, 0)))
++            if qty > 0 and _is_perishable(pid):
++                cargo_lots[pid] = [{"qty": qty, "age": 0}]
++
+     if state.has("price"):
+         price = state.get("price") as Dictionary
+     if state.has("stock"):
+@@ -6848,7 +7096,7 @@ func _apply_key_item_effect(def: Dictionary, qty_added: int) -> void:
+     var value_f: float = float(_num(def.get("effect_value", 0.0)))
+ 
+     match effect_type:
+-        "cap_add":
++        "cap_add", "cargo_cap_add":
+             var delta: int = int(round(value_f)) * max(1, qty_added)
+             if delta != 0:
+                 player["cap"] = int(player.get("cap", 0)) + delta
+@@ -6891,4 +7139,3 @@ func remove_key_item(id: String, count: int = 1) -> void:
+     else:
+         inv.erase(id)
+     player["key_items"] = inv
+-
+diff --git a/ui/debug_inventory_window.gd b/ui/debug_inventory_window.gd
+new file mode 100644
+index 0000000..8b1a72b
+--- /dev/null
++++ b/ui/debug_inventory_window.gd
+@@ -0,0 +1,417 @@
++extends Window
++class_name DebugInventoryWindow
++
++var world: World = null
++
++var _status_label: Label
++var _selected_label: Label
++var _product_select: OptionButton
++var _product_qty: SpinBox
++var _capacity_exempt: CheckBox
++var _key_select: OptionButton
++var _key_qty: SpinBox
++var _restore_dialog: ConfirmationDialog
++
++
++func _ready() -> void:
++    name = "DebugInventoryWindow"
++    title = "TEST INV — テスト所持品"
++    min_size = Vector2i(700, 480)
++    size = Vector2i(760, 560)
++    initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
++    exclusive = false
++    transient = false
++    always_on_top = true
++
++    _build_ui()
++    _populate_options()
++    _connect_world()
++    _refresh_status()
++
++    close_requested.connect(_on_close_requested)
++
++
++func set_world(value: World) -> void:
++    world = value
++    if is_node_ready():
++        _populate_options()
++        _connect_world()
++        _refresh_status()
++
++
++func refresh_from_world() -> void:
++    _populate_options()
++    _refresh_status()
++
++
++func _build_ui() -> void:
++    var margin := MarginContainer.new()
++    margin.set_anchors_preset(Control.PRESET_FULL_RECT)
++    margin.add_theme_constant_override("margin_left", 16)
++    margin.add_theme_constant_override("margin_right", 16)
++    margin.add_theme_constant_override("margin_top", 14)
++    margin.add_theme_constant_override("margin_bottom", 14)
++    add_child(margin)
++
++    var root := VBoxContainer.new()
++    root.add_theme_constant_override("separation", 10)
++    margin.add_child(root)
++
++    var warning := Label.new()
++    warning.text = "DEBUGビルド専用。付与品は実所持品として扱われ、セーブにも含まれます。通常プレイへ戻る前に『開始時へ復元』してください。"
++    warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
++    warning.modulate = Color(1.0, 0.82, 0.45, 1.0)
++    root.add_child(warning)
++
++    _status_label = Label.new()
++    _status_label.text = "TEST MODE: OFF"
++    root.add_child(_status_label)
++
++    _selected_label = Label.new()
++    _selected_label.text = "選択状態: -"
++    _selected_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
++    root.add_child(_selected_label)
++
++    root.add_child(HSeparator.new())
++
++    var goods_title := Label.new()
++    goods_title.text = "商品"
++    goods_title.add_theme_font_size_override("font_size", 16)
++    root.add_child(goods_title)
++
++    var goods_row := HBoxContainer.new()
++    goods_row.add_theme_constant_override("separation", 8)
++    root.add_child(goods_row)
++
++    _product_select = OptionButton.new()
++    _product_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
++    goods_row.add_child(_product_select)
++
++    var product_qty_label := Label.new()
++    product_qty_label.text = "数量"
++    goods_row.add_child(product_qty_label)
++
++    _product_qty = SpinBox.new()
++    _product_qty.min_value = 0
++    _product_qty.max_value = 999999
++    _product_qty.step = 1
++    _product_qty.value = 1
++    _product_qty.custom_minimum_size = Vector2(110, 0)
++    goods_row.add_child(_product_qty)
++
++    var goods_buttons := HBoxContainer.new()
++    goods_buttons.add_theme_constant_override("separation", 8)
++    root.add_child(goods_buttons)
++
++    _capacity_exempt = CheckBox.new()
++    _capacity_exempt.text = "テスト追加分を積載量から除外"
++    _capacity_exempt.button_pressed = true
++    _capacity_exempt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
++    goods_buttons.add_child(_capacity_exempt)
++
++    var add_product_btn := Button.new()
++    add_product_btn.text = "+数量"
++    goods_buttons.add_child(add_product_btn)
++
++    var set_product_btn := Button.new()
++    set_product_btn.text = "指定数にする"
++    goods_buttons.add_child(set_product_btn)
++
++    var clear_product_btn := Button.new()
++    clear_product_btn.text = "0にする"
++    goods_buttons.add_child(clear_product_btn)
++
++    root.add_child(HSeparator.new())
++
++    var key_title := Label.new()
++    key_title.text = "大切なもの（所持状態のみ／自動効果なし）"
++    key_title.add_theme_font_size_override("font_size", 16)
++    root.add_child(key_title)
++
++    var key_row := HBoxContainer.new()
++    key_row.add_theme_constant_override("separation", 8)
++    root.add_child(key_row)
++
++    _key_select = OptionButton.new()
++    _key_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
++    key_row.add_child(_key_select)
++
++    var key_qty_label := Label.new()
++    key_qty_label.text = "数量"
++    key_row.add_child(key_qty_label)
++
++    _key_qty = SpinBox.new()
++    _key_qty.min_value = 0
++    _key_qty.max_value = 99
++    _key_qty.step = 1
++    _key_qty.value = 1
++    _key_qty.custom_minimum_size = Vector2(110, 0)
++    key_row.add_child(_key_qty)
++
++    var set_key_btn := Button.new()
++    set_key_btn.text = "指定数にする"
++    key_row.add_child(set_key_btn)
++
++    var clear_key_btn := Button.new()
++    clear_key_btn.text = "0にする"
++    key_row.add_child(clear_key_btn)
++
++    root.add_child(HSeparator.new())
++
++    var contract_btn := Button.new()
++    contract_btn.text = "受注中契約の不足品を補充（積載除外）"
++    root.add_child(contract_btn)
++
++    var bottom := HBoxContainer.new()
++    bottom.add_theme_constant_override("separation", 8)
++    root.add_child(bottom)
++
++    var restore_btn := Button.new()
++    restore_btn.text = "開始時へ復元"
++    bottom.add_child(restore_btn)
++
++    var keep_btn := Button.new()
++    keep_btn.text = "所持品を保持して終了"
++    bottom.add_child(keep_btn)
++
++    var spacer := Control.new()
++    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
++    bottom.add_child(spacer)
++
++    var close_btn := Button.new()
++    close_btn.text = "閉じる"
++    bottom.add_child(close_btn)
++
++    _restore_dialog = ConfirmationDialog.new()
++    _restore_dialog.title = "テスト所持品の復元"
++    _restore_dialog.dialog_text = "テスト開始時の所持品・大切なもの・積載上限へ戻します。よろしいですか？"
++    _restore_dialog.exclusive = true
++    _restore_dialog.transient = true
++    add_child(_restore_dialog)
++
++    _product_select.item_selected.connect(_on_product_selected)
++    _key_select.item_selected.connect(_on_key_selected)
++    add_product_btn.pressed.connect(_on_add_product)
++    set_product_btn.pressed.connect(_on_set_product)
++    clear_product_btn.pressed.connect(_on_clear_product)
++    set_key_btn.pressed.connect(_on_set_key_item)
++    clear_key_btn.pressed.connect(_on_clear_key_item)
++    contract_btn.pressed.connect(_on_fill_contracts)
++    restore_btn.pressed.connect(_on_restore_requested)
++    keep_btn.pressed.connect(_on_keep_and_end)
++    close_btn.pressed.connect(_on_close_requested)
++    _restore_dialog.confirmed.connect(_on_restore_confirmed)
++
++
++func _connect_world() -> void:
++    if world == null:
++        return
++    var cb := Callable(self, "_refresh_status")
++    if not world.world_updated.is_connected(cb):
++        world.world_updated.connect(cb)
++
++
++func _populate_options() -> void:
++    if _product_select == null or _key_select == null:
++        return
++
++    var previous_product := _selected_product_id()
++    var previous_key := _selected_key_id()
++
++    _product_select.clear()
++    _key_select.clear()
++
++    if world == null:
++        return
++
++    var product_ids: Array = world.products.keys()
++    product_ids.sort()
++    for pid_any in product_ids:
++        var pid := String(pid_any)
++        var product_def := world.products.get(pid, {}) as Dictionary
++        var product_name := String(product_def.get("name", pid))
++        var idx := _product_select.get_item_count()
++        _product_select.add_item("%s (%s)" % [product_name, pid])
++        _product_select.set_item_metadata(idx, pid)
++
++    var key_ids: Array = world.key_items.keys()
++    key_ids.sort_custom(func(a: Variant, b: Variant) -> bool:
++        var da := world.key_items.get(String(a), {}) as Dictionary
++        var db := world.key_items.get(String(b), {}) as Dictionary
++        return int(da.get("sort_order", 9999)) < int(db.get("sort_order", 9999))
++    )
++    for key_any in key_ids:
++        var key_id := String(key_any)
++        var key_def := world.key_items.get(key_id, {}) as Dictionary
++        var key_name := String(key_def.get("name_ja", key_def.get("name", key_id)))
++        var key_idx := _key_select.get_item_count()
++        _key_select.add_item("%s (%s)" % [key_name, key_id])
++        _key_select.set_item_metadata(key_idx, key_id)
++
++    _restore_option_selection(_product_select, previous_product)
++    _restore_option_selection(_key_select, previous_key)
++    _update_key_quantity_limit()
++
++
++func _restore_option_selection(option: OptionButton, metadata_value: String) -> void:
++    if option.get_item_count() <= 0:
++        return
++    var selected := false
++    if metadata_value != "":
++        for i in range(option.get_item_count()):
++            if String(option.get_item_metadata(i)) == metadata_value:
++                option.select(i)
++                selected = true
++                break
++    if not selected:
++        option.select(0)
++
++
++func _selected_product_id() -> String:
++    if _product_select == null:
++        return ""
++    var idx := _product_select.get_selected()
++    if idx < 0 or idx >= _product_select.get_item_count():
++        return ""
++    return String(_product_select.get_item_metadata(idx))
++
++
++func _selected_key_id() -> String:
++    if _key_select == null:
++        return ""
++    var idx := _key_select.get_selected()
++    if idx < 0 or idx >= _key_select.get_item_count():
++        return ""
++    return String(_key_select.get_item_metadata(idx))
++
++
++func _on_product_selected(_index: int) -> void:
++    _refresh_status()
++
++
++func _on_key_selected(_index: int) -> void:
++    _update_key_quantity_limit()
++    _refresh_status()
++
++
++func _update_key_quantity_limit() -> void:
++    if world == null or _key_qty == null:
++        return
++    var key_id := _selected_key_id()
++    var key_def := world.key_items.get(key_id, {}) as Dictionary
++    var max_stack := int(key_def.get("max_stack", 99))
++    if int(key_def.get("unique", 0)) == 1 or max_stack <= 0:
++        max_stack = 1
++    _key_qty.max_value = float(max_stack)
++    if _key_qty.value > _key_qty.max_value:
++        _key_qty.value = _key_qty.max_value
++
++
++func _refresh_status() -> void:
++    if _status_label == null or _selected_label == null:
++        return
++    if world == null:
++        _status_label.text = "World未接続"
++        _selected_label.text = "選択状態: -"
++        return
++
++    var status: Dictionary = {}
++    if world.has_method("debug_get_test_inventory_status"):
++        status = world.debug_get_test_inventory_status()
++
++    var active := bool(status.get("active", false))
++    var mode_text := "OFF"
++    if active:
++        mode_text = "ON"
++    _status_label.text = "TEST MODE: %s  積載: %d/%d（実量 %d、除外 %d）" % [
++        mode_text,
++        int(status.get("used_effective", 0)),
++        int(status.get("capacity", 0)),
++        int(status.get("used_raw", 0)),
++        int(status.get("exempt_units", 0)),
++    ]
++
++    var pid := _selected_product_id()
++    var key_id := _selected_key_id()
++    var cargo := world.player.get("cargo", {}) as Dictionary
++    var key_inventory := world.player.get("key_items", {}) as Dictionary
++    _selected_label.text = "選択中の商品: %d個 / 大切なもの: %d個" % [
++        int(cargo.get(pid, 0)),
++        int(key_inventory.get(key_id, 0)),
++    ]
++
++
++func _on_add_product() -> void:
++    if world == null:
++        return
++    var pid := _selected_product_id()
++    var qty := int(round(_product_qty.value))
++    if pid == "" or qty <= 0:
++        return
++    world.debug_adjust_player_cargo(pid, qty, _capacity_exempt.button_pressed)
++
++
++func _on_set_product() -> void:
++    if world == null:
++        return
++    var pid := _selected_product_id()
++    var qty := int(round(_product_qty.value))
++    if pid == "":
++        return
++    world.debug_set_player_cargo(pid, qty, _capacity_exempt.button_pressed)
++
++
++func _on_clear_product() -> void:
++    if world == null:
++        return
++    var pid := _selected_product_id()
++    if pid == "":
++        return
++    world.debug_set_player_cargo(pid, 0, false)
++
++
++func _on_set_key_item() -> void:
++    if world == null:
++        return
++    var key_id := _selected_key_id()
++    var qty := int(round(_key_qty.value))
++    if key_id == "":
++        return
++    world.debug_set_player_key_item(key_id, qty)
++
++
++func _on_clear_key_item() -> void:
++    if world == null:
++        return
++    var key_id := _selected_key_id()
++    if key_id == "":
++        return
++    world.debug_set_player_key_item(key_id, 0)
++
++
++func _on_fill_contracts() -> void:
++    if world == null:
++        return
++    world.debug_fill_active_contract_cargo()
++
++
++func _on_restore_requested() -> void:
++    if world == null or not bool(world.get("debug_test_inventory_active")):
++        return
++    _restore_dialog.popup_centered()
++
++
++func _on_restore_confirmed() -> void:
++    if world == null:
++        return
++    world.debug_test_inventory_restore()
++
++
++func _on_keep_and_end() -> void:
++    if world == null:
++        return
++    world.debug_test_inventory_end_keep()
++
++
++func _on_close_requested() -> void:
++    hide()
+diff --git a/ui/debug_panel.gd b/ui/debug_panel.gd
+index 1893f1d..dfd161d 100644
+--- a/ui/debug_panel.gd
++++ b/ui/debug_panel.gd
+@@ -29,6 +29,7 @@ var _rt_supply_product: RichTextLabel
+ var _rt_price_reason: RichTextLabel
+ var _cb_reason_day_end: CheckButton
+ var _cb_reason_detail: CheckButton
++var _test_inventory_window: Window
+ 
+ func _ready() -> void:
+     _setup_anchor()
+@@ -46,11 +47,20 @@ func _ready() -> void:
+     _update_stats()
+     if world and not world.world_updated.is_connected(Callable(self, "_refresh_from_world")):
+         world.world_updated.connect(_refresh_from_world)
++    if not visibility_changed.is_connected(Callable(self, "_on_debug_panel_visibility_changed")):
++        visibility_changed.connect(_on_debug_panel_visibility_changed)
+ 
+ func _refresh_from_world() -> void:
+     _populate_options()
+     _update_stats()
+ 
++
++func _on_debug_panel_visibility_changed() -> void:
++    if visible:
++        return
++    if is_instance_valid(_test_inventory_window):
++        _test_inventory_window.hide()
++
+ func _setup_anchor() -> void:
+     name = "DebugPanel"
+     # 親が Window ならフルレクト、HUD直下なら右上固定
+@@ -89,6 +99,13 @@ func _build_ui() -> void:
+     title.add_theme_font_size_override("font_size", 14)
+     vb.add_child(title)
+ 
++    if OS.is_debug_build():
++        var test_inventory_btn := Button.new()
++        test_inventory_btn.text = "TEST INV — テスト所持品"
++        test_inventory_btn.tooltip_text = "積載上限に影響しないテスト商品と、大切なものを設定します。"
++        vb.add_child(test_inventory_btn)
++        test_inventory_btn.pressed.connect(_open_test_inventory_window)
++
+     var sel := HBoxContainer.new()
+     sel.add_theme_constant_override("separation", 8)
+     vb.add_child(sel)
+@@ -254,6 +271,25 @@ func _mk_label(t: String, size: int, minw: int) -> Label:
+     l.add_theme_font_size_override("font_size", size)
+     return l
+ 
++
++func _open_test_inventory_window() -> void:
++    if not OS.is_debug_build() or world == null:
++        return
++
++    if not is_instance_valid(_test_inventory_window):
++        var TestInventoryScript: Script = preload("res://ui/debug_inventory_window.gd")
++        _test_inventory_window = TestInventoryScript.new() as Window
++        if not is_instance_valid(_test_inventory_window):
++            return
++        _test_inventory_window.name = "DebugInventoryWindow"
++        _test_inventory_window.call("set_world", world)
++        add_child(_test_inventory_window)
++    else:
++        _test_inventory_window.call("set_world", world)
++
++    _test_inventory_window.call("refresh_from_world")
++    _test_inventory_window.popup_centered()
++
+ func _mk_value_label(minw: int = 120, align_right: bool = true) -> Label:
+     var l := Label.new()
+     l.text = "-"
+@@ -865,4 +901,3 @@ func _format_top_counts(counts: Dictionary, names: Dictionary, limit: int = 5, i
+         var count: int = int(counts.get(id, 0))
+         lines.append("[b]%s[/b] (%s): %d" % [name, id, count])
+     return "\n".join(lines)
+-
+diff --git a/ui/inventory_window.gd b/ui/inventory_window.gd
+index 2207a0f..2f5a29e 100644
+--- a/ui/inventory_window.gd
++++ b/ui/inventory_window.gd
+@@ -301,6 +301,13 @@ func _rebuild() -> void:
+     var used := _capacity_used()
+     var cash := float(world.player.get("cash", 0.0))
+     info_label.text = "Capacity: %d / %d   Cash: %.1f" % [used, cap, cash]
++    if world.has_method("debug_get_test_inventory_status"):
++        var test_status: Dictionary = world.debug_get_test_inventory_status()
++        if bool(test_status.get("active", false)):
++            info_label.text += "   [TEST 実量:%d / 除外:%d]" % [
++                int(test_status.get("used_raw", used)),
++                int(test_status.get("exempt_units", 0)),
++            ]
+ 
+     # 一覧描画クリア
+     for n in rows_box.get_children():
+@@ -359,6 +366,9 @@ func _rebuild() -> void:
+         totals_label.text = "大切なもの: %d種 / %d個" % [total_kinds, total_count]
+ 
+ func _capacity_used() -> int:
++    if world != null and world.has_method("_cargo_used"):
++        return int(world._cargo_used(world.player))
++
+     var total := 0
+     var cargo := world.player.get("cargo", {}) as Dictionary
+     for pid in cargo.keys():
+@@ -399,4 +409,3 @@ func _on_goods_mode_pressed() -> void:
+ func _on_key_mode_pressed() -> void:
+     _view_mode = ViewMode.KEY_ITEMS
+     _rebuild()
+-
