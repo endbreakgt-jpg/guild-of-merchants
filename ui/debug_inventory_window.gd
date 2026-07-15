@@ -5,10 +5,10 @@ var world: World = null
 
 var _status_label: Label
 var _selected_label: Label
-var _product_select: OptionButton
+var _product_select: ItemList
 var _product_qty: SpinBox
 var _capacity_exempt: CheckBox
-var _key_select: OptionButton
+var _key_select: ItemList
 var _key_qty: SpinBox
 var _restore_dialog: ConfirmationDialog
 
@@ -16,15 +16,15 @@ var _restore_dialog: ConfirmationDialog
 func _ready() -> void:
     name = "DebugInventoryWindow"
     title = "TEST INV — テスト所持品"
-    min_size = Vector2i(700, 480)
-    size = Vector2i(760, 560)
+    min_size = Vector2i(780, 560)
+    size = Vector2i(920, 650)
     initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
     exclusive = false
     transient = false
     always_on_top = true
 
     _build_ui()
-    _populate_options()
+    _populate_lists()
     _connect_world()
     _refresh_status()
 
@@ -34,13 +34,13 @@ func _ready() -> void:
 func set_world(value: World) -> void:
     world = value
     if is_node_ready():
-        _populate_options()
+        _populate_lists()
         _connect_world()
         _refresh_status()
 
 
 func refresh_from_world() -> void:
-    _populate_options()
+    _populate_lists()
     _refresh_status()
 
 
@@ -74,18 +74,34 @@ func _build_ui() -> void:
 
     root.add_child(HSeparator.new())
 
+    var inventory_columns := HBoxContainer.new()
+    inventory_columns.add_theme_constant_override("separation", 14)
+    inventory_columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    root.add_child(inventory_columns)
+
+    var goods_column := VBoxContainer.new()
+    goods_column.add_theme_constant_override("separation", 8)
+    goods_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    goods_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    inventory_columns.add_child(goods_column)
+
     var goods_title := Label.new()
-    goods_title.text = "商品"
+    goods_title.text = "商品（スクロールして選択）"
     goods_title.add_theme_font_size_override("font_size", 16)
-    root.add_child(goods_title)
+    goods_column.add_child(goods_title)
+
+    _product_select = ItemList.new()
+    _product_select.select_mode = ItemList.SELECT_SINGLE
+    _product_select.max_columns = 1
+    _product_select.focus_mode = Control.FOCUS_ALL
+    _product_select.custom_minimum_size = Vector2(0, 230)
+    _product_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _product_select.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    goods_column.add_child(_product_select)
 
     var goods_row := HBoxContainer.new()
     goods_row.add_theme_constant_override("separation", 8)
-    root.add_child(goods_row)
-
-    _product_select = OptionButton.new()
-    _product_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    goods_row.add_child(_product_select)
+    goods_column.add_child(goods_row)
 
     var product_qty_label := Label.new()
     product_qty_label.text = "数量"
@@ -99,15 +115,14 @@ func _build_ui() -> void:
     _product_qty.custom_minimum_size = Vector2(110, 0)
     goods_row.add_child(_product_qty)
 
-    var goods_buttons := HBoxContainer.new()
-    goods_buttons.add_theme_constant_override("separation", 8)
-    root.add_child(goods_buttons)
-
     _capacity_exempt = CheckBox.new()
     _capacity_exempt.text = "テスト追加分を積載量から除外"
     _capacity_exempt.button_pressed = true
-    _capacity_exempt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    goods_buttons.add_child(_capacity_exempt)
+    goods_column.add_child(_capacity_exempt)
+
+    var goods_buttons := HBoxContainer.new()
+    goods_buttons.add_theme_constant_override("separation", 8)
+    goods_column.add_child(goods_buttons)
 
     var add_product_btn := Button.new()
     add_product_btn.text = "+数量"
@@ -121,20 +136,29 @@ func _build_ui() -> void:
     clear_product_btn.text = "0にする"
     goods_buttons.add_child(clear_product_btn)
 
-    root.add_child(HSeparator.new())
+    var key_column := VBoxContainer.new()
+    key_column.add_theme_constant_override("separation", 8)
+    key_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    key_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    inventory_columns.add_child(key_column)
 
     var key_title := Label.new()
-    key_title.text = "大切なもの（所持状態のみ／自動効果なし）"
+    key_title.text = "大切なもの（スクロールして選択）"
     key_title.add_theme_font_size_override("font_size", 16)
-    root.add_child(key_title)
+    key_column.add_child(key_title)
+
+    _key_select = ItemList.new()
+    _key_select.select_mode = ItemList.SELECT_SINGLE
+    _key_select.max_columns = 1
+    _key_select.focus_mode = Control.FOCUS_ALL
+    _key_select.custom_minimum_size = Vector2(0, 230)
+    _key_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _key_select.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    key_column.add_child(_key_select)
 
     var key_row := HBoxContainer.new()
     key_row.add_theme_constant_override("separation", 8)
-    root.add_child(key_row)
-
-    _key_select = OptionButton.new()
-    _key_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    key_row.add_child(_key_select)
+    key_column.add_child(key_row)
 
     var key_qty_label := Label.new()
     key_qty_label.text = "数量"
@@ -148,13 +172,22 @@ func _build_ui() -> void:
     _key_qty.custom_minimum_size = Vector2(110, 0)
     key_row.add_child(_key_qty)
 
+    var key_note := Label.new()
+    key_note.text = "所持状態のみ変更／自動効果なし"
+    key_note.modulate = Color(0.78, 0.80, 0.85, 1.0)
+    key_column.add_child(key_note)
+
+    var key_buttons := HBoxContainer.new()
+    key_buttons.add_theme_constant_override("separation", 8)
+    key_column.add_child(key_buttons)
+
     var set_key_btn := Button.new()
     set_key_btn.text = "指定数にする"
-    key_row.add_child(set_key_btn)
+    key_buttons.add_child(set_key_btn)
 
     var clear_key_btn := Button.new()
     clear_key_btn.text = "0にする"
-    key_row.add_child(clear_key_btn)
+    key_buttons.add_child(clear_key_btn)
 
     root.add_child(HSeparator.new())
 
@@ -211,7 +244,7 @@ func _connect_world() -> void:
         world.world_updated.connect(cb)
 
 
-func _populate_options() -> void:
+func _populate_lists() -> void:
     if _product_select == null or _key_select == null:
         return
 
@@ -248,29 +281,31 @@ func _populate_options() -> void:
         _key_select.add_item("%s (%s)" % [key_name, key_id])
         _key_select.set_item_metadata(key_idx, key_id)
 
-    _restore_option_selection(_product_select, previous_product)
-    _restore_option_selection(_key_select, previous_key)
+    _restore_list_selection(_product_select, previous_product)
+    _restore_list_selection(_key_select, previous_key)
     _update_key_quantity_limit()
 
 
-func _restore_option_selection(option: OptionButton, metadata_value: String) -> void:
-    if option.get_item_count() <= 0:
+func _restore_list_selection(item_list: ItemList, metadata_value: String) -> void:
+    if item_list.get_item_count() <= 0:
         return
-    var selected := false
+    var selected_index: int = 0
     if metadata_value != "":
-        for i in range(option.get_item_count()):
-            if String(option.get_item_metadata(i)) == metadata_value:
-                option.select(i)
-                selected = true
+        for i in range(item_list.get_item_count()):
+            if String(item_list.get_item_metadata(i)) == metadata_value:
+                selected_index = i
                 break
-    if not selected:
-        option.select(0)
+    item_list.select(selected_index)
+    item_list.call_deferred("ensure_current_is_visible")
 
 
 func _selected_product_id() -> String:
     if _product_select == null:
         return ""
-    var idx := _product_select.get_selected()
+    var selected_indices: PackedInt32Array = _product_select.get_selected_items()
+    if selected_indices.is_empty():
+        return ""
+    var idx: int = int(selected_indices[0])
     if idx < 0 or idx >= _product_select.get_item_count():
         return ""
     return String(_product_select.get_item_metadata(idx))
@@ -279,7 +314,10 @@ func _selected_product_id() -> String:
 func _selected_key_id() -> String:
     if _key_select == null:
         return ""
-    var idx := _key_select.get_selected()
+    var selected_indices: PackedInt32Array = _key_select.get_selected_items()
+    if selected_indices.is_empty():
+        return ""
+    var idx: int = int(selected_indices[0])
     if idx < 0 or idx >= _key_select.get_item_count():
         return ""
     return String(_key_select.get_item_metadata(idx))
