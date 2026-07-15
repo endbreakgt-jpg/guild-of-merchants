@@ -248,7 +248,7 @@ var supply_rules: Dictionary = {
 
 
 var shortage_alpha: float = 0.3              # 不足EMAの係数 (0..1)
-var event_log_max: int = 50                  # イベントログ最大件数（HUDで表示するなら）
+var event_log_max: int = 200                 # 行動共有用に直近200件を保持
 var _shortage_ema: Dictionary = {}           # city_id -> pid -> EMA(shortage)
 var event_log: Array[String] = []            # 直近イベントログ
 var _events_daily: Array[Dictionary] = []    # 日時イベントテーブル
@@ -1824,7 +1824,6 @@ func _apply_travel_outcome(chosen: Dictionary) -> void:
         player["cargo"] = cargo
     var msg := String(chosen.get("flavor_ja", ""))
     if msg != "":
-        push_event(msg)
         _world_message(msg)
 func _roll_daily_event() -> void:
     # use_event_dice=OFF のときは日次イベントを発生させない
@@ -3654,6 +3653,7 @@ func _world_message(txt: String) -> void:
     if has_method("humanize_ids"):
         txt = humanize_ids(txt)
     _log(txt)
+    push_event(txt)
 
     # UI側で「システムメッセージ」として扱えるよう mode を system に統一
     supply_event.emit("", "", 0, "system", txt)
@@ -3668,7 +3668,22 @@ func _log_supply_daily_count() -> void:
     _log("SupplyCount: Day %d -> %d events (Month %s total %d)" % [day, supply_count_today, key, int(supply_count_by_month.get(key, 0))])
 
 func push_event(m: String) -> void:
-    event_log.append(m)
+    var message := m.strip_edges()
+    if message == "":
+        return
+    if has_method("humanize_ids"):
+        message = humanize_ids(message)
+
+    var turn_now := int(turn) + 1
+    var turn_max: int = max(1, int(turns_per_day))
+    var entry := "[%s / Day %d / T%d/%d] %s" % [
+        format_date(),
+        int(day),
+        turn_now,
+        turn_max,
+        message,
+    ]
+    event_log.append(entry)
     if event_log.size() > event_log_max:
         event_log.pop_front()
 
@@ -5014,6 +5029,16 @@ func _apply_save_payload(data: Dictionary) -> void:
         stock = state.get("stock") as Dictionary
     if state.has("_shortage_ema"):
         _shortage_ema = state.get("_shortage_ema") as Dictionary
+
+    event_log.clear()
+    var saved_event_log: Array = state.get("event_log", []) as Array
+    for saved_entry_any in saved_event_log:
+        var saved_entry := String(saved_entry_any).strip_edges()
+        if saved_entry != "":
+            event_log.append(saved_entry)
+    while event_log.size() > event_log_max:
+        event_log.pop_front()
+
     var legacy_weather_sev: int = -1
     if state.has("_weather_severity_today"):
         legacy_weather_sev = int(state.get("_weather_severity_today", -1))
@@ -6533,6 +6558,57 @@ func _is_active_stock_record(rec: Dictionary) -> bool:
     if float(rec.get("cons", 0.0)) != 0.0:
         return true
     return false
+
+
+func build_action_log_text() -> String:
+    var lines: Array[String] = []
+    var city_id := String(player.get("city", ""))
+    var location := get_city_name(city_id)
+    if bool(player.get("enroute", false)):
+        var dest_id := String(player.get("dest", ""))
+        location += " → " + get_city_name(dest_id)
+
+    lines.append("Guild of Merchants 行動ログ")
+    lines.append("出力日時: %s" % Time.get_datetime_string_from_system())
+    lines.append("ゲーム内日時: %s / Day %d / T%d/%d" % [
+        format_date(),
+        int(day),
+        int(turn) + 1,
+        max(1, int(turns_per_day)),
+    ])
+    lines.append("現在地: %s" % location)
+    lines.append("所持金: %.1f" % float(player.get("cash", 0.0)))
+    lines.append("積載量: %d/%d" % [_cargo_used(player), int(player.get("cap", 0))])
+    lines.append("総合信用: %.1f" % float(rep_global))
+    lines.append("記録件数: %d/%d" % [event_log.size(), event_log_max])
+    lines.append("")
+    lines.append("--- 古い順 ---")
+
+    if event_log.is_empty():
+        lines.append("（記録はまだありません）")
+    else:
+        for entry in event_log:
+            lines.append(String(entry))
+
+    return "\n".join(lines) + "\n"
+
+
+func export_action_log_txt(tag: String = "action_log") -> String:
+    var dir_path := "user://exports"
+    if not _ensure_user_dir(dir_path):
+        return ""
+
+    var ts := _safe_filename_component(Time.get_datetime_string_from_system().replace("T", "_"))
+    var fname := "%s_day%04d_%s.txt" % [tag, int(day), ts]
+    var path := dir_path + "/" + fname
+
+    var f := FileAccess.open(path, FileAccess.WRITE)
+    if f == null:
+        return ""
+
+    f.store_string(build_action_log_text())
+    f.flush()
+    return _globalize_user_path(path)
 
 
 func build_economy_snapshot_csv(include_inactive: bool = false) -> String:

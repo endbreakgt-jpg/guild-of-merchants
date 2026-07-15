@@ -27,6 +27,7 @@ var wait_until_btn: Button = null
 var wait_target_spin: SpinBox = null
 var _auto_wait_timer: Timer = null
 var _auto_wait_active: bool = false
+var _auto_wait_start_day: int = -1
 var _auto_wait_target_day: int = 0
 var _auto_wait_total_days: int = 0
 var _auto_wait_elapsed_days: int = 0
@@ -401,10 +402,15 @@ func _create_export_button() -> void:
 
 func _on_export_btn_pressed() -> void:
     if world == null:
-        OS.alert("World is not ready.", "Economy Export")
+        OS.alert("World is not ready.", "Export")
         return
 
     var paths: Array[String] = []
+
+    if world.has_method("export_action_log_txt"):
+        var p_log: String = String(world.call("export_action_log_txt", "action_log"))
+        if p_log != "":
+            paths.append(p_log)
 
     if world.has_method("export_economy_report_txt"):
         var p_report: String = String(world.call("export_economy_report_txt", "eco_report", 6))
@@ -417,12 +423,12 @@ func _on_export_btn_pressed() -> void:
             paths.append(p_csv)
 
     if paths.is_empty():
-        OS.alert("Export methods are not available on World.", "Economy Export")
+        OS.alert("Export methods are not available on World.", "Export")
         return
 
     var msg := "Exported:\n" + "\n".join(paths)
     DisplayServer.clipboard_set(msg)
-    OS.alert(msg, "Economy Export")
+    OS.alert(msg, "Export")
 
 func _create_supply_label() -> void:
     if not is_instance_valid(topbar):
@@ -920,21 +926,23 @@ func _on_debug_btn_pressed() -> void:
 func _toggle_debug() -> void:
     _spawn_debug_if_needed()
 
-    _debug_user_open = not _debug_user_open
-
     if debug_embed:
-        if is_instance_valid(debug_panel):
-            debug_panel.visible = _debug_user_open
-            if debug_panel.visible:
-                if debug_panel.has_method("move_to_front"):
-                    debug_panel.move_to_front()
-                elif debug_panel.has_method("raise"):
-                    debug_panel.raise()
+        if not is_instance_valid(debug_panel):
+            return
+        _debug_user_open = not debug_panel.visible
+        debug_panel.visible = _debug_user_open
+        if debug_panel.visible:
+            if debug_panel.has_method("move_to_front"):
+                debug_panel.move_to_front()
+            elif debug_panel.has_method("raise"):
+                debug_panel.raise()
+            if debug_panel.focus_mode != Control.FOCUS_NONE:
                 debug_panel.grab_focus()
         return
 
     if is_instance_valid(debug_window):
         _ensure_debug_window_close_behavior()
+        _debug_user_open = not debug_window.visible
         if _debug_user_open:
             debug_window.popup_centered()
             debug_window.grab_focus()
@@ -1069,6 +1077,7 @@ func _spawn_debug_if_needed() -> void:
                 if world:
                     debug_panel.world = world
                 add_child(debug_panel)
+                debug_panel.visible = false
 
                 # 旧ノード名だった場合はここで正規名に統一
                 debug_panel.name = "DebugPanel"
@@ -1081,7 +1090,6 @@ func _spawn_debug_if_needed() -> void:
 
         # Layout for embedded panel (top-left, fixed size)
         if is_instance_valid(debug_panel):
-            debug_panel.visible = false  # Debugボタンで切り替え
             debug_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
             debug_panel.position = Vector2(16, 72)
 
@@ -2695,6 +2703,15 @@ func _update_wait_controls_state() -> void:
             wait_target_spin.value = float(v)
 
 
+func _record_action_log(message: String) -> void:
+    if world == null or message.strip_edges() == "":
+        return
+    if world.has_method("push_event"):
+        world.call("push_event", message)
+    if has_method("_refresh_event_log"):
+        _refresh_event_log()
+
+
 func _on_wait_one_day_pressed() -> void:
     if world == null:
         return
@@ -2725,7 +2742,9 @@ func _on_wait_one_day_pressed() -> void:
         _show_wait_alert("所持金不足", "所持金が足りず滞在費を払えないため、待機できません。\n必要: %.1f / 所持: %.1f" % [fee, cash])
         return
 
+    var start_day := int(world.day)
     world.step_one_day()
+    _record_action_log("1日待機: Day %d → Day %d" % [start_day, int(world.day)])
     _update_wait_controls_state()
 
 
@@ -2895,6 +2914,7 @@ func _start_auto_wait_until(target_day: int, label_prefix: String = "待機中")
         _update_play_button()
 
     _auto_wait_label_prefix = label_prefix
+    _auto_wait_start_day = int(world.day)
     _auto_wait_target_day = target_day
     _auto_wait_total_days = total_days
     _auto_wait_elapsed_days = 0
@@ -2962,6 +2982,15 @@ func _on_auto_wait_tick() -> void:
 func _stop_auto_wait(show_completed: bool) -> void:
     _auto_wait_active = false
 
+    var stopped_day := -1
+    if world != null:
+        stopped_day = int(world.day)
+    if _auto_wait_start_day >= 0 and stopped_day >= 0:
+        if show_completed:
+            _record_action_log("指定日まで待機: Day %d → Day %d（完了）" % [_auto_wait_start_day, stopped_day])
+        elif _auto_wait_elapsed_days > 0:
+            _record_action_log("指定日まで待機: Day %d → Day %d（中断）" % [_auto_wait_start_day, stopped_day])
+
     if _auto_wait_timer != null and is_instance_valid(_auto_wait_timer):
         _auto_wait_timer.stop()
 
@@ -2976,6 +3005,7 @@ func _stop_auto_wait(show_completed: bool) -> void:
 
     _auto_wait_dialog_in_use = false
     _auto_wait_label_prefix = "待機中"
+    _auto_wait_start_day = -1
     _auto_wait_target_day = 0
     _auto_wait_total_days = 0
     _auto_wait_elapsed_days = 0
@@ -3130,17 +3160,7 @@ func _on_dice_revealed(value: int) -> void:
 func _on_dice_done(kind: String, value: int) -> void:
     print("[Dice] done kind=%s value=%02d" % [kind, value])
     if world:
-        var log: Array = []
-        if world.event_log is Array:
-            log = world.event_log
-        log.append("Dice %s: %02d" % [kind, value])
-        var max_lines: int = 30
-        max_lines = world.event_log_max
-        while log.size() > max_lines:
-            log.remove_at(0)
-        world.event_log = log
-        if self.has_method("_refresh_event_log"):
-            _refresh_event_log()
+        _record_action_log("Dice %s: %02d" % [kind, value])
 
 
 # 置換対象: _ensure_weekly_dialog

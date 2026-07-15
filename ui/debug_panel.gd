@@ -32,6 +32,7 @@ var _cb_reason_detail: CheckButton
 
 func _ready() -> void:
     _setup_anchor()
+    _apply_opaque_panel_style()
     _build_ui()
     if world_path != NodePath(""):
         world = get_node_or_null(world_path) as World
@@ -61,9 +62,23 @@ func _setup_anchor() -> void:
         # 右上固定 (幅 420px、右端から 12px、上端から 12px の位置)
         offset_left = -420; offset_right = -12; offset_top = 12; offset_bottom = 0
 
-func _build_ui() -> void:
-    add_theme_constant_override("panel", 8)
+func _apply_opaque_panel_style() -> void:
+    var panel_style := StyleBoxFlat.new()
+    panel_style.bg_color = Color(0.075, 0.08, 0.095, 1.0)
+    panel_style.border_color = Color(0.32, 0.34, 0.40, 1.0)
+    panel_style.border_width_left = 1
+    panel_style.border_width_top = 1
+    panel_style.border_width_right = 1
+    panel_style.border_width_bottom = 1
+    panel_style.corner_radius_top_left = 6
+    panel_style.corner_radius_top_right = 6
+    panel_style.corner_radius_bottom_left = 6
+    panel_style.corner_radius_bottom_right = 6
+    add_theme_stylebox_override("panel", panel_style)
+    modulate = Color.WHITE
+    self_modulate = Color.WHITE
 
+func _build_ui() -> void:
     var vb := VBoxContainer.new()
     vb.custom_minimum_size = Vector2(360, 0)
     vb.add_theme_constant_override("separation", 6)

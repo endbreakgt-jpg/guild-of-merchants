@@ -739,8 +739,9 @@ func _on_contracts() -> void:
 func _open_contracts_window() -> void:
     if world == null:
         return
-    var old := get_node_or_null("ContractsActiveWin")
+    var old := get_node_or_null("ContractsActiveWin") as Window
     if old:
+        old.hide()
         old.queue_free()
 
     var win := Window.new()
@@ -778,7 +779,10 @@ func _open_contracts_window() -> void:
 
     var new_btn := Button.new(); new_btn.text = "新規受注"
     top.add_child(new_btn)
-    new_btn.pressed.connect(func(): _open_contracts_offers_window())
+    new_btn.pressed.connect(func():
+        win.hide()
+        call_deferred("_open_contracts_offers_window", win)
+    )
 
     var refresh_btn := Button.new(); refresh_btn.text = "更新"
     top.add_child(refresh_btn)
@@ -1022,11 +1026,12 @@ func _days_left_for(ct: Dictionary) -> int:
 
 # 既存の「契約（掲示板＝オファー一覧）」ウィンドウ
 # 置換: _open_contracts_offers_window（新規受注＝掲示板）
-func _open_contracts_offers_window() -> void:
+func _open_contracts_offers_window(return_window: Window = null) -> void:
     if world == null:
         return
-    var old := get_node_or_null("ContractsOffersWin")
+    var old := get_node_or_null("ContractsOffersWin") as Window
     if old:
+        old.hide()
         old.queue_free()
 
     var win := Window.new()
@@ -1036,7 +1041,9 @@ func _open_contracts_offers_window() -> void:
     win.exclusive = true
     win.transient = true
     add_child(win)
-    win.close_requested.connect(func(): win.hide())
+    win.close_requested.connect(func():
+        _close_contracts_offers_window(win, return_window)
+    )
 
     # ── 骨組み ───────────────────────────────
     var margin := MarginContainer.new()
@@ -1083,10 +1090,32 @@ func _open_contracts_offers_window() -> void:
     # ────────────────────────────────────────
 
     refresh_btn.pressed.connect(func(): _refresh_contracts_list(win))
-    close_btn.pressed.connect(func(): win.hide())
+    close_btn.pressed.connect(func():
+        _close_contracts_offers_window(win, return_window)
+    )
 
     _refresh_contracts_list(win)
     _size_and_center(win)
+    win.popup_centered()
+    win.grab_focus()
+
+
+func _close_contracts_offers_window(win: Window, return_window: Window = null) -> void:
+    if is_instance_valid(win):
+        win.hide()
+        if is_instance_valid(return_window):
+            var restore_callable := Callable(self, "_restore_contracts_active_window").bind(return_window)
+            win.tree_exited.connect(restore_callable, CONNECT_ONE_SHOT)
+        win.queue_free()
+        return
+    if is_instance_valid(return_window):
+        call_deferred("_restore_contracts_active_window", return_window)
+
+
+func _restore_contracts_active_window(win: Window) -> void:
+    if not is_instance_valid(win):
+        return
+    _refresh_active_contracts_list(win)
     win.popup_centered()
     win.grab_focus()
 
@@ -1166,7 +1195,11 @@ func _show_contract_detail(offer: Dictionary) -> void:
     dlg.title = "契約の詳細"
     dlg.exclusive = true
     dlg.transient = true
-    add_child(dlg)
+    var dialog_parent: Node = self
+    var offers_win := get_node_or_null("ContractsOffersWin") as Window
+    if is_instance_valid(offers_win) and offers_win.visible:
+        dialog_parent = offers_win
+    dialog_parent.add_child(dlg)
 
     # 本文は共通フォーマッタで一回だけ生成
     var text := _contract_title_text(offer) + "\n\n" + _contract_sub_text(offer)
