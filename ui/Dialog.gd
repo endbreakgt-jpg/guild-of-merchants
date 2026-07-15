@@ -325,7 +325,7 @@ func _ensure_on_top() -> void:
     if not top_level:
         top_level = true
     z_index = max(z_index, 999)
-    call_deferred("move_to_top")
+    call_deferred("move_to_front")
 
 func _apply_line_display(text: String, visible_chars: int = -1) -> void:
     if content == null:

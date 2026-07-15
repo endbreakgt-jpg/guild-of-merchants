@@ -66,8 +66,14 @@ var city_contract_btn: Button = null
 var city_inv_btn: Button = null
 var city_move_btn: Button = null
 var city_info_btn: Button = null
+var city_trust_btn: Button = null
+var city_maint_btn: Button = null
 var city_save_btn: Button = null
 var city_settings_btn: Button = null
+var city_title_label: Label = null
+var city_meta_label: Label = null
+var city_note_label: Label = null
+var city_stay_fee_label: Label = null
 
 # --- City action bar (HUD常設) ---
 var city_action_bar: HBoxContainer = null
@@ -188,10 +194,9 @@ func _ready() -> void:
     # ★ 追加: ヘッダー（積載表示＋歯車）
     _ensure_header_extras()
 
-    # ★ 追加: 都市モード中央ボタン列
+    # 都市モード本体を生成。各機能はこのシーンへ集約する。
     if show_city_mode_ui:
         _ensure_city_mode_ui()
-        _hide_legacy_city_mode_buttons()
 
     _create_play_button()
     # Debugボタンはデバッグビルドのみ表示
@@ -231,8 +236,7 @@ func _ready() -> void:
 
     _wire_buttons()
     if show_city_mode_ui:
-        _ensure_city_action_bar()
-        _wire_city_action_buttons()
+        _wire_city_mode_buttons()
     _ensure_ui_cancel()
     _ensure_debug_toggle()
     _ensure_toast_layer()
@@ -507,8 +511,12 @@ func _refresh() -> void:
     # ★ 追加: 整備度（convoy_condition）表示
     _update_convoy_label()
 
-    # ★ 追加: チュートリアルロック反映（中央ボタン列）
+    # 都市情報・操作状態を更新
+    _refresh_city_mode_summary()
     _apply_tutorial_city_button_states()
+    _update_wait_controls_state()
+
+    # 旧CityActionBarがシーンに残っている場合だけ互換更新
     _refresh_city_action_bar()
 
     _update_play_button()
@@ -681,6 +689,7 @@ func _set_map_mode_visible(visible: bool) -> void:
         _refresh_map_mode_layout()
 
     _refresh_city_action_bar()
+    _update_wait_controls_state()
 
 func _get_map_layer() -> MapLayer:
     if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
@@ -978,6 +987,7 @@ func _any_popup_visible() -> bool:
 
 func _on_popup_visibility_changed() -> void:
     _sync_pause_state()
+    _update_wait_controls_state()
 
 # ---- input (ESC / F3 で操作) ----
 func _input(event: InputEvent) -> void:
@@ -2248,6 +2258,14 @@ func _show_toast(msg: String, seconds: float = -1.0) -> void:
     )
 
 func _ensure_event_log_panel() -> void:
+    # 都市画面にメッセージ枠があれば、既存イベントログの表示先として使う。
+    if city_mode_ui != null and is_instance_valid(city_mode_ui):
+        var embedded_panel := city_mode_ui.find_child("MessagePanel", true, false) as PanelContainer
+        var embedded_text := city_mode_ui.find_child("MessageText", true, false) as RichTextLabel
+        if embedded_panel != null and embedded_text != null:
+            _event_panel = embedded_panel
+            _event_text = embedded_text
+
     if not show_event_log_panel:
         if _event_panel and is_instance_valid(_event_panel):
             _event_panel.visible = false
@@ -2256,7 +2274,8 @@ func _ensure_event_log_panel() -> void:
         _event_panel.visible = true
         _refresh_event_log()
         return
-    # 右下に固定表示（ポーズに影響しない常駐パネル）
+
+    # 旧シーン互換: メッセージ枠がない場合のみ右下へ生成する。
     var panel := PanelContainer.new()
     panel.name = "EventLogPanel"
     # 複数行に修正
@@ -2322,6 +2341,8 @@ func _refresh_event_log() -> void:
         var idx: int = lines.size() - 1 - i
         out += "• %s\n" % lines[idx]
         
+    if out == "":
+        out = "都市で行う行動を選択してください。"
     _event_text.text = out
 
 func _on_supply_event(cid: String, pid: String, qty: int, mode: String, flavor: String) -> void:
@@ -3832,16 +3853,68 @@ func _ensure_city_mode_ui() -> void:
 
 
 func _cache_city_mode_buttons() -> void:
-    if city_mode_ui == null:
+    if city_mode_ui == null or not is_instance_valid(city_mode_ui):
         return
 
-    city_trade_btn = city_mode_ui.get_node_or_null("Center/Grid/TradeBtn") as Button
-    city_contract_btn = city_mode_ui.get_node_or_null("Center/Grid/ContractBtn") as Button
-    city_inv_btn = city_mode_ui.get_node_or_null("Center/Grid/InvBtn") as Button
-    city_move_btn = city_mode_ui.get_node_or_null("Center/Grid/MoveBtn") as Button
-    city_info_btn = city_mode_ui.get_node_or_null("Center/Grid/InfoBtn") as Button
-    city_save_btn = city_mode_ui.get_node_or_null("Center/Grid/SaveBtn") as Button
-    city_settings_btn = city_mode_ui.get_node_or_null("Center/Grid/SettingsBtn") as Button
+    # レイアウト変更に強いよう、CityModeUI配下をノード名で解決する。
+    city_trade_btn = city_mode_ui.find_child("TradeBtn", true, false) as Button
+    city_contract_btn = city_mode_ui.find_child("ContractBtn", true, false) as Button
+    city_inv_btn = city_mode_ui.find_child("InvBtn", true, false) as Button
+    city_move_btn = city_mode_ui.find_child("MoveBtn", true, false) as Button
+    city_info_btn = city_mode_ui.find_child("InfoBtn", true, false) as Button
+    city_trust_btn = city_mode_ui.find_child("TrustBtn", true, false) as Button
+    city_maint_btn = city_mode_ui.find_child("MaintBtn", true, false) as Button
+    city_save_btn = city_mode_ui.find_child("SaveBtn", true, false) as Button
+    city_settings_btn = city_mode_ui.find_child("SettingsBtn", true, false) as Button
+
+    city_title_label = city_mode_ui.find_child("CityTitleLabel", true, false) as Label
+    city_meta_label = city_mode_ui.find_child("CityMetaLabel", true, false) as Label
+    city_note_label = city_mode_ui.find_child("CityNoteLabel", true, false) as Label
+    city_stay_fee_label = city_mode_ui.find_child("StayFeeLabel", true, false) as Label
+
+    wait_controls_box = city_mode_ui.find_child("WaitControls", true, false) as Control
+    wait_one_day_btn = city_mode_ui.find_child("WaitOneDayBtn", true, false) as Button
+    wait_until_btn = city_mode_ui.find_child("WaitUntilBtn", true, false) as Button
+    wait_target_spin = city_mode_ui.find_child("WaitTargetSpin", true, false) as SpinBox
+
+
+func _refresh_city_mode_summary() -> void:
+    if world == null or city_mode_ui == null:
+        return
+
+    var city_id: String = String(world.player.get("city", ""))
+    var info: Dictionary = world.cities.get(city_id, {}) as Dictionary
+    var city_name: String = String(info.get("name", city_id))
+    var province: String = String(info.get("province", ""))
+    var rank_text: String = str(info.get("CityRANK", info.get("rank", "")))
+    var note: String = String(info.get("note", "")).strip_edges()
+
+    if city_title_label:
+        city_title_label.text = city_name if city_name != "" else "現在地不明"
+
+    if city_meta_label:
+        var meta_text := province
+        if rank_text != "":
+            if meta_text != "":
+                meta_text += " / "
+            meta_text += "都市規模: %s" % rank_text
+        city_meta_label.text = meta_text if meta_text != "" else city_id
+
+    if city_note_label:
+        city_note_label.text = note if note != "" else "この都市の詳しい情報はまだ登録されていません。"
+
+    if city_stay_fee_label:
+        if world.has_method("get_stay_fee_for_current_city"):
+            var fee: float = float(world.call("get_stay_fee_for_current_city"))
+            city_stay_fee_label.text = "滞在費: %.1f G / 日" % fee
+        else:
+            city_stay_fee_label.text = "滞在費: なし"
+
+    if city_maint_btn:
+        var convoy_enabled := true
+        if world.get("convoy_condition_enabled") != null:
+            convoy_enabled = bool(world.get("convoy_condition_enabled"))
+        city_maint_btn.visible = convoy_enabled
 
 
 func _wire_city_mode_buttons() -> void:
@@ -3857,10 +3930,18 @@ func _wire_city_mode_buttons() -> void:
         city_move_btn.pressed.connect(_on_city_move)
     if city_info_btn and not city_info_btn.pressed.is_connected(Callable(self, "_on_city_info")):
         city_info_btn.pressed.connect(_on_city_info)
+    if city_trust_btn and not city_trust_btn.pressed.is_connected(Callable(self, "_on_city_action_trust_btn")):
+        city_trust_btn.pressed.connect(_on_city_action_trust_btn)
+    if city_maint_btn and not city_maint_btn.pressed.is_connected(Callable(self, "_on_city_action_maint_btn")):
+        city_maint_btn.pressed.connect(_on_city_action_maint_btn)
     if city_save_btn and not city_save_btn.pressed.is_connected(Callable(self, "_on_city_save")):
         city_save_btn.pressed.connect(_on_city_save)
     if city_settings_btn and not city_settings_btn.pressed.is_connected(Callable(self, "_on_city_settings")):
         city_settings_btn.pressed.connect(_on_city_settings)
+    if wait_one_day_btn and not wait_one_day_btn.pressed.is_connected(Callable(self, "_on_wait_one_day_pressed")):
+        wait_one_day_btn.pressed.connect(_on_wait_one_day_pressed)
+    if wait_until_btn and not wait_until_btn.pressed.is_connected(Callable(self, "_on_wait_until_pressed")):
+        wait_until_btn.pressed.connect(_on_wait_until_pressed)
 
 
 func _apply_tutorial_city_button_states() -> void:
@@ -3869,16 +3950,21 @@ func _apply_tutorial_city_button_states() -> void:
     if not world.has_method("is_tutorial_locked"):
         return
 
+    var moving := bool(world.player.get("enroute", false))
     if city_trade_btn:
-        city_trade_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_TRADE)
+        city_trade_btn.disabled = moving or world.is_tutorial_locked(World.TUT_LOCK_TRADE)
     if city_contract_btn:
-        city_contract_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_CONTRACT)
+        city_contract_btn.disabled = moving or world.is_tutorial_locked(World.TUT_LOCK_CONTRACT)
     if city_inv_btn:
-        city_inv_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_INV)
+        city_inv_btn.disabled = moving or world.is_tutorial_locked(World.TUT_LOCK_INV)
     if city_move_btn:
-        city_move_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_MAP)
+        city_move_btn.disabled = moving or world.is_tutorial_locked(World.TUT_LOCK_MAP)
     if city_info_btn:
-        city_info_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_INFO)
+        city_info_btn.disabled = moving or world.is_tutorial_locked(World.TUT_LOCK_INFO)
+    if city_trust_btn:
+        city_trust_btn.disabled = moving or world.is_tutorial_locked(World.TUT_LOCK_TRUST)
+    if city_maint_btn:
+        city_maint_btn.disabled = moving or world.is_tutorial_locked(World.TUT_LOCK_STEP)
 
     if city_action_trade_btn:
         city_action_trade_btn.disabled = world.is_tutorial_locked(World.TUT_LOCK_TRADE)

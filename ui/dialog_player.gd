@@ -63,7 +63,7 @@ func _prepare_dialog_ui() -> void:
             ctrl.top_level = true
         if ctrl.z_index < 1024:
             ctrl.z_index = 1024
-        ctrl.call_deferred("raise")
+        ctrl.call_deferred("move_to_front")
     # 進行に合わせたポートレート切替
     if not dialog_ui.advanced.is_connected(Callable(self, "_on_dialog_advanced")):
         dialog_ui.advanced.connect(_on_dialog_advanced)

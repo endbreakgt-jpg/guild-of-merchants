@@ -1,4 +1,40 @@
-[gd_scene format=3 uid="uid://b6xknvmlmsmja"]
+[gd_scene load_steps=4 format=3 uid="uid://b6xknvmlmsmja"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_header"]
+bg_color = Color(0.12, 0.13, 0.15, 0.96)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.34, 0.36, 0.4, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.105, 0.11, 0.125, 0.94)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.27, 0.29, 0.33, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_message"]
+bg_color = Color(0.075, 0.08, 0.095, 0.98)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.38, 0.4, 0.45, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
 
 [node name="CityModeUI" type="Control"]
 layout_mode = 3
@@ -10,57 +46,292 @@ grow_vertical = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="Center" type="CenterContainer" parent="."]
+[node name="MainMargin" type="MarginContainer" parent="."]
 layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
 
-[node name="Grid" type="GridContainer" parent="Center"]
+[node name="Layout" type="VBoxContainer" parent="MainMargin"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+theme_override_constants/separation = 14
+
+[node name="HeaderPanel" type="PanelContainer" parent="MainMargin/Layout"]
+custom_minimum_size = Vector2(0, 92)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_header")
+
+[node name="HeaderMargin" type="MarginContainer" parent="MainMargin/Layout/HeaderPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 12
+
+[node name="HeaderRow" type="HBoxContainer" parent="MainMargin/Layout/HeaderPanel/HeaderMargin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="HeaderText" type="VBoxContainer" parent="MainMargin/Layout/HeaderPanel/HeaderMargin/HeaderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 3
+
+[node name="ScreenTitle" type="Label" parent="MainMargin/Layout/HeaderPanel/HeaderMargin/HeaderRow/HeaderText"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "都市での行動"
+
+[node name="ScreenDescription" type="Label" parent="MainMargin/Layout/HeaderPanel/HeaderMargin/HeaderRow/HeaderText"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.78, 0.79, 0.82, 1)
+text = "市場や契約を確認し、次の旅に向けた準備を行います。"
+
+[node name="ScreenHint" type="Label" parent="MainMargin/Layout/HeaderPanel/HeaderMargin/HeaderRow"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.66, 0.68, 0.72, 1)
+text = "行動を選択してください"
+horizontal_alignment = 2
+
+[node name="Content" type="HBoxContainer" parent="MainMargin/Layout"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 14
+
+[node name="ActionsPanel" type="PanelContainer" parent="MainMargin/Layout/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 2.2
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="ActionsMargin" type="MarginContainer" parent="MainMargin/Layout/Content/ActionsPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 14
+
+[node name="Actions" type="VBoxContainer" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ActionsTitle" type="Label" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "行動メニュー"
+
+[node name="ActionsSeparator" type="HSeparator" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions"]
+layout_mode = 2
+
+[node name="GridCenter" type="CenterContainer" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Grid" type="GridContainer" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
 columns = 3
 
-[node name="TradeBtn" type="Button" parent="Center/Grid"]
-custom_minimum_size = Vector2(240, 56)
+[node name="TradeBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "取引（市場）"
 
-[node name="ContractBtn" type="Button" parent="Center/Grid"]
-custom_minimum_size = Vector2(240, 56)
+[node name="ContractBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "依頼（契約）"
 
-[node name="InvBtn" type="Button" parent="Center/Grid"]
-custom_minimum_size = Vector2(240, 56)
+[node name="InvBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "荷物（持ち物）"
 
-[node name="MoveBtn" type="Button" parent="Center/Grid"]
-custom_minimum_size = Vector2(240, 56)
+[node name="MoveBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "移動（MAP）"
 
-[node name="InfoBtn" type="Button" parent="Center/Grid"]
-custom_minimum_size = Vector2(240, 56)
+[node name="InfoBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "情報（週報など）"
 
-[node name="SaveBtn" type="Button" parent="Center/Grid"]
-custom_minimum_size = Vector2(240, 56)
+[node name="TrustBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "信用・評判"
+
+[node name="MaintBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "隊商の整備"
+
+[node name="SaveBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
 layout_mode = 2
 size_flags_horizontal = 3
 text = "セーブ／ロード"
 
-[node name="SettingsBtn" type="Button" parent="Center/Grid"]
-custom_minimum_size = Vector2(240, 56)
+[node name="SettingsBtn" type="Button" parent="MainMargin/Layout/Content/ActionsPanel/ActionsMargin/Actions/GridCenter/Grid"]
+custom_minimum_size = Vector2(210, 64)
 layout_mode = 2
 size_flags_horizontal = 3
-text = "設定"
+text = "メニュー／設定"
+
+[node name="SidePanel" type="PanelContainer" parent="MainMargin/Layout/Content"]
+custom_minimum_size = Vector2(350, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="SideMargin" type="MarginContainer" parent="MainMargin/Layout/Content/SidePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 14
+
+[node name="Side" type="VBoxContainer" parent="MainMargin/Layout/Content/SidePanel/SideMargin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="CityInfoTitle" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "現在の都市"
+
+[node name="CityInfoSeparator" type="HSeparator" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+
+[node name="CityTitleLabel" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
+text = "都市名"
+
+[node name="CityMetaLabel" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.74, 0.78, 1)
+text = "所属地域 / 都市規模"
+
+[node name="CityNoteLabel" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+size_flags_vertical = 3
+text = "都市の概要がここに表示されます。"
+autowrap_mode = 2
+
+[node name="StayFeeLabel" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+text = "滞在費: -"
+
+[node name="WaitSeparator" type="HSeparator" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+
+[node name="WaitTitle" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 17
+text = "待機"
+
+[node name="WaitDescription" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.72, 0.76, 1)
+text = "都市に滞在して日付を進めます。"
+autowrap_mode = 2
+
+[node name="WaitControls" type="VBoxContainer" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="WaitOneDayBtn" type="Button" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side/WaitControls"]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+text = "1日待機する"
+
+[node name="WaitTargetRow" type="HBoxContainer" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side/WaitControls"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="WaitTargetLabel" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side/WaitControls/WaitTargetRow"]
+layout_mode = 2
+text = "目標Day"
+
+[node name="WaitTargetSpin" type="SpinBox" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side/WaitControls/WaitTargetRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 7.0
+value = 1.0
+rounded = true
+
+[node name="WaitUntilBtn" type="Button" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side/WaitControls"]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+text = "指定日まで待機"
+
+[node name="WaitHintLabel" type="Label" parent="MainMargin/Layout/Content/SidePanel/SideMargin/Side/WaitControls"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.58, 0.6, 0.64, 1)
+theme_override_font_sizes/font_size = 12
+text = "最長7日。滞在費と日次イベントが発生します。"
+autowrap_mode = 2
+
+[node name="MessagePanel" type="PanelContainer" parent="MainMargin/Layout"]
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_message")
+
+[node name="MessageMargin" type="MarginContainer" parent="MainMargin/Layout/MessagePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 10
+
+[node name="Message" type="VBoxContainer" parent="MainMargin/Layout/MessagePanel/MessageMargin"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="MessageHeader" type="HBoxContainer" parent="MainMargin/Layout/MessagePanel/MessageMargin/Message"]
+layout_mode = 2
+
+[node name="MessageTitle" type="Label" parent="MainMargin/Layout/MessagePanel/MessageMargin/Message/MessageHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 17
+text = "メッセージ"
+
+[node name="MessageHint" type="Label" parent="MainMargin/Layout/MessagePanel/MessageMargin/Message/MessageHeader"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.58, 0.6, 0.64, 1)
+theme_override_font_sizes/font_size = 12
+text = "最新6件"
+
+[node name="MessageSeparator" type="HSeparator" parent="MainMargin/Layout/MessagePanel/MessageMargin/Message"]
+layout_mode = 2
+
+[node name="MessageText" type="RichTextLabel" parent="MainMargin/Layout/MessagePanel/MessageMargin/Message"]
+layout_mode = 2
+size_flags_vertical = 3
+focus_mode = 2
+bbcode_enabled = true
+text = "都市で行う行動を選択してください。"
+selection_enabled = true
