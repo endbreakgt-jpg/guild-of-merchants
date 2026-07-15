@@ -1,0 +1,456 @@
+diff --git a/scripts/world.gd b/scripts/world.gd
+index 7292d2e..ce554d7 100644
+--- a/scripts/world.gd
++++ b/scripts/world.gd
+@@ -248,7 +248,7 @@ var supply_rules: Dictionary = {
+ 
+ 
+ var shortage_alpha: float = 0.3              # 不足EMAの係数 (0..1)
+-var event_log_max: int = 50                  # イベントログ最大件数（HUDで表示するなら）
++var event_log_max: int = 200                 # 行動共有用に直近200件を保持
+ var _shortage_ema: Dictionary = {}           # city_id -> pid -> EMA(shortage)
+ var event_log: Array[String] = []            # 直近イベントログ
+ var _events_daily: Array[Dictionary] = []    # 日時イベントテーブル
+@@ -1824,7 +1824,6 @@ func _apply_travel_outcome(chosen: Dictionary) -> void:
+         player["cargo"] = cargo
+     var msg := String(chosen.get("flavor_ja", ""))
+     if msg != "":
+-        push_event(msg)
+         _world_message(msg)
+ func _roll_daily_event() -> void:
+     # use_event_dice=OFF のときは日次イベントを発生させない
+@@ -3654,6 +3653,7 @@ func _world_message(txt: String) -> void:
+     if has_method("humanize_ids"):
+         txt = humanize_ids(txt)
+     _log(txt)
++    push_event(txt)
+ 
+     # UI側で「システムメッセージ」として扱えるよう mode を system に統一
+     supply_event.emit("", "", 0, "system", txt)
+@@ -3668,7 +3668,22 @@ func _log_supply_daily_count() -> void:
+     _log("SupplyCount: Day %d -> %d events (Month %s total %d)" % [day, supply_count_today, key, int(supply_count_by_month.get(key, 0))])
+ 
+ func push_event(m: String) -> void:
+-    event_log.append(m)
++    var message := m.strip_edges()
++    if message == "":
++        return
++    if has_method("humanize_ids"):
++        message = humanize_ids(message)
++
++    var turn_now := int(turn) + 1
++    var turn_max := max(1, int(turns_per_day))
++    var entry := "[%s / Day %d / T%d/%d] %s" % [
++        format_date(),
++        int(day),
++        turn_now,
++        turn_max,
++        message,
++    ]
++    event_log.append(entry)
+     if event_log.size() > event_log_max:
+         event_log.pop_front()
+ 
+@@ -5014,6 +5029,16 @@ func _apply_save_payload(data: Dictionary) -> void:
+         stock = state.get("stock") as Dictionary
+     if state.has("_shortage_ema"):
+         _shortage_ema = state.get("_shortage_ema") as Dictionary
++
++    event_log.clear()
++    var saved_event_log: Array = state.get("event_log", []) as Array
++    for saved_entry_any in saved_event_log:
++        var saved_entry := String(saved_entry_any).strip_edges()
++        if saved_entry != "":
++            event_log.append(saved_entry)
++    while event_log.size() > event_log_max:
++        event_log.pop_front()
++
+     var legacy_weather_sev: int = -1
+     if state.has("_weather_severity_today"):
+         legacy_weather_sev = int(state.get("_weather_severity_today", -1))
+@@ -6535,6 +6560,57 @@ func _is_active_stock_record(rec: Dictionary) -> bool:
+     return false
+ 
+ 
++func build_action_log_text() -> String:
++    var lines: Array[String] = []
++    var city_id := String(player.get("city", ""))
++    var location := get_city_name(city_id)
++    if bool(player.get("enroute", false)):
++        var dest_id := String(player.get("dest", ""))
++        location += " → " + get_city_name(dest_id)
++
++    lines.append("Guild of Merchants 行動ログ")
++    lines.append("出力日時: %s" % Time.get_datetime_string_from_system())
++    lines.append("ゲーム内日時: %s / Day %d / T%d/%d" % [
++        format_date(),
++        int(day),
++        int(turn) + 1,
++        max(1, int(turns_per_day)),
++    ])
++    lines.append("現在地: %s" % location)
++    lines.append("所持金: %.1f" % float(player.get("cash", 0.0)))
++    lines.append("積載量: %d/%d" % [_cargo_used(player), int(player.get("cap", 0))])
++    lines.append("総合信用: %.1f" % float(rep_global))
++    lines.append("記録件数: %d/%d" % [event_log.size(), event_log_max])
++    lines.append("")
++    lines.append("--- 古い順 ---")
++
++    if event_log.is_empty():
++        lines.append("（記録はまだありません）")
++    else:
++        for entry in event_log:
++            lines.append(String(entry))
++
++    return "\n".join(lines) + "\n"
++
++
++func export_action_log_txt(tag: String = "action_log") -> String:
++    var dir_path := "user://exports"
++    if not _ensure_user_dir(dir_path):
++        return ""
++
++    var ts := _safe_filename_component(Time.get_datetime_string_from_system().replace("T", "_"))
++    var fname := "%s_day%04d_%s.txt" % [tag, int(day), ts]
++    var path := dir_path + "/" + fname
++
++    var f := FileAccess.open(path, FileAccess.WRITE)
++    if f == null:
++        return ""
++
++    f.store_string(build_action_log_text())
++    f.flush()
++    return _globalize_user_path(path)
++
++
+ func build_economy_snapshot_csv(include_inactive: bool = false) -> String:
+     var lines: Array[String] = []
+     lines.append("day,city_id,city_name,province,rank,is_port,port_level,product_id,product_name,category,qty,target,target_eff,delta,ratio,prod_per_day,cons_per_day,mid_price,bid_price,ask_price")
+@@ -6815,4 +6891,3 @@ func remove_key_item(id: String, count: int = 1) -> void:
+     else:
+         inv.erase(id)
+     player["key_items"] = inv
+-
+diff --git a/ui/debug_panel.gd b/ui/debug_panel.gd
+index 3b46a66..2700a0f 100644
+--- a/ui/debug_panel.gd
++++ b/ui/debug_panel.gd
+@@ -32,6 +32,7 @@ var _cb_reason_detail: CheckButton
+ 
+ func _ready() -> void:
+     _setup_anchor()
++    _apply_opaque_panel_style()
+     _build_ui()
+     if world_path != NodePath(""):
+         world = get_node_or_null(world_path) as World
+@@ -61,9 +62,23 @@ func _setup_anchor() -> void:
+         # 右上固定 (幅 420px、右端から 12px、上端から 12px の位置)
+         offset_left = -420; offset_right = -12; offset_top = 12; offset_bottom = 0
+ 
+-func _build_ui() -> void:
+-    add_theme_constant_override("panel", 8)
++func _apply_opaque_panel_style() -> void:
++    var panel_style := StyleBoxFlat.new()
++    panel_style.bg_color = Color(0.075, 0.08, 0.095, 1.0)
++    panel_style.border_color = Color(0.32, 0.34, 0.40, 1.0)
++    panel_style.border_width_left = 1
++    panel_style.border_width_top = 1
++    panel_style.border_width_right = 1
++    panel_style.border_width_bottom = 1
++    panel_style.corner_radius_top_left = 6
++    panel_style.corner_radius_top_right = 6
++    panel_style.corner_radius_bottom_left = 6
++    panel_style.corner_radius_bottom_right = 6
++    add_theme_stylebox_override("panel", panel_style)
++    modulate = Color.WHITE
++    self_modulate = Color.WHITE
+ 
++func _build_ui() -> void:
+     var vb := VBoxContainer.new()
+     vb.custom_minimum_size = Vector2(360, 0)
+     vb.add_theme_constant_override("separation", 6)
+@@ -850,4 +865,3 @@ func _format_top_counts(counts: Dictionary, names: Dictionary, limit: int = 5, i
+         var count: int = int(counts.get(id, 0))
+         lines.append("[b]%s[/b] (%s): %d" % [name, id, count])
+     return "\n".join(lines)
+-
+diff --git a/ui/game_hud.gd b/ui/game_hud.gd
+index 5e06ee9..64bd7f3 100644
+--- a/ui/game_hud.gd
++++ b/ui/game_hud.gd
+@@ -27,6 +27,7 @@ var wait_until_btn: Button = null
+ var wait_target_spin: SpinBox = null
+ var _auto_wait_timer: Timer = null
+ var _auto_wait_active: bool = false
++var _auto_wait_start_day: int = -1
+ var _auto_wait_target_day: int = 0
+ var _auto_wait_total_days: int = 0
+ var _auto_wait_elapsed_days: int = 0
+@@ -401,11 +402,16 @@ func _create_export_button() -> void:
+ 
+ func _on_export_btn_pressed() -> void:
+     if world == null:
+-        OS.alert("World is not ready.", "Economy Export")
++        OS.alert("World is not ready.", "Export")
+         return
+ 
+     var paths: Array[String] = []
+ 
++    if world.has_method("export_action_log_txt"):
++        var p_log: String = String(world.call("export_action_log_txt", "action_log"))
++        if p_log != "":
++            paths.append(p_log)
++
+     if world.has_method("export_economy_report_txt"):
+         var p_report: String = String(world.call("export_economy_report_txt", "eco_report", 6))
+         if p_report != "":
+@@ -417,12 +423,12 @@ func _on_export_btn_pressed() -> void:
+             paths.append(p_csv)
+ 
+     if paths.is_empty():
+-        OS.alert("Export methods are not available on World.", "Economy Export")
++        OS.alert("Export methods are not available on World.", "Export")
+         return
+ 
+     var msg := "Exported:\n" + "\n".join(paths)
+     DisplayServer.clipboard_set(msg)
+-    OS.alert(msg, "Economy Export")
++    OS.alert(msg, "Export")
+ 
+ func _create_supply_label() -> void:
+     if not is_instance_valid(topbar):
+@@ -920,21 +926,22 @@ func _on_debug_btn_pressed() -> void:
+ func _toggle_debug() -> void:
+     _spawn_debug_if_needed()
+ 
+-    _debug_user_open = not _debug_user_open
+-
+     if debug_embed:
+-        if is_instance_valid(debug_panel):
+-            debug_panel.visible = _debug_user_open
+-            if debug_panel.visible:
+-                if debug_panel.has_method("move_to_front"):
+-                    debug_panel.move_to_front()
+-                elif debug_panel.has_method("raise"):
+-                    debug_panel.raise()
+-                debug_panel.grab_focus()
++        if not is_instance_valid(debug_panel):
++            return
++        _debug_user_open = not debug_panel.visible
++        debug_panel.visible = _debug_user_open
++        if debug_panel.visible:
++            if debug_panel.has_method("move_to_front"):
++                debug_panel.move_to_front()
++            elif debug_panel.has_method("raise"):
++                debug_panel.raise()
++            debug_panel.grab_focus()
+         return
+ 
+     if is_instance_valid(debug_window):
+         _ensure_debug_window_close_behavior()
++        _debug_user_open = not debug_window.visible
+         if _debug_user_open:
+             debug_window.popup_centered()
+             debug_window.grab_focus()
+@@ -1069,6 +1076,7 @@ func _spawn_debug_if_needed() -> void:
+                 if world:
+                     debug_panel.world = world
+                 add_child(debug_panel)
++                debug_panel.visible = false
+ 
+                 # 旧ノード名だった場合はここで正規名に統一
+                 debug_panel.name = "DebugPanel"
+@@ -1081,7 +1089,6 @@ func _spawn_debug_if_needed() -> void:
+ 
+         # Layout for embedded panel (top-left, fixed size)
+         if is_instance_valid(debug_panel):
+-            debug_panel.visible = false  # Debugボタンで切り替え
+             debug_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+             debug_panel.position = Vector2(16, 72)
+ 
+@@ -2695,6 +2702,15 @@ func _update_wait_controls_state() -> void:
+             wait_target_spin.value = float(v)
+ 
+ 
++func _record_action_log(message: String) -> void:
++    if world == null or message.strip_edges() == "":
++        return
++    if world.has_method("push_event"):
++        world.call("push_event", message)
++    if has_method("_refresh_event_log"):
++        _refresh_event_log()
++
++
+ func _on_wait_one_day_pressed() -> void:
+     if world == null:
+         return
+@@ -2725,7 +2741,9 @@ func _on_wait_one_day_pressed() -> void:
+         _show_wait_alert("所持金不足", "所持金が足りず滞在費を払えないため、待機できません。\n必要: %.1f / 所持: %.1f" % [fee, cash])
+         return
+ 
++    var start_day := int(world.day)
+     world.step_one_day()
++    _record_action_log("1日待機: Day %d → Day %d" % [start_day, int(world.day)])
+     _update_wait_controls_state()
+ 
+ 
+@@ -2895,6 +2913,7 @@ func _start_auto_wait_until(target_day: int, label_prefix: String = "待機中")
+         _update_play_button()
+ 
+     _auto_wait_label_prefix = label_prefix
++    _auto_wait_start_day = int(world.day)
+     _auto_wait_target_day = target_day
+     _auto_wait_total_days = total_days
+     _auto_wait_elapsed_days = 0
+@@ -2962,6 +2981,15 @@ func _on_auto_wait_tick() -> void:
+ func _stop_auto_wait(show_completed: bool) -> void:
+     _auto_wait_active = false
+ 
++    var stopped_day := -1
++    if world != null:
++        stopped_day = int(world.day)
++    if _auto_wait_start_day >= 0 and stopped_day >= 0:
++        if show_completed:
++            _record_action_log("指定日まで待機: Day %d → Day %d（完了）" % [_auto_wait_start_day, stopped_day])
++        elif _auto_wait_elapsed_days > 0:
++            _record_action_log("指定日まで待機: Day %d → Day %d（中断）" % [_auto_wait_start_day, stopped_day])
++
+     if _auto_wait_timer != null and is_instance_valid(_auto_wait_timer):
+         _auto_wait_timer.stop()
+ 
+@@ -2976,6 +3004,7 @@ func _stop_auto_wait(show_completed: bool) -> void:
+ 
+     _auto_wait_dialog_in_use = false
+     _auto_wait_label_prefix = "待機中"
++    _auto_wait_start_day = -1
+     _auto_wait_target_day = 0
+     _auto_wait_total_days = 0
+     _auto_wait_elapsed_days = 0
+@@ -3130,17 +3159,7 @@ func _on_dice_revealed(value: int) -> void:
+ func _on_dice_done(kind: String, value: int) -> void:
+     print("[Dice] done kind=%s value=%02d" % [kind, value])
+     if world:
+-        var log: Array = []
+-        if world.event_log is Array:
+-            log = world.event_log
+-        log.append("Dice %s: %02d" % [kind, value])
+-        var max_lines: int = 30
+-        max_lines = world.event_log_max
+-        while log.size() > max_lines:
+-            log.remove_at(0)
+-        world.event_log = log
+-        if self.has_method("_refresh_event_log"):
+-            _refresh_event_log()
++        _record_action_log("Dice %s: %02d" % [kind, value])
+ 
+ 
+ # 置換対象: _ensure_weekly_dialog
+@@ -4131,4 +4150,3 @@ func _open_save_load_window() -> void:
+ 
+     _save_load_win = win
+     _on_popup_visibility_changed()
+-
+diff --git a/ui/menu_panel.gd b/ui/menu_panel.gd
+index 4feb937..78eec3f 100644
+--- a/ui/menu_panel.gd
++++ b/ui/menu_panel.gd
+@@ -739,8 +739,9 @@ func _on_contracts() -> void:
+ func _open_contracts_window() -> void:
+     if world == null:
+         return
+-    var old := get_node_or_null("ContractsActiveWin")
++    var old := get_node_or_null("ContractsActiveWin") as Window
+     if old:
++        old.hide()
+         old.queue_free()
+ 
+     var win := Window.new()
+@@ -778,7 +779,10 @@ func _open_contracts_window() -> void:
+ 
+     var new_btn := Button.new(); new_btn.text = "新規受注"
+     top.add_child(new_btn)
+-    new_btn.pressed.connect(func(): _open_contracts_offers_window())
++    new_btn.pressed.connect(func():
++        win.hide()
++        call_deferred("_open_contracts_offers_window", win)
++    )
+ 
+     var refresh_btn := Button.new(); refresh_btn.text = "更新"
+     top.add_child(refresh_btn)
+@@ -1022,11 +1026,12 @@ func _days_left_for(ct: Dictionary) -> int:
+ 
+ # 既存の「契約（掲示板＝オファー一覧）」ウィンドウ
+ # 置換: _open_contracts_offers_window（新規受注＝掲示板）
+-func _open_contracts_offers_window() -> void:
++func _open_contracts_offers_window(return_window: Window = null) -> void:
+     if world == null:
+         return
+-    var old := get_node_or_null("ContractsOffersWin")
++    var old := get_node_or_null("ContractsOffersWin") as Window
+     if old:
++        old.hide()
+         old.queue_free()
+ 
+     var win := Window.new()
+@@ -1036,7 +1041,9 @@ func _open_contracts_offers_window() -> void:
+     win.exclusive = true
+     win.transient = true
+     add_child(win)
+-    win.close_requested.connect(func(): win.hide())
++    win.close_requested.connect(func():
++        _close_contracts_offers_window(win, return_window)
++    )
+ 
+     # ── 骨組み ───────────────────────────────
+     var margin := MarginContainer.new()
+@@ -1083,7 +1090,9 @@ func _open_contracts_offers_window() -> void:
+     # ────────────────────────────────────────
+ 
+     refresh_btn.pressed.connect(func(): _refresh_contracts_list(win))
+-    close_btn.pressed.connect(func(): win.hide())
++    close_btn.pressed.connect(func():
++        _close_contracts_offers_window(win, return_window)
++    )
+ 
+     _refresh_contracts_list(win)
+     _size_and_center(win)
+@@ -1091,6 +1100,21 @@ func _open_contracts_offers_window() -> void:
+     win.grab_focus()
+ 
+ 
++func _close_contracts_offers_window(win: Window, return_window: Window = null) -> void:
++    if is_instance_valid(win):
++        win.hide()
++    if is_instance_valid(return_window):
++        call_deferred("_restore_contracts_active_window", return_window)
++
++
++func _restore_contracts_active_window(win: Window) -> void:
++    if not is_instance_valid(win):
++        return
++    _refresh_active_contracts_list(win)
++    win.popup_centered()
++    win.grab_focus()
++
++
+ # 一覧の再構築
+ func _refresh_contracts_list(win: Window) -> void:
+     if world == null or win == null:
+@@ -1166,7 +1190,11 @@ func _show_contract_detail(offer: Dictionary) -> void:
+     dlg.title = "契約の詳細"
+     dlg.exclusive = true
+     dlg.transient = true
+-    add_child(dlg)
++    var dialog_parent: Node = self
++    var offers_win := get_node_or_null("ContractsOffersWin") as Window
++    if is_instance_valid(offers_win) and offers_win.visible:
++        dialog_parent = offers_win
++    dialog_parent.add_child(dlg)
+ 
+     # 本文は共通フォーマッタで一回だけ生成
+     var text := _contract_title_text(offer) + "\n\n" + _contract_sub_text(offer)
+@@ -1468,4 +1496,3 @@ func _rebuild_trust_list() -> void:
+         var lbl_none := Label.new()
+         lbl_none.text = "まだ訪れた地方がありません。"
+         trust_list.add_child(lbl_none)
+-
