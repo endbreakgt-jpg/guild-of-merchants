@@ -1,0 +1,36 @@
+Guild of Merchants
+契約受注排他制御・自動納品診断 実装概要
+更新日: 2026-07-15
+
+基準コミット
+------------
+cf4aa4c43a42f4fd34b0548f6eaf735e3fe79d42
+
+実装内容
+--------
+・受注成功時にルート直下の共通InfoDialogを直接開く処理を廃止
+・契約詳細の解放後、掲示板を親とする受注成功AcceptDialogを表示
+・共通InfoDialogは別の排他Menuウィンドウが表示中ならポップアップしない
+・共通InfoDialogを出せない場合はメッセージを行動ログへ退避
+・到着時の自動納品判定へDEBUG専用[AUTO納品]ログを追加
+・成功、目的地違い、商品不足、生鮮ロット不足、期限切れ、対象契約なしを区別
+・契約ID、状態、種別、到着都市、目的地、商品、所持数、ロット数、必要数、日付、期限を記録
+・通常の契約達成、報酬、信用、商品消費ロジックは変更なし
+・others/引継.txtを更新
+
+適用方法
+--------
+プロジェクトルートで次を実行します。
+
+git apply --check gom_contract_modal_auto_patch_2026-07-15.txt
+git apply gom_contract_modal_auto_patch_2026-07-15.txt
+
+検証範囲
+--------
+・git diff --check
+・基準コミットへのgit apply --check
+・パッチ適用後ファイルと作業版の一致確認
+・Godot 4.3 AcceptDialogのconfirmed / canceled信号仕様確認
+・排他親子関係と自動納品分岐の静的確認
+
+Godot実機での解析・画面操作は同梱テスト表に従って確認してください。

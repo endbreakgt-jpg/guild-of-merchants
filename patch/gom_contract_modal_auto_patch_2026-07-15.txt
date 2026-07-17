@@ -1,0 +1,255 @@
+diff --git a/others/引継.txt b/others/引継.txt
+index eb01fcb..17aeeb1 100644
+--- a/others/引継.txt
++++ b/others/引継.txt
+@@ -6,7 +6,7 @@
+ - プロジェクト: guild-of-merchants
+ - Godot 4.3 / GDScript / PC向け体験版
+ - GitHub: https://github.com/endbreakgt-jpg/guild-of-merchants
+-- 適用元コミット: 40fe0f2dd3936d33d5c540ad80e0813a96edacde（2026-07-15）
++- 適用元コミット: cf4aa4c43a42f4fd34b0548f6eaf735e3fe79d42（2026-07-15）
+ - メインシーン: res://scenes/world.tscn
+ - 基準解像度: 1920x1080
+ - 文字コード: UTF-8
+@@ -81,7 +81,8 @@ E. UI / MAP
+ - 行動ログのセーブ復元、TXT出力、EXPからの同時出力を実装済み
+ - DBGパネルの不透明化と表示切替、契約ウィンドウの排他制御を修正・検証済み
+ - TEST INV（テスト所持品モード）を実装・実画面検証済み。任意の商品・大切なもの・契約不足品を付与可能
+-- TEST INVの商品・大切なもの選択を、別ポップアップを使わない左右2列のスクロール付きItemListへ変更するパッチを作成（実画面確認待ち）
++- TEST INVの商品・大切なもの選択を、別ポップアップを使わない左右2列のスクロール付きItemListへ変更し、実画面確認済み
++- 契約受注成功時に掲示板とルート直下InfoDialogが競合する排他エラーを確認。安全な子ダイアログと自動納品診断ログの修正パッチを作成（実画面確認待ち）
+ 
+ 3) MAPフェーズの扱い
+ - 今回対象だった「都市確認から移動判断まで一周できる3状態の骨格」は完了扱い
+@@ -94,11 +95,11 @@ E. UI / MAP
+ 
+ 4) 次タスク
+ 最優先:
+-- TEST INV リストボックス化の実画面確認
+-  - 商品・大切なものリストがTEST INVより前面に表示されること
+-  - 両リストのスクロール、クリック、キーボード選択
+-  - 選択後の数量操作と選択状態表示
+-  - TEST INVの3回再利用とDBG表示切替
++- 契約受注後の排他制御と自動納品ログの実画面確認
++  - 掲示板から契約を3回受注し、排他ウィンドウエラーが出ないこと
++  - 受注成功通知を閉じた後、通常画面の全ボタンとEXPが反応すること
++  - 目的地到着時に自動納品が成立すること
++  - 不成立時に[AUTO納品]ログから理由を特定できること
+ - 契約・信用共通基盤の実画面回帰確認
+   - 通常契約の受注一覧表示
+   - 契約達成時の現金と信用加算
+@@ -157,7 +158,12 @@ MAP回帰確認:
+   - 商品・大切なものを左右2列に配置し、各リストの縦スクロールと選択ID復元を追加
+   - Godot 4.3 headlessで候補件数、単一選択、左右配置、末尾選択、選択ID復元を確認
+   - 商品・大切なもの操作、3回再利用、DBG表示切替、PopupMenu非生成を回帰確認
+-  - マウス・キーボード操作を含む実画面確認は未実施
++  - マウス・キーボード操作を含む実画面確認済み
++- 2026-07-15 契約受注成功時にルート直下InfoDialogとContractsOffersWinの排他競合を確認
++  - 契約詳細解放後、掲示板を親とする受注成功ダイアログを表示するよう変更
++  - 共通InfoDialogは別の排他Menuウィンドウ表示中にポップアップせず、行動ログへ退避
++  - 到着時の自動納品判定へ[AUTO納品]の理由・契約・商品・数量・都市・期限ログを追加
++  - Godot 4.3での実画面確認は未実施
+ 
+ 6) 実装運用メモ
+ - world.gd / game_hud.gd は1000行超のため完成ファイル全文では返さない
+@@ -173,4 +179,4 @@ MAP回帰確認:
+ 
+ 7) 一言メモ
+ - 都市画面とMAP3状態の骨格実装段階は終了
+-- TEST INVのリストボックス表示確認後、契約・信用共通基盤の回帰確認とTUT1の縦切りへ進む
++- 契約受注後の排他制御と自動納品理由ログを確認後、契約・信用共通基盤の回帰確認とTUT1の縦切りへ進む
+diff --git a/scripts/world.gd b/scripts/world.gd
+index a3c9301..ec9df91 100644
+--- a/scripts/world.gd
++++ b/scripts/world.gd
+@@ -6478,42 +6478,92 @@ func contracts_get_active(include_history: bool = false) -> Array:
+ func contracts_can_accept() -> bool:
+     return _contracts_active_count() < contracts_active_limit
+ 
++
++func _contracts_debug_auto_delivery(
++    contract: Dictionary,
++    city_id: String,
++    result: String,
++    have: int = 0,
++    lot_total: int = 0,
++    need: int = 0,
++    deadline_i: int = 0
++) -> void:
++    if not OS.is_debug_build():
++        return
++
++    var contract_id := String(contract.get("id", "-"))
++    var state := String(contract.get("state", "-"))
++    var kind := String(contract.get("kind", "-"))
++    var destination := String(contract.get("to", "-"))
++    var pid := String(contract.get("pid", "-"))
++    var message := "[AUTO納品] result=%s id=%s state=%s kind=%s arrival=%s dest=%s pid=%s have=%d lots=%d need=%d day=%d deadline=%d" % [
++        result,
++        contract_id,
++        state,
++        kind,
++        city_id,
++        destination,
++        pid,
++        have,
++        lot_total,
++        need,
++        int(day),
++        deadline_i,
++    ]
++    _log(message)
++    push_event(message)
++
++
+ func contracts_try_auto_deliver_at(city_id: String) -> void:
+     if _contracts_active.is_empty():
++        _contracts_debug_auto_delivery({}, city_id, "no_contracts")
+         return
+     var cargo: Dictionary = player.get("cargo", {}) as Dictionary
+     var changed := false
++    var active_found := false
+ 
+     for i in range(_contracts_active.size()):
+         var ct: Dictionary = _contracts_active[i]
+ 
+         if not _contracts_is_active(ct):
+             continue
+-
+-        # Deliver型のみ（将来の型追加を見越して厳格に）
+-        if String(ct.get("kind","")) != "deliver":
+-            continue
+-        if String(ct.get("to","")) != city_id:
+-            continue
++        active_found = true
+ 
+         var pid := String(ct.get("pid",""))
+         var need := int(ct.get("qty",0))
++        var have := int(cargo.get(pid, 0))
++        var lot_total := 0
++        if pid != "" and _is_perishable(pid):
++            lot_total = _lots_total(pid)
+ 
+         # 互換: deadline_day / deadline どちらでも
+         var deadline_i := int(ct.get("deadline", day))
+         if ct.has("deadline_day"):
+             deadline_i = int(ct.get("deadline_day"))
++
++        # Deliver型のみ（将来の型追加を見越して厳格に）
++        if String(ct.get("kind","")) != "deliver":
++            _contracts_debug_auto_delivery(ct, city_id, "unsupported_kind", have, lot_total, need, deadline_i)
++            continue
++        if String(ct.get("to","")) != city_id:
++            _contracts_debug_auto_delivery(ct, city_id, "destination_mismatch", have, lot_total, need, deadline_i)
++            continue
++
+         if day > deadline_i:
++            _contracts_debug_auto_delivery(ct, city_id, "expired", have, lot_total, need, deadline_i)
+             continue
+ 
+         # 在庫チェック：既存仕様（生鮮→lots、非生鮮→cargo）
+-        var have := int(cargo.get(pid, 0))
+         var ok := false
+         if _is_perishable(pid):
+-            ok = (_lots_total(pid) >= need)
++            ok = (lot_total >= need)
+         else:
+             ok = (have >= need)
+         if not ok:
++            var shortage_result := "cargo_shortage"
++            if _is_perishable(pid):
++                shortage_result = "perishable_lot_shortage"
++            _contracts_debug_auto_delivery(ct, city_id, shortage_result, have, lot_total, need, deadline_i)
+             continue
+ 
+         # 引き渡し
+@@ -6533,10 +6583,14 @@ func contracts_try_auto_deliver_at(city_id: String) -> void:
+         _world_message("契約達成: %s を %s に %d 個 納品。報酬 %.0f" % [
+             get_product_name(pid), get_city_name(city_id), need, reward
+         ])
++        _contracts_debug_auto_delivery(ct, city_id, "delivered", have, lot_total, need, deadline_i)
+         var resolved := _contracts_apply_result(i, "done")
+         if not resolved.is_empty():
+             changed = true
+ 
++    if not active_found:
++        _contracts_debug_auto_delivery({}, city_id, "no_active_contracts")
++
+     if changed:
+         player["cargo"] = cargo
+         world_updated.emit()
+diff --git a/ui/menu_panel.gd b/ui/menu_panel.gd
+index e11e7f3..f30f275 100644
+--- a/ui/menu_panel.gd
++++ b/ui/menu_panel.gd
+@@ -322,8 +322,24 @@ func _ensure_dialogs() -> void:
+ func _show_info(msg: String) -> void:
+     if dlg_info == null:
+         return
++    if _has_visible_exclusive_menu_window(dlg_info):
++        if world != null and world.has_method("_world_message"):
++            world.call("_world_message", msg)
++        return
+     dlg_info.dialog_text = msg
+     dlg_info.popup_centered()
++
++
++func _has_visible_exclusive_menu_window(excluded_window: Window = null) -> bool:
++    for child in get_children():
++        if not (child is Window):
++            continue
++        var child_window := child as Window
++        if child_window == excluded_window:
++            continue
++        if child_window.visible and child_window.exclusive:
++            return true
++    return false
+     
+ # --- 2) 置換: _connect_signals() ---
+ func _connect_signals() -> void:
+@@ -1208,14 +1224,35 @@ func _show_contract_detail(offer: Dictionary) -> void:
+     dlg.get_ok_button().text = "OK"
+     dlg.canceled.connect(func(): dlg.queue_free())
+     dlg.confirmed.connect(func():
+-        if _accept_offer(offer):
++        var accepted := _accept_offer(offer)
++        if accepted:
+             _refresh_views_after_accept()
+         dlg.queue_free()
++        if accepted:
++            call_deferred("_show_contract_accept_info", offers_win)
+     )
+ 
+     _popup_dialog_wide(dlg)  # ← 横幅を確保してから中央表示
+ 
+ 
++func _show_contract_accept_info(offers_win: Window) -> void:
++    await get_tree().process_frame
++    if not is_instance_valid(offers_win) or not offers_win.visible:
++        _show_info("契約を受注しました。")
++        return
++
++    var info := AcceptDialog.new()
++    info.name = "ContractAcceptInfo"
++    info.title = "契約"
++    info.dialog_text = "契約を受注しました。"
++    info.exclusive = true
++    info.transient = true
++    offers_win.add_child(info)
++    info.confirmed.connect(info.queue_free, CONNECT_ONE_SHOT)
++    info.canceled.connect(info.queue_free, CONNECT_ONE_SHOT)
++    info.popup_centered()
++
++
+ # 追加: 受注直後に開いている一覧を即時更新
+ func _refresh_views_after_accept() -> void:
+     var active_win := get_node_or_null("ContractsActiveWin") as Window
+@@ -1313,8 +1350,6 @@ func _accept_offer(offer: Dictionary) -> bool:
+         _show_info("契約APIが未実装のため受注できません。")
+         ok = false
+ 
+-    if ok:
+-        _show_info("契約を受注しました。")
+     return ok
+ 
+ func _stars_from_offer(offer: Dictionary) -> int:
