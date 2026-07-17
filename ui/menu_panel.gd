@@ -322,8 +322,24 @@ func _ensure_dialogs() -> void:
 func _show_info(msg: String) -> void:
     if dlg_info == null:
         return
+    if _has_visible_exclusive_menu_window(dlg_info):
+        if world != null and world.has_method("_world_message"):
+            world.call("_world_message", msg)
+        return
     dlg_info.dialog_text = msg
     dlg_info.popup_centered()
+
+
+func _has_visible_exclusive_menu_window(excluded_window: Window = null) -> bool:
+    for child in get_children():
+        if not (child is Window):
+            continue
+        var child_window := child as Window
+        if child_window == excluded_window:
+            continue
+        if child_window.visible and child_window.exclusive:
+            return true
+    return false
     
 # --- 2) 置換: _connect_signals() ---
 func _connect_signals() -> void:
@@ -1208,12 +1224,33 @@ func _show_contract_detail(offer: Dictionary) -> void:
     dlg.get_ok_button().text = "OK"
     dlg.canceled.connect(func(): dlg.queue_free())
     dlg.confirmed.connect(func():
-        if _accept_offer(offer):
+        var accepted := _accept_offer(offer)
+        if accepted:
             _refresh_views_after_accept()
         dlg.queue_free()
+        if accepted:
+            call_deferred("_show_contract_accept_info", offers_win)
     )
 
     _popup_dialog_wide(dlg)  # ← 横幅を確保してから中央表示
+
+
+func _show_contract_accept_info(offers_win: Window) -> void:
+    await get_tree().process_frame
+    if not is_instance_valid(offers_win) or not offers_win.visible:
+        _show_info("契約を受注しました。")
+        return
+
+    var info := AcceptDialog.new()
+    info.name = "ContractAcceptInfo"
+    info.title = "契約"
+    info.dialog_text = "契約を受注しました。"
+    info.exclusive = true
+    info.transient = true
+    offers_win.add_child(info)
+    info.confirmed.connect(info.queue_free, CONNECT_ONE_SHOT)
+    info.canceled.connect(info.queue_free, CONNECT_ONE_SHOT)
+    info.popup_centered()
 
 
 # 追加: 受注直後に開いている一覧を即時更新
@@ -1313,8 +1350,6 @@ func _accept_offer(offer: Dictionary) -> bool:
         _show_info("契約APIが未実装のため受注できません。")
         ok = false
 
-    if ok:
-        _show_info("契約を受注しました。")
     return ok
 
 func _stars_from_offer(offer: Dictionary) -> int:

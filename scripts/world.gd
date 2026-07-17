@@ -6478,42 +6478,92 @@ func contracts_get_active(include_history: bool = false) -> Array:
 func contracts_can_accept() -> bool:
     return _contracts_active_count() < contracts_active_limit
 
+
+func _contracts_debug_auto_delivery(
+    contract: Dictionary,
+    city_id: String,
+    result: String,
+    have: int = 0,
+    lot_total: int = 0,
+    need: int = 0,
+    deadline_i: int = 0
+) -> void:
+    if not OS.is_debug_build():
+        return
+
+    var contract_id := String(contract.get("id", "-"))
+    var state := String(contract.get("state", "-"))
+    var kind := String(contract.get("kind", "-"))
+    var destination := String(contract.get("to", "-"))
+    var pid := String(contract.get("pid", "-"))
+    var message := "[AUTO納品] result=%s id=%s state=%s kind=%s arrival=%s dest=%s pid=%s have=%d lots=%d need=%d day=%d deadline=%d" % [
+        result,
+        contract_id,
+        state,
+        kind,
+        city_id,
+        destination,
+        pid,
+        have,
+        lot_total,
+        need,
+        int(day),
+        deadline_i,
+    ]
+    _log(message)
+    push_event(message)
+
+
 func contracts_try_auto_deliver_at(city_id: String) -> void:
     if _contracts_active.is_empty():
+        _contracts_debug_auto_delivery({}, city_id, "no_contracts")
         return
     var cargo: Dictionary = player.get("cargo", {}) as Dictionary
     var changed := false
+    var active_found := false
 
     for i in range(_contracts_active.size()):
         var ct: Dictionary = _contracts_active[i]
 
         if not _contracts_is_active(ct):
             continue
-
-        # Deliver型のみ（将来の型追加を見越して厳格に）
-        if String(ct.get("kind","")) != "deliver":
-            continue
-        if String(ct.get("to","")) != city_id:
-            continue
+        active_found = true
 
         var pid := String(ct.get("pid",""))
         var need := int(ct.get("qty",0))
+        var have := int(cargo.get(pid, 0))
+        var lot_total := 0
+        if pid != "" and _is_perishable(pid):
+            lot_total = _lots_total(pid)
 
         # 互換: deadline_day / deadline どちらでも
         var deadline_i := int(ct.get("deadline", day))
         if ct.has("deadline_day"):
             deadline_i = int(ct.get("deadline_day"))
+
+        # Deliver型のみ（将来の型追加を見越して厳格に）
+        if String(ct.get("kind","")) != "deliver":
+            _contracts_debug_auto_delivery(ct, city_id, "unsupported_kind", have, lot_total, need, deadline_i)
+            continue
+        if String(ct.get("to","")) != city_id:
+            _contracts_debug_auto_delivery(ct, city_id, "destination_mismatch", have, lot_total, need, deadline_i)
+            continue
+
         if day > deadline_i:
+            _contracts_debug_auto_delivery(ct, city_id, "expired", have, lot_total, need, deadline_i)
             continue
 
         # 在庫チェック：既存仕様（生鮮→lots、非生鮮→cargo）
-        var have := int(cargo.get(pid, 0))
         var ok := false
         if _is_perishable(pid):
-            ok = (_lots_total(pid) >= need)
+            ok = (lot_total >= need)
         else:
             ok = (have >= need)
         if not ok:
+            var shortage_result := "cargo_shortage"
+            if _is_perishable(pid):
+                shortage_result = "perishable_lot_shortage"
+            _contracts_debug_auto_delivery(ct, city_id, shortage_result, have, lot_total, need, deadline_i)
             continue
 
         # 引き渡し
@@ -6533,9 +6583,13 @@ func contracts_try_auto_deliver_at(city_id: String) -> void:
         _world_message("契約達成: %s を %s に %d 個 納品。報酬 %.0f" % [
             get_product_name(pid), get_city_name(city_id), need, reward
         ])
+        _contracts_debug_auto_delivery(ct, city_id, "delivered", have, lot_total, need, deadline_i)
         var resolved := _contracts_apply_result(i, "done")
         if not resolved.is_empty():
             changed = true
+
+    if not active_found:
+        _contracts_debug_auto_delivery({}, city_id, "no_active_contracts")
 
     if changed:
         player["cargo"] = cargo
