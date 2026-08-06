@@ -1,0 +1,38 @@
+適用元コミット: f3673363702229872672c82aed92900cb50c3364
+対象: prologue_1 / DEV beat 実行時の PackedStringArray 型不一致
+
+diff --git a/others/引継.txt b/others/引継.txt
+--- a/others/引継.txt
++++ b/others/引継.txt
+@@ -59,6 +59,7 @@ D. 会話・チュートリアル
+ - dialogs.csv に TUT1〜TUT3 の台本あり
+ - story.gd にプロローグとDEVコマンドの基礎あり
+ - tutorial_progress の汎用保存APIを追加
++- DEVコマンド分解結果をPackedStringArrayで受け、Godot 4.3の型不一致を修正（実画面再確認待ち）
+ - プロローグ4場面を連続再生し、Durton→Pilton / Pilton→Durtonを物語用MAP演出で接続
+ - 物語用MAP演出は通常移動と分離し、日付・経済・契約・到着判定を変更しない
+ - 父親の許可証は実データを付与・削除せず、会話上の小道具として表示
+diff --git a/patch/gom_prologue_map_story_plan_a_complete_2026-08-06/story.gd.txt b/patch/gom_prologue_map_story_plan_a_complete_2026-08-06/story.gd.txt
+--- a/patch/gom_prologue_map_story_plan_a_complete_2026-08-06/story.gd.txt
++++ b/patch/gom_prologue_map_story_plan_a_complete_2026-08-06/story.gd.txt
+@@ -198,7 +198,7 @@ func _run_dev_command(id: String, seq: int, text: String) -> void:
+     if t == "":
+         return
+ 
+-    var parts: Array[String] = t.split(" ", false)
++    var parts: PackedStringArray = t.split(" ", false)
+     if parts.is_empty():
+         return
+ 
+diff --git a/scripts/story.gd b/scripts/story.gd
+--- a/scripts/story.gd
++++ b/scripts/story.gd
+@@ -198,7 +198,7 @@ func _run_dev_command(id: String, seq: int, text: String) -> void:
+     if t == "":
+         return
+ 
+-    var parts: Array[String] = t.split(" ", false)
++    var parts: PackedStringArray = t.split(" ", false)
+     if parts.is_empty():
+         return
+ 

@@ -1,0 +1,79 @@
+【テスト項目】story DEV split型修正
+
+対象コミットSHA:
+f3673363702229872672c82aed92900cb50c3364
+
+対象パッチ:
+gom_story_dev_split_type_hotfix_2026-08-06.patch
+
+変更対象:
+- scripts/story.gd
+- patch/gom_prologue_map_story_plan_a_complete_2026-08-06/story.gd.txt
+- others/引継.txt
+
+前提条件:
+- Godot 4.3
+- 修正計画Aが適用済み
+- プロローグを最初から開始できる状態
+
+適用方法:
+1. リポジトリ直下で次を実行する。
+   git apply --check patch/gom_story_dev_split_type_hotfix_2026-08-06.patch
+2. 問題がなければ次を実行する。
+   git apply patch/gom_story_dev_split_type_hotfix_2026-08-06.patch
+
+A. 起動・型エラー
+
+A-01 / 未実施
+操作:
+Godot 4.3でプロジェクトを開き、デバッガーに新規エラーがない状態でゲームを起動する。
+期待結果:
+story.gdを含むスクリプトが正常に読み込まれ、構文解析エラーが出ない。
+
+A-02 / 未実施
+操作:
+プロローグを開始し、prologue_1 seq 56のDEV beatまで会話を進める。
+期待結果:
+「Trying to assign a value of type PackedStringArray to a variable of type Array[String]」が発生せず、間の演出後に会話が続く。
+
+B. プロローグ主経路
+
+B-01 / 未実施
+操作:
+prologue_1を続け、DurtonからPiltonへの最初のMAP移動演出まで進める。
+期待結果:
+会話が途切れず、MAPが表示され、仮の荷馬車マーカーがルート上を移動する。
+
+B-02 / 未実施
+操作:
+Pilton側の会話を進め、PiltonからDurtonへの2回目のMAP移動演出まで進める。
+期待結果:
+同じ型エラーやDEV命令停止が発生せず、2回目のMAP移動演出が開始・完了する。
+
+B-03 / 未実施
+操作:
+父親との最後の会話まで進め、プロローグを完了する。
+期待結果:
+暗転後にPiltonへ配置され、tutorial_stateがTUT1になる。3回目のMAP移動演出は表示されない。
+
+C. 回帰
+
+C-01 / 未実施
+操作:
+プロローグ前後の日時、Day、ターン、所持金、在庫、契約、信用、整備度を比較する。
+期待結果:
+物語用MAP演出による値の変化がない。
+
+C-02 / 未実施
+操作:
+プロローグ中に表示される父親の許可証を確認し、終了後に「大切なもの」を確認する。
+期待結果:
+会話上では受け渡しが表現されるが、内部所持品には追加されない。
+
+結果共有形式:
+結果一覧: A-01 OK / A-02 NG / B-01 未実施 ...
+NG項目番号:
+直前の操作:
+実際の結果:
+Godot Debuggerエラー全文:
+スクリーンショット:

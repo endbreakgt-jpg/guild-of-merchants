@@ -1,0 +1,25 @@
+【修正概要】story DEV split型修正
+
+適用元コミット:
+f3673363702229872672c82aed92900cb50c3364
+
+原因:
+Godot 4.3のString.split()はPackedStringArrayを返すが、story.gdの_run_dev_command()ではArray[String]型の変数へ直接代入していた。
+このコードは以前から存在していたが、修正計画Aでプロローグ中のDEV beat命令が実際に通るようになったことで顕在化した。
+
+修正:
+_run_dev_command()内のpartsをPackedStringArray型へ変更する。
+
+変更前:
+    var parts: Array[String] = t.split(" ", false)
+
+変更後:
+    var parts: PackedStringArray = t.split(" ", false)
+
+影響範囲:
+- DEV命令文字列の分解処理のみ
+- beat / break / keyitem_grant / keyitem_remove / ctx_place / story_map_travel / noteの後続処理は変更しない
+- 日付、経済、契約、信用、MAP移動ロジックへの仕様変更なし
+
+補足:
+リポジトリ内の他のGDScriptについて同形式を検索し、String.split()の結果を明示型で受ける既存箇所はPackedStringArrayになっていることを確認した。

@@ -1,0 +1,58 @@
+対象ファイル: scripts/story.gd
+適用元コミット: f3673363702229872672c82aed92900cb50c3364
+置換対象: func _run_dev_command() 全体
+
+func _run_dev_command(id: String, seq: int, text: String) -> void:
+    var t: String = text.strip_edges()
+    if t == "":
+        return
+
+    var parts: PackedStringArray = t.split(" ", false)
+    if parts.is_empty():
+        return
+
+    var cmd: String = parts[0].to_lower()
+
+    match cmd:
+        # "break" は元々「間（ウィンドウだけ一瞬消す）」演出に使っていたが、
+        # チュートリアル等で "break" を別用途に回したい時に紛らわしいので
+        # 新表記を "beat" に変更。
+        # 互換のため "break" も当面受け付ける。
+        "beat":
+            _dev_break(id, seq)
+        "break":
+            _dev_break(id, seq)
+        "keyitem_grant":
+            if parts.size() < 2:
+                _dev_log("[DEV] keyitem_grant: missing key_id")
+                return
+            var key_id: String = parts[1]
+            var count: int = 1
+            if parts.size() >= 3:
+                count = int(parts[2])
+            _dev_keyitem_grant(key_id, count)
+        "keyitem_remove":
+            if parts.size() < 2:
+                _dev_log("[DEV] keyitem_remove: missing key_id")
+                return
+            var key_id2: String = parts[1]
+            var count2: int = 1
+            if parts.size() >= 3:
+                count2 = int(parts[2])
+            _dev_keyitem_remove(key_id2, count2)
+        "ctx_place":
+            if parts.size() < 2:
+                ctx_place = ""
+            else:
+                ctx_place = parts[1]
+            _dev_log("[DEV] ctx_place=%s" % ctx_place)
+        "story_map_travel":
+            if parts.size() < 3:
+                _dev_log("[DEV] story_map_travel: missing city ids")
+                return
+            _dev_story_map_travel(id, parts[1], parts[2])
+        "note":
+            # メモ。ゲーム状態は変えない。
+            _dev_log("[DEV note] %s" % t.substr(4).strip_edges())
+        _:
+            _dev_log("[DEV] unknown command: %s" % t)
