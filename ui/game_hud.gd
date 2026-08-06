@@ -1,4 +1,6 @@
 extends Control
+signal story_map_travel_finished(success: bool)
+
 @export var show_decay_dialog := true  # 劣化で手持ちが0になった時にダイアログ表示
 
 @export var world_path: NodePath
@@ -131,6 +133,9 @@ var _map_city_list_body: VBoxContainer = null
 var _map_hint_label: Label = null
 var _map_back_btn: Button = null
 var _map_close_btn: Button = null
+var _story_map_travel_active: bool = false
+var _story_map_hidden_controls: Array[Dictionary] = []
+var _story_cut_overlay: ColorRect = null
 var debug_panel: DebugPanel = null
 var debug_window: Window = null     # ← デバッグ専用サブウィンドウ
 
@@ -672,6 +677,11 @@ func _ensure_embedded_map_layer() -> void:
         if not embedded_map_layer.is_connected("background_clicked", cb_bg):
             embedded_map_layer.connect("background_clicked", cb_bg)
 
+    if embedded_map_layer.has_signal("story_travel_finished"):
+        var cb_story := Callable(self, "_on_story_map_layer_travel_finished")
+        if not embedded_map_layer.is_connected("story_travel_finished", cb_story):
+            embedded_map_layer.connect("story_travel_finished", cb_story)
+
     _refresh_map_mode_layout()
 
 func _refresh_map_mode_layout() -> void:
@@ -720,6 +730,154 @@ func _get_map_layer() -> MapLayer:
             return embedded_map_layer
     return null
 
+func play_story_map_travel(from_city_id: String, to_city_id: String, duration: float = -1.0) -> bool:
+    if _story_map_travel_active:
+        return false
+
+    # A story presentation must never advance the simulation between scenes.
+    _user_paused = true
+    if world != null and world.has_method("pause"):
+        world.pause()
+    _update_play_button()
+
+    _ensure_map_mode_root()
+    _ensure_embedded_map_layer()
+    var map := _get_map_layer()
+    if map == null or not map.has_method("begin_story_travel"):
+        return false
+
+    _story_map_travel_active = true
+    _capture_story_map_visibility()
+    _hide_story_blocking_windows()
+    _set_map_mode_visible(true)
+    _set_story_map_layout(true)
+    _refresh_map_mode_layout()
+
+    if map.has_method("end_pick"):
+        map.call("end_pick")
+    if map.has_method("set_map_input_enabled"):
+        map.call("set_map_input_enabled", false)
+
+    var started: bool = bool(map.call(
+        "begin_story_travel",
+        from_city_id,
+        to_city_id,
+        duration
+    ))
+    if not started:
+        _finish_story_map_travel(false)
+        return false
+
+    _on_popup_visibility_changed()
+    return true
+
+func is_story_map_travel_active() -> bool:
+    return _story_map_travel_active
+
+func _capture_story_map_visibility() -> void:
+    _story_map_hidden_controls.clear()
+    _remember_story_control_visibility(topbar)
+    _remember_story_control_visibility(city_mode_ui)
+    _remember_story_control_visibility(city_action_bar)
+    _remember_story_control_visibility(_event_panel)
+    _remember_story_control_visibility(_supply_label)
+    _remember_story_control_visibility(debug_panel)
+
+func _remember_story_control_visibility(node: CanvasItem) -> void:
+    if node == null or not is_instance_valid(node):
+        return
+    _story_map_hidden_controls.append({
+        "node": node,
+        "visible": node.visible,
+    })
+
+func _restore_story_map_visibility() -> void:
+    for entry in _story_map_hidden_controls:
+        var node: CanvasItem = entry.get("node") as CanvasItem
+        if node != null and is_instance_valid(node):
+            node.visible = bool(entry.get("visible", false))
+    _story_map_hidden_controls.clear()
+
+func _hide_story_blocking_windows() -> void:
+    for candidate in [menu_win, trade_win, move_window, inventory_window]:
+        if candidate == null or not is_instance_valid(candidate):
+            continue
+        if candidate.has_method("hide"):
+            candidate.call("hide")
+
+    if is_instance_valid(_move_confirm_dlg):
+        _move_confirm_dlg.hide()
+    if is_instance_valid(_escort_confirm_dlg):
+        _escort_confirm_dlg.hide()
+
+func _set_story_map_layout(enabled: bool) -> void:
+    if map_mode_root == null or not is_instance_valid(map_mode_root):
+        return
+
+    var header := map_mode_root.get_node_or_null("RootMargin/RootVBox/MapHeader") as CanvasItem
+    var left_panel := map_mode_root.get_node_or_null("RootMargin/RootVBox/MainArea/LeftPanel") as CanvasItem
+    var right_panel := map_mode_root.get_node_or_null("RootMargin/RootVBox/MainArea/RightPanel") as CanvasItem
+    var footer := map_mode_root.get_node_or_null("RootMargin/RootVBox/FooterPanel") as CanvasItem
+
+    for panel in [header, left_panel, right_panel, footer]:
+        if panel != null:
+            panel.visible = not enabled
+
+    for entry in _story_map_hidden_controls:
+        var node: CanvasItem = entry.get("node") as CanvasItem
+        if node != null and is_instance_valid(node):
+            node.visible = false
+
+func _on_story_map_layer_travel_finished() -> void:
+    if not _story_map_travel_active:
+        return
+    _finish_story_map_travel(true)
+
+func _finish_story_map_travel(success: bool) -> void:
+    var map := _get_map_layer()
+    if map != null and map.has_method("end_story_travel"):
+        map.call("end_story_travel")
+
+    _set_story_map_layout(false)
+    _set_map_mode_visible(false)
+    _restore_story_map_visibility()
+    _story_map_travel_active = false
+    _refresh()
+    _on_popup_visibility_changed()
+    story_map_travel_finished.emit(success)
+
+func play_story_cut_transition(duration: float = 0.65) -> void:
+    if _story_cut_overlay != null and is_instance_valid(_story_cut_overlay):
+        _story_cut_overlay.queue_free()
+
+    var overlay := ColorRect.new()
+    overlay.name = "StoryCutOverlay"
+    overlay.color = Color(0.0, 0.0, 0.0, 1.0)
+    overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+    overlay.top_level = true
+    overlay.z_index = 4096
+    overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+    add_child(overlay)
+    overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    overlay.move_to_front()
+    _story_cut_overlay = overlay
+
+    var tween := create_tween()
+    tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+    tween.tween_interval(0.15)
+    tween.tween_property(
+        overlay,
+        "color:a",
+        0.0,
+        max(0.1, duration)
+    ).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+    tween.tween_callback(func() -> void:
+        if overlay != null and is_instance_valid(overlay):
+            overlay.queue_free()
+        if _story_cut_overlay == overlay:
+            _story_cut_overlay = null
+    )
+
 func _get_map_overlay_root() -> Control:
     if map_mode_root != null and is_instance_valid(map_mode_root):
         return map_mode_root
@@ -741,6 +899,9 @@ func _clear_map_overlay_children() -> void:
         child.queue_free()
 
 func _close_map_mode() -> void:
+    if _story_map_travel_active:
+        return
+
     var map := _get_map_layer()
     if map != null:
         if map.has_method("end_pick"):
@@ -765,6 +926,9 @@ func _close_map_mode() -> void:
     call_deferred("_verify_ui_input_windows_after_frame", "MAP終了後")
 
 func _on_map_header_back_pressed() -> void:
+    if _story_map_travel_active:
+        return
+
     if _map_screen_state == MapScreenState.TRAVEL_PREP:
         _set_map_screen_state(MapScreenState.CITY_FOCUS)
         return
@@ -1026,6 +1190,11 @@ func _on_popup_visibility_changed() -> void:
 
 # ---- input (ESC / F3 で操作) ----
 func _input(event: InputEvent) -> void:
+    if _story_map_travel_active:
+        if event.is_action_pressed("toggle_debug") or event.is_action_pressed("ui_cancel"):
+            get_viewport().set_input_as_handled()
+        return
+
     if event.is_action_pressed("toggle_debug"):
         _on_debug_btn()
         get_viewport().set_input_as_handled()
@@ -1039,6 +1208,11 @@ func _unhandled_input(event: InputEvent) -> void:
     _handle_esc_event(event)
 
 func _handle_esc_event(event: InputEvent) -> void:
+    if _story_map_travel_active:
+        if event.is_action_pressed("ui_cancel"):
+            get_viewport().set_input_as_handled()
+        return
+
     if event.is_action_pressed("ui_cancel"):
         var closed := false
 

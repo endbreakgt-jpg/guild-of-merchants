@@ -675,6 +675,26 @@ func send_system_message(msg: String) -> void:
     # UI側から呼ぶための公開口。Story側の _world_message と同じ挙動。
     _world_message(msg)
 
+func place_player_for_story(city_id: String) -> bool:
+    # Chapter/setup transition only. This deliberately bypasses the normal
+    # arrival pipeline so contracts, fees, time, weather, and arrival signals
+    # are not processed.
+    if city_id == "" or not cities.has(city_id):
+        push_warning("World: story placement city not found: %s" % city_id)
+        return false
+
+    _ensure_player_integrity()
+    player["city"] = city_id
+    player["enroute"] = false
+    player["dest"] = ""
+    player["arrival_day"] = 0
+    player["last_arrival_day"] = -999
+    player["escort_level"] = 0
+    player["escort_offers"] = []
+    _log("[STORY] player placed at %s without arrival processing" % city_id)
+    world_updated.emit()
+    return true
+
 # --- Tutorial API ---
 func get_tutorial_state() -> String:
     return tutorial_state

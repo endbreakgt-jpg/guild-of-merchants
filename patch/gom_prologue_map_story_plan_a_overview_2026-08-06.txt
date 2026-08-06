@@ -1,0 +1,67 @@
+【文書情報】
+件名: 修正計画A プロローグ再現・物語用MAP移動
+作成日: 2026-08-06
+適用元コミット: d8122e152f5861a42e69719b11419eda02f353b7
+対象環境: Godot 4.3 / GDScript
+文字コード: UTF-8（BOMなし）
+改行: LF
+
+1. 実装範囲
+
+・既存プロローグ4場面の連続再生
+・Durton（RE0001）→Pilton（RE0003）の物語用MAP移動
+・Pilton（RE0003）→Durton（RE0001）の物語用MAP移動
+・MAP演出完了後の会話再開
+・プロローグ中の完全なMAP入力ロック
+・父親のギルド許可証を実データではなく表示上の小道具へ変更
+・プロローグ終了時の短い暗転
+・通常到着処理を使わないPiltonへの章境界配置
+・tutorial_stateをtut1へ切り替えるところまで
+
+TUT1の受付会話、仮免状の実付与、固定研修契約、操作誘導は修正計画Bの対象であり、今回は未実装。
+
+2. 仮プレイヤーアイコン
+
+外部画像を追加せず、map_layer.gdの_draw_player_marker()で小型の荷馬車をコード描画する。
+通常MAPの現在地と物語用MAP移動で同じマーカーを使用する。
+最終素材を用意した際は_draw_player_marker()をTexture2D描画へ置き換える。
+
+3. 通常ゲームデータとの分離
+
+物語用MAP移動では以下を変更しない。
+
+・日付、Day、ターン
+・所持金、積載品、大切なもの
+・市場在庫、価格、産業、物流
+・契約、信用
+・天候、道中イベント
+・整備度、護衛
+・移動費、通行税
+
+プロローグ終了時だけ、章境界処理としてplayer.cityをPiltonへ変更する。
+この処理ではplayer_arrivedを発火せず、契約納品や到着イベントも実行しない。
+
+4. 変更対象
+
+・scripts/story.gd
+・scripts/map_layer.gd
+・scripts/world.gd
+・ui/game_hud.gd
+・scenes/world.tscn
+・data/dialogs.csv
+・others/引継.txt
+
+5. 適用方法
+
+リポジトリルートで次を実行する。
+
+git apply --check patch/gom_prologue_map_story_plan_a_2026-08-06.patch
+git apply patch/gom_prologue_map_story_plan_a_2026-08-06.patch
+
+6. 検証状況
+
+・git diff --check: OK
+・dialogs.csvの列数確認: OK
+・基準コミットへのgit apply --check: OK
+・パッチ適用後のgit diff --checkと完成ファイル一致確認: OK
+・Godot 4.3での構文解析・実画面確認: 未実施

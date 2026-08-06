@@ -1,0 +1,811 @@
+diff --git a/data/dialogs.csv b/data/dialogs.csv
+index a7b49ed..9a8a399 100644
+--- a/data/dialogs.csv
++++ b/data/dialogs.csv
+@@ -12,7 +12,7 @@ prologue_1,50,父親,……ふむ。,res://ui/portraits/father_01.png
+ prologue_1,55,父親,分かった。お前に頼もう。ちょっと待っていろ。,res://ui/portraits/father_01.png
+ prologue_1,56,DEV,beat,
+ prologue_1,60,父親,……よし、これを持っていきなさい。,res://ui/portraits/father_01.png
+-prologue_1,61,DEV,keyitem_grant guild_permit_father,
++prologue_1,61,DEV,note story_prop 父親のギルド許可証を受け取る（演出のみ）,
+ prologue_1,62,システム,大切なもの：父親のギルド許可証を入手！,
+ prologue_1,65,マルク,これは……？,res://ui/portraits/hero_01.png
+ prologue_1,70,父親,俺の代理で来たって話が通らなかったら、それを持って商業ギルドを訪ねるといい。,res://ui/portraits/father_01.png
+@@ -24,7 +24,7 @@ prologue_1,95,父親,無駄遣いするなよ？,res://ui/portraits/father_01.pn
+ prologue_1,100,マルク,大丈夫、大事に使うよ。,res://ui/portraits/hero_01.png
+ prologue_1,105,マルク,じゃあ、明日の朝に出発する。,res://ui/portraits/hero_01.png
+ prologue_1,110,父親,ああ、頼んだ。気をつけてな。,res://ui/portraits/father_01.png
+-prologue_1,111,DEV,note MAPを表示→マルクのアイコンがDurtonからPiltonに移動する,
++prologue_1,111,DEV,story_map_travel RE0001 RE0003,
+ prologue_5,5,マルク,ふう。,res://ui/portraits/hero_01.png
+ prologue_5,10,マルク,父さんのギルド許可証があったから、わりとすんなり入れたな。,res://ui/portraits/hero_01.png
+ prologue_5,15,マルク,よし、荷物を届けに行こう。,res://ui/portraits/hero_01.png
+@@ -78,7 +78,7 @@ prologue_10,175,マルク,……よし、何とか代役をこなすことが出
+ prologue_10,180,マルク,一つの契約だけで、いろんな人と話したな。,res://ui/portraits/hero_01.png
+ prologue_10,185,マルク,これが商人の仕事なんだ……。,res://ui/portraits/hero_01.png
+ prologue_10,190,マルク,さ、帰ろう。,res://ui/portraits/hero_01.png
+-prologue_10,191,DEV,note MAPを表示→マルクのアイコンがPiltonからDurtonに移動する,
++prologue_10,191,DEV,story_map_travel RE0003 RE0001,
+ prologue_15,5,マルク,ただいま。,res://ui/portraits/hero_01.png
+ prologue_15,10,父親,おお、お帰り。大丈夫だったか？,res://ui/portraits/father_01.png
+ prologue_15,15,マルク,荷物を届けて代金を回収できた、って意味なら大丈夫だったよ。,res://ui/portraits/hero_01.png
+@@ -103,7 +103,7 @@ prologue_15,105,父親,俺もまだ引退するつもりはないが、お前に
+ prologue_15,110,マルク,はい！,res://ui/portraits/hero_01.png
+ prologue_15,115,父親,じゃあ、俺のギルド許可証を返してくれるか。,res://ui/portraits/father_01.png
+ prologue_15,120,マルク,あ、そうだった……。,res://ui/portraits/hero_01.png
+-prologue_15,121,DEV,keyitem_remove guild_permit_father,
++prologue_15,121,DEV,note story_prop 父親のギルド許可証を返す（演出のみ）,
+ prologue_15,122,システム,大切なもの：父親のギルド許可証を返却した。,
+ prologue_15,125,父親,商人として働く以上、今後はお前自身の信用を築かなければならん。,res://ui/portraits/father_01.png
+ prologue_15,130,マルク,うん。,res://ui/portraits/hero_01.png
+@@ -116,8 +116,8 @@ tuto_intro,3,案内人,準備ができたらマップで隣町へ移動してみ
+ event_fair_city,1,市の知らせ,本日、中央広場で定期市が開催されます！,res://ui/portraits/town_crier.png
+ event_fair_city,2,市の知らせ,需要が高まりスプレッドが狭くなります。仕入れの好機かもしれません。,res://ui/portraits/town_crier.png
+ tuto_01,5,DEV,ctx_place Pilton,
+-tuto_01,10,受付,おはようございます。,res://ui/portraits/clerk_01.png
+-tuto_01,15,受付,マルクさんですね。ギルド長からお話は伺っています。,res://ui/portraits/clerk_01.png
++tuto_01,10,受付,お待ちしていました、マルクさん。Durtonからお疲れさまでした。,res://ui/portraits/clerk_01.png
++tuto_01,15,受付,ギルド長とお父上からお話は伺っています。,res://ui/portraits/clerk_01.png
+ tuto_01,20,受付,今日からマルクさんには見習い商人として研修を受けてもらいます。,res://ui/portraits/clerk_01.png
+ tuto_01,25,受付,研修中は私がサポートします。頑張りましょうね！,res://ui/portraits/clerk_01.png
+ tuto_01,30,受付,ではまず、こちらの『仮免状』をお受け取りください。,res://ui/portraits/clerk_01.png
+diff --git "a/others/\345\274\225\347\266\231.txt" "b/others/\345\274\225\347\266\231.txt"
+index e6a4e12..40bc315 100644
+--- "a/others/\345\274\225\347\266\231.txt"
++++ "b/others/\345\274\225\347\266\231.txt"
+@@ -6,7 +6,7 @@
+ - プロジェクト: guild-of-merchants
+ - Godot 4.3 / GDScript / PC向け体験版
+ - GitHub: https://github.com/endbreakgt-jpg/guild-of-merchants
+-- 適用元コミット: c4d0d45afc386af2e793e8f7b1426a6ee5bc4be7（2026-08-06）
++- 適用元コミット: d8122e152f5861a42e69719b11419eda02f353b7（2026-08-06）
+ - メインシーン: res://scenes/world.tscn
+ - 基準解像度: 1920x1080
+ - 文字コード: UTF-8
+@@ -60,10 +60,16 @@ D. 会話・チュートリアル
+ - dialogs.csv に TUT1〜TUT3 の台本あり
+ - story.gd にプロローグとDEVコマンドの基礎あり
+ - tutorial_progress の汎用保存APIを追加
++- プロローグ4場面を連続再生し、Durton→Pilton / Pilton→Durtonを物語用MAP演出で接続
++- 物語用MAP演出は通常移動と分離し、日付・経済・契約・到着判定を変更しない
++- 父親の許可証は実データを付与・削除せず、会話上の小道具として表示
++- プロローグ終了時は通常到着処理を通さずPiltonへ配置し、TUT1状態へ切り替える
+ - TUT1〜TUT3の多くはDEV noteで、操作誘導・達成判定は未実装
+ 
+ E. UI / MAP
+ - game_hud.gd がUI母艦、map_layer.gd が地図操作と描画を担当
++- MAP用プレイヤー表示は仮のコード描画荷馬車マーカー。最終素材時はmap_layer.gdの描画関数を差し替える
++- 物語用MAP演出中は左右パネル・ヘッダー・フッター・通常HUDを隠し、MAP入力・Esc・F3をロック
+ - MAP3状態の骨格実装と実画面確認を2026-07-14に完了
+   - scenes/ui/map_mode_ui.tscn を本番用レイアウトとする
+   - scenes/dev/map_layout_preview.tscn.tscn はレイアウト確認専用
+@@ -99,6 +105,17 @@ E. UI / MAP
+ 
+ 4) 次タスク
+ 最優先:
++- プロローグ再現の実画面確認
++  - 会話→DurtonからPiltonへのMAP演出→会話→PiltonからDurtonへのMAP演出→会話が途切れないこと
++  - 2回とも仮の荷馬車マーカーがルート上を移動し、演出中にEsc・F3・クリックが効かないこと
++  - 演出前後で日付、ターン、所持金、在庫、契約、信用、整備度が変化しないこと
++  - 父親の許可証が会話上は入手・返却されるが、大切なものには追加されないこと
++  - 終了時に暗転し、3回目の移動演出なしでPilton・TUT1状態へ切り替わること
++- TUT1前半（修正計画B）
++  - Pilton受付の導入会話
++  - 仮免状の実付与
++  - 固定研修契約の生成と二重生成防止
++  - 契約受注と羊毛3個購入までの段階進行・保存
+ - 自動移動通知キューの実画面確認
+   - 道中イベント発生時に移動が止まり、通知を閉じると「移動中……」へ戻って再開すること
+   - 到着時に「到着→契約達成→報酬・信用」の順で1件ずつ表示されること
+diff --git a/scenes/world.tscn b/scenes/world.tscn
+index 0b81b03..c465f82 100644
+--- a/scenes/world.tscn
++++ b/scenes/world.tscn
+@@ -153,3 +153,7 @@ dialog_ui_path = NodePath("../Dialog")
+ 
+ [node name="Story" type="Node" parent="."]
+ script = ExtResource("7_vecgq")
++world_path = NodePath("..")
++dialog_player_path = NodePath("../DialogPlayer")
++dialog_ui_path = NodePath("../Dialog")
++game_hud_path = NodePath("../GameHUD")
+diff --git a/scripts/map_layer.gd b/scripts/map_layer.gd
+index a5ee5c6..db89f42 100644
+--- a/scripts/map_layer.gd
++++ b/scripts/map_layer.gd
+@@ -3,6 +3,7 @@ class_name MapLayer
+ 
+ signal city_picked(cid: String)
+ signal background_clicked
++signal story_travel_finished
+ 
+ @export var world_path: NodePath
+ var world: World = null
+@@ -110,6 +111,7 @@ var _selected_route: Array[String] = []
+ }
+ 
+ @export var player_color: Color = Color(0.2, 1.0, 0.4, 1.0)
++@export var story_travel_duration: float = 2.6
+ @export var trader_colors: Array[Color] = [
+     Color(1.0, 0.8, 0.2, 1.0),
+     Color(0.2, 1.0, 0.6, 1.0),
+@@ -123,6 +125,17 @@ var _pick_mode: bool = false
+ var _pick_origin: String = ""
+ var _map_input_enabled: bool = true
+ 
++# ---- Story-only travel presentation ----
++# World.player and the normal travel simulation are intentionally untouched.
++var _story_travel_active: bool = false
++var _story_travel_visible: bool = false
++var _story_travel_points: Array[Vector2] = []
++var _story_travel_path: Array[String] = []
++var _story_travel_position: Vector2 = Vector2.ZERO
++var _story_travel_elapsed: float = 0.0
++var _story_travel_duration_current: float = 0.0
++var _story_travel_total_length: float = 0.0
++
+ func _ready() -> void:
+     if world == null and world_path != NodePath("") and has_node(world_path):
+         world = get_node_or_null(world_path)
+@@ -147,6 +160,129 @@ func _process(_delta: float) -> void:
+     if _panning and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+         _panning = false
+ 
++    if _story_travel_active:
++        _update_story_travel(_delta)
++
++func begin_story_travel(from_city_id: String, to_city_id: String, duration: float = -1.0) -> bool:
++    if _story_travel_active or _story_travel_visible:
++        return false
++    if world == null:
++        return false
++    if not city_positions.has(from_city_id) or not city_positions.has(to_city_id):
++        return false
++    if from_city_id == to_city_id:
++        return false
++
++    var route_result: Dictionary = {}
++    if world.has_method("compute_path"):
++        route_result = world.compute_path(from_city_id, to_city_id, "fastest")
++    _story_travel_path = _to_string_path(route_result.get("path", []))
++    if _story_travel_path.size() < 2:
++        _story_travel_path = [from_city_id, to_city_id]
++
++    _story_travel_points = _build_story_travel_points(_story_travel_path)
++    if _story_travel_points.size() < 2:
++        _clear_story_travel_state()
++        return false
++
++    _story_travel_total_length = _polyline_length(_story_travel_points)
++    if _story_travel_total_length <= 0.0:
++        _clear_story_travel_state()
++        return false
++
++    _pick_mode = false
++    _panning = false
++    _hover_cid = ""
++    _hover_path.clear()
++    _last_clicked_cid = ""
++    _external_preview = false
++    _focus_cid = ""
++    _selected_route = _story_travel_path.duplicate()
++
++    _story_travel_elapsed = 0.0
++    _story_travel_duration_current = duration
++    if _story_travel_duration_current <= 0.0:
++        _story_travel_duration_current = max(0.1, story_travel_duration)
++    _story_travel_position = _story_travel_points[0]
++    _story_travel_visible = true
++    _story_travel_active = true
++
++    frame_route(_story_travel_path)
++    queue_redraw()
++    return true
++
++func end_story_travel() -> void:
++    _clear_story_travel_state()
++    _selected_route.clear()
++    queue_redraw()
++
++func is_story_travel_active() -> bool:
++    return _story_travel_active
++
++func _build_story_travel_points(path: Array[String]) -> Array[Vector2]:
++    var result: Array[Vector2] = []
++    if path.size() < 2:
++        return result
++
++    for i in range(path.size() - 1):
++        var segment: Array[Vector2] = _route_draw_points(path[i], path[i + 1])
++        for point in segment:
++            if result.is_empty() or result.back().distance_to(point) > 0.01:
++                result.append(point)
++    return result
++
++func _polyline_length(points: Array[Vector2]) -> float:
++    var total: float = 0.0
++    for i in range(points.size() - 1):
++        total += points[i].distance_to(points[i + 1])
++    return total
++
++func _point_on_story_polyline(distance: float) -> Vector2:
++    if _story_travel_points.is_empty():
++        return Vector2.ZERO
++    if _story_travel_points.size() == 1:
++        return _story_travel_points[0]
++
++    var remaining: float = clamp(distance, 0.0, _story_travel_total_length)
++    for i in range(_story_travel_points.size() - 1):
++        var from_point: Vector2 = _story_travel_points[i]
++        var to_point: Vector2 = _story_travel_points[i + 1]
++        var segment_length: float = from_point.distance_to(to_point)
++        if segment_length <= 0.0:
++            continue
++        if remaining <= segment_length:
++            return from_point.lerp(to_point, remaining / segment_length)
++        remaining -= segment_length
++    return _story_travel_points.back()
++
++func _update_story_travel(delta: float) -> void:
++    _story_travel_elapsed += max(0.0, delta)
++    var ratio: float = clamp(
++        _story_travel_elapsed / max(0.1, _story_travel_duration_current),
++        0.0,
++        1.0
++    )
++    # Smooth acceleration/deceleration while keeping the route distance uniform.
++    var eased_ratio: float = ratio * ratio * (3.0 - 2.0 * ratio)
++    _story_travel_position = _point_on_story_polyline(
++        _story_travel_total_length * eased_ratio
++    )
++    queue_redraw()
++
++    if ratio >= 1.0:
++        _story_travel_active = false
++        story_travel_finished.emit()
++
++func _clear_story_travel_state() -> void:
++    _story_travel_active = false
++    _story_travel_visible = false
++    _story_travel_points.clear()
++    _story_travel_path.clear()
++    _story_travel_position = Vector2.ZERO
++    _story_travel_elapsed = 0.0
++    _story_travel_duration_current = 0.0
++    _story_travel_total_length = 0.0
++
+ func begin_pick_for_player() -> void:
+     if world == null:
+         return
+@@ -556,6 +692,35 @@ func _draw_route_path(path: Array[String], color: Color, width: float) -> void:
+                 width
+             )
+ 
++func _draw_player_marker(position_screen: Vector2) -> void:
++    # Temporary procedural wagon icon. Replace only this function when final art arrives.
++    var shadow_color := Color(0.03, 0.04, 0.05, 0.78)
++    var wagon_color := Color(0.95, 0.70, 0.24, 1.0)
++    var cover_color := Color(0.94, 0.91, 0.77, 1.0)
++    var wheel_color := Color(0.18, 0.12, 0.08, 1.0)
++
++    draw_circle(position_screen, 15.0, shadow_color)
++    draw_circle(position_screen, 12.5, player_color)
++
++    var wagon_body := Rect2(position_screen + Vector2(-9.0, -2.0), Vector2(18.0, 8.0))
++    draw_rect(wagon_body, wagon_color, true)
++    draw_rect(wagon_body, shadow_color, false, 1.5)
++
++    var cover_points := PackedVector2Array([
++        position_screen + Vector2(-7.0, -2.0),
++        position_screen + Vector2(-5.0, -8.0),
++        position_screen + Vector2(5.0, -8.0),
++        position_screen + Vector2(7.0, -2.0),
++    ])
++    draw_colored_polygon(cover_points, cover_color)
++    draw_polyline(cover_points, shadow_color, 1.5)
++    draw_line(cover_points[3], cover_points[0], shadow_color, 1.5)
++
++    draw_circle(position_screen + Vector2(-6.0, 7.0), 3.0, wheel_color)
++    draw_circle(position_screen + Vector2(6.0, 7.0), 3.0, wheel_color)
++    draw_circle(position_screen + Vector2(-6.0, 7.0), 1.1, cover_color)
++    draw_circle(position_screen + Vector2(6.0, 7.0), 1.1, cover_color)
++
+ # ---- drawing ----
+ func _draw() -> void:
+     if base_map != null:
+@@ -690,13 +855,21 @@ func _draw() -> void:
+         # ホバー強調
+         if _pick_mode and hover_highlight and cid == _hover_cid:
+             draw_circle(p, city_radius + 6.0, hover_color)
+-        # プレイヤー位置
+-        if world and String(world.player.get("city", "")) == cid \
++        # 通常時のプレイヤー位置。物語演出中は専用座標を後段で描く。
++        if not _story_travel_visible and world \
++        and String(world.player.get("city", "")) == cid \
+         and not bool(world.player.get("enroute", false)):
+-            draw_circle(p, city_radius * 0.65, player_color)
++            _draw_player_marker(p)
++
++    if _story_travel_visible:
++        _draw_player_marker(_tex_to_screen(_story_travel_position))
+ 
+     # 都市ラベル（Lで一括表示を上書き）
+-    if _all_labels:
++    if _story_travel_visible:
++        for story_cid in _story_travel_path:
++            if city_positions.has(story_cid):
++                _draw_city_label(story_cid, _tex_to_screen(city_positions[story_cid]))
++    elif _all_labels:
+         for cid in city_positions.keys():
+             _draw_city_label(cid, _tex_to_screen(city_positions[cid]))
+     else:
+diff --git a/scripts/story.gd b/scripts/story.gd
+index 2444549..adefdf1 100644
+--- a/scripts/story.gd
++++ b/scripts/story.gd
+@@ -4,10 +4,12 @@ class_name Story
+ @export var world_path: NodePath
+ @export var dialog_player_path: NodePath
+ @export var dialog_ui_path: NodePath
++@export var game_hud_path: NodePath
+ 
+ var world: World = null
+ var dialog_player: DialogPlayer = null
+ var dialog_ui: Dialog = null
++var game_hud: Node = null
+ var _overlay_active: bool = false
+ var _resume_info: Dictionary = {} # {"id":String, "seq":int}
+ var _pending_system_msg: String = ""
+@@ -29,6 +31,8 @@ var prologue_done: bool = false
+ var prologue_step: int = 0   # 0: 未開始, 1..途中, 4以上: 完了
+ var _current_story_id: String = ""
+ var _running_prologue: bool = false
++var _story_map_active: bool = false
++var _story_map_story_id: String = ""
+ 
+ var _prologue_ids: Array[String] = [
+     "prologue_1",
+@@ -41,8 +45,10 @@ func _ready() -> void:
+     _resolve_world()
+     _resolve_dialog_player()
+     _resolve_dialog_ui()
++    _resolve_game_hud()
+     _connect_dialog_signals()
+     _connect_dialog_triggers()
++    _connect_game_hud_signals()
+ 
+ 
+ # === 外部インターフェース ================================================
+@@ -54,6 +60,9 @@ func start_prologue() -> void:
+     if _running_prologue:
+         return
+ 
++    if world != null and world.has_method("pause"):
++        world.pause()
++
+     # チュートリアル状態（プロローグ）
+     if world != null and world.has_method("set_tutorial_state"):
+         world.set_tutorial_state(World.TUT_STATE_PROLOGUE, true, "start_prologue")
+@@ -61,6 +70,7 @@ func start_prologue() -> void:
+     _running_prologue = true
+     prologue_step = 0
+     _play_next_prologue()
++
+ func _resolve_world() -> void:
+     if world != null and is_instance_valid(world):
+         return
+@@ -103,6 +113,25 @@ func _resolve_dialog_ui() -> void:
+             if found is Dialog:
+                 dialog_ui = found as Dialog
+ 
++func _resolve_game_hud() -> void:
++    if game_hud != null and is_instance_valid(game_hud):
++        return
++    if game_hud_path != NodePath("") and has_node(game_hud_path):
++        game_hud = get_node_or_null(game_hud_path)
++    elif get_tree() != null:
++        var root := get_tree().root
++        if root != null:
++            game_hud = root.find_child("GameHUD", true, false)
++
++func _connect_game_hud_signals() -> void:
++    _resolve_game_hud()
++    if game_hud == null:
++        return
++    if game_hud.has_signal("story_map_travel_finished"):
++        var callback := Callable(self, "_on_story_map_travel_finished")
++        if not game_hud.is_connected("story_map_travel_finished", callback):
++            game_hud.connect("story_map_travel_finished", callback)
++
+ func _connect_dialog_signals() -> void:
+     if dialog_ui == null:
+         return
+@@ -208,12 +237,64 @@ func _run_dev_command(id: String, seq: int, text: String) -> void:
+             else:
+                 ctx_place = parts[1]
+             _dev_log("[DEV] ctx_place=%s" % ctx_place)
++        "story_map_travel":
++            if parts.size() < 3:
++                _dev_log("[DEV] story_map_travel: missing city ids")
++                return
++            _dev_story_map_travel(id, parts[1], parts[2])
+         "note":
+             # メモ。ゲーム状態は変えない。
+             _dev_log("[DEV note] %s" % t.substr(4).strip_edges())
+         _:
+             _dev_log("[DEV] unknown command: %s" % t)
+ 
++func _dev_story_map_travel(id: String, from_city_id: String, to_city_id: String) -> void:
++    if not _running_prologue:
++        _dev_log("[DEV] story_map_travel ignored outside prologue: %s" % id)
++        return
++    if _story_map_active:
++        _dev_log("[DEV] story_map_travel ignored while active: %s" % id)
++        return
++
++    _story_map_active = true
++    _story_map_story_id = id
++    _dev_log("[STORY MAP] %s -> %s" % [from_city_id, to_city_id])
++    call_deferred("_begin_story_map_travel", from_city_id, to_city_id)
++
++func _begin_story_map_travel(from_city_id: String, to_city_id: String) -> void:
++    if not _story_map_active:
++        return
++    _resolve_game_hud()
++    _connect_game_hud_signals()
++    if game_hud == null or not game_hud.has_method("play_story_map_travel"):
++        _dev_log("[STORY MAP] GameHUD API not found; continuing without presentation.")
++        _complete_story_map_travel(false)
++        return
++
++    var started: bool = bool(game_hud.call(
++        "play_story_map_travel",
++        from_city_id,
++        to_city_id
++    ))
++    if not started and _story_map_active:
++        _dev_log("[STORY MAP] presentation could not start; continuing.")
++        _complete_story_map_travel(false)
++
++func _on_story_map_travel_finished(success: bool) -> void:
++    if not _story_map_active:
++        return
++    call_deferred("_complete_story_map_travel", success)
++
++func _complete_story_map_travel(success: bool) -> void:
++    if not _story_map_active:
++        return
++    var story_id := _story_map_story_id
++    _story_map_active = false
++    _story_map_story_id = ""
++    if not success:
++        _dev_log("[STORY MAP] completed by fallback: %s" % story_id)
++    _advance_prologue_after_id(story_id)
++
+ 
+ func _dev_break(id: String, seq: int) -> void:
+     var resume_seq: int = -1
+@@ -270,12 +351,21 @@ func _on_dialog_finished() -> void:
+             dialog_player.play_from_seq(resume_id, resume_seq)
+         return
+ 
++    if _story_map_active:
++        # The final DEV command owns progression until the map presentation ends.
++        return
++
+     if not _running_prologue:
+         return
+     if _current_story_id == "":
+         return
+ 
+     var just_id := _current_story_id
++    _advance_prologue_after_id(just_id)
++
++func _advance_prologue_after_id(just_id: String) -> void:
++    if just_id == "":
++        return
+     _current_story_id = ""
+ 
+     match just_id:
+@@ -301,7 +391,16 @@ func _on_dialog_finished() -> void:
+ func _finish_prologue() -> void:
+     prologue_done = true
+     _running_prologue = false
+-    _notify_world("プロローグが終わりました。")
++    _dev_log("[STORY] prologue completed")
++
++    _resolve_game_hud()
++    if game_hud != null and game_hud.has_method("play_story_cut_transition"):
++        game_hud.call("play_story_cut_transition")
++
++    # This is a chapter boundary, not a normal arrival. Do not run contracts,
++    # time progression, travel costs, weather, or arrival signals.
++    if world != null and world.has_method("place_player_for_story"):
++        world.call("place_player_for_story", "RE0003")
+ 
+     # 次フェーズへ（現時点では tut1 へ。必要に応じて tut1開始演出側へ移してOK）
+     if world != null and world.has_method("set_tutorial_state"):
+@@ -382,16 +481,16 @@ func _on_dialog_advanced(next_index: int) -> void:
+ 
+ 
+ func _after_prologue_1() -> void:
+-    _notify_world("父親からギルド許可証と荷物、それに旅費を預かった。")
++    _dev_log("[STORY] Durton scene completed; props remain presentation-only.")
+ 
+ func _after_prologue_5() -> void:
+-    _notify_world("Pilton での配達を終えた。")
++    _dev_log("[STORY] Pilton delivery scene completed.")
+ 
+ func _after_prologue_10() -> void:
+-    _notify_world("Pilton のギルドで配達の代金を受け取り、Durton への帰路についた。")
++    _dev_log("[STORY] Pilton guild scene completed.")
+ 
+ func _after_prologue_15() -> void:
+-    _notify_world("父親に代役を認められ、行商人としての一歩を踏み出した。")
++    _dev_log("[STORY] Durton final scene completed.")
+ 
+ func _connect_dialog_triggers() -> void:
+     _resolve_dialog_player()
+diff --git a/scripts/world.gd b/scripts/world.gd
+index 3215ab1..258be06 100644
+--- a/scripts/world.gd
++++ b/scripts/world.gd
+@@ -675,6 +675,26 @@ func send_system_message(msg: String) -> void:
+     # UI側から呼ぶための公開口。Story側の _world_message と同じ挙動。
+     _world_message(msg)
+ 
++func place_player_for_story(city_id: String) -> bool:
++    # Chapter/setup transition only. This deliberately bypasses the normal
++    # arrival pipeline so contracts, fees, time, weather, and arrival signals
++    # are not processed.
++    if city_id == "" or not cities.has(city_id):
++        push_warning("World: story placement city not found: %s" % city_id)
++        return false
++
++    _ensure_player_integrity()
++    player["city"] = city_id
++    player["enroute"] = false
++    player["dest"] = ""
++    player["arrival_day"] = 0
++    player["last_arrival_day"] = -999
++    player["escort_level"] = 0
++    player["escort_offers"] = []
++    _log("[STORY] player placed at %s without arrival processing" % city_id)
++    world_updated.emit()
++    return true
++
+ # --- Tutorial API ---
+ func get_tutorial_state() -> String:
+     return tutorial_state
+diff --git a/ui/game_hud.gd b/ui/game_hud.gd
+index 31e7a69..0091c04 100644
+--- a/ui/game_hud.gd
++++ b/ui/game_hud.gd
+@@ -1,4 +1,6 @@
+ extends Control
++signal story_map_travel_finished(success: bool)
++
+ @export var show_decay_dialog := true  # 劣化で手持ちが0になった時にダイアログ表示
+ 
+ @export var world_path: NodePath
+@@ -131,6 +133,9 @@ var _map_city_list_body: VBoxContainer = null
+ var _map_hint_label: Label = null
+ var _map_back_btn: Button = null
+ var _map_close_btn: Button = null
++var _story_map_travel_active: bool = false
++var _story_map_hidden_controls: Array[Dictionary] = []
++var _story_cut_overlay: ColorRect = null
+ var debug_panel: DebugPanel = null
+ var debug_window: Window = null     # ← デバッグ専用サブウィンドウ
+ 
+@@ -672,6 +677,11 @@ func _ensure_embedded_map_layer() -> void:
+         if not embedded_map_layer.is_connected("background_clicked", cb_bg):
+             embedded_map_layer.connect("background_clicked", cb_bg)
+ 
++    if embedded_map_layer.has_signal("story_travel_finished"):
++        var cb_story := Callable(self, "_on_story_map_layer_travel_finished")
++        if not embedded_map_layer.is_connected("story_travel_finished", cb_story):
++            embedded_map_layer.connect("story_travel_finished", cb_story)
++
+     _refresh_map_mode_layout()
+ 
+ func _refresh_map_mode_layout() -> void:
+@@ -720,6 +730,154 @@ func _get_map_layer() -> MapLayer:
+             return embedded_map_layer
+     return null
+ 
++func play_story_map_travel(from_city_id: String, to_city_id: String, duration: float = -1.0) -> bool:
++    if _story_map_travel_active:
++        return false
++
++    # A story presentation must never advance the simulation between scenes.
++    _user_paused = true
++    if world != null and world.has_method("pause"):
++        world.pause()
++    _update_play_button()
++
++    _ensure_map_mode_root()
++    _ensure_embedded_map_layer()
++    var map := _get_map_layer()
++    if map == null or not map.has_method("begin_story_travel"):
++        return false
++
++    _story_map_travel_active = true
++    _capture_story_map_visibility()
++    _hide_story_blocking_windows()
++    _set_map_mode_visible(true)
++    _set_story_map_layout(true)
++    _refresh_map_mode_layout()
++
++    if map.has_method("end_pick"):
++        map.call("end_pick")
++    if map.has_method("set_map_input_enabled"):
++        map.call("set_map_input_enabled", false)
++
++    var started: bool = bool(map.call(
++        "begin_story_travel",
++        from_city_id,
++        to_city_id,
++        duration
++    ))
++    if not started:
++        _finish_story_map_travel(false)
++        return false
++
++    _on_popup_visibility_changed()
++    return true
++
++func is_story_map_travel_active() -> bool:
++    return _story_map_travel_active
++
++func _capture_story_map_visibility() -> void:
++    _story_map_hidden_controls.clear()
++    _remember_story_control_visibility(topbar)
++    _remember_story_control_visibility(city_mode_ui)
++    _remember_story_control_visibility(city_action_bar)
++    _remember_story_control_visibility(_event_panel)
++    _remember_story_control_visibility(_supply_label)
++    _remember_story_control_visibility(debug_panel)
++
++func _remember_story_control_visibility(node: CanvasItem) -> void:
++    if node == null or not is_instance_valid(node):
++        return
++    _story_map_hidden_controls.append({
++        "node": node,
++        "visible": node.visible,
++    })
++
++func _restore_story_map_visibility() -> void:
++    for entry in _story_map_hidden_controls:
++        var node: CanvasItem = entry.get("node") as CanvasItem
++        if node != null and is_instance_valid(node):
++            node.visible = bool(entry.get("visible", false))
++    _story_map_hidden_controls.clear()
++
++func _hide_story_blocking_windows() -> void:
++    for candidate in [menu_win, trade_win, move_window, inventory_window]:
++        if candidate == null or not is_instance_valid(candidate):
++            continue
++        if candidate.has_method("hide"):
++            candidate.call("hide")
++
++    if is_instance_valid(_move_confirm_dlg):
++        _move_confirm_dlg.hide()
++    if is_instance_valid(_escort_confirm_dlg):
++        _escort_confirm_dlg.hide()
++
++func _set_story_map_layout(enabled: bool) -> void:
++    if map_mode_root == null or not is_instance_valid(map_mode_root):
++        return
++
++    var header := map_mode_root.get_node_or_null("RootMargin/RootVBox/MapHeader") as CanvasItem
++    var left_panel := map_mode_root.get_node_or_null("RootMargin/RootVBox/MainArea/LeftPanel") as CanvasItem
++    var right_panel := map_mode_root.get_node_or_null("RootMargin/RootVBox/MainArea/RightPanel") as CanvasItem
++    var footer := map_mode_root.get_node_or_null("RootMargin/RootVBox/FooterPanel") as CanvasItem
++
++    for panel in [header, left_panel, right_panel, footer]:
++        if panel != null:
++            panel.visible = not enabled
++
++    for entry in _story_map_hidden_controls:
++        var node: CanvasItem = entry.get("node") as CanvasItem
++        if node != null and is_instance_valid(node):
++            node.visible = false
++
++func _on_story_map_layer_travel_finished() -> void:
++    if not _story_map_travel_active:
++        return
++    _finish_story_map_travel(true)
++
++func _finish_story_map_travel(success: bool) -> void:
++    var map := _get_map_layer()
++    if map != null and map.has_method("end_story_travel"):
++        map.call("end_story_travel")
++
++    _set_story_map_layout(false)
++    _set_map_mode_visible(false)
++    _restore_story_map_visibility()
++    _story_map_travel_active = false
++    _refresh()
++    _on_popup_visibility_changed()
++    story_map_travel_finished.emit(success)
++
++func play_story_cut_transition(duration: float = 0.65) -> void:
++    if _story_cut_overlay != null and is_instance_valid(_story_cut_overlay):
++        _story_cut_overlay.queue_free()
++
++    var overlay := ColorRect.new()
++    overlay.name = "StoryCutOverlay"
++    overlay.color = Color(0.0, 0.0, 0.0, 1.0)
++    overlay.mouse_filter = Control.MOUSE_FILTER_STOP
++    overlay.top_level = true
++    overlay.z_index = 4096
++    overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
++    add_child(overlay)
++    overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
++    overlay.move_to_front()
++    _story_cut_overlay = overlay
++
++    var tween := create_tween()
++    tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
++    tween.tween_interval(0.15)
++    tween.tween_property(
++        overlay,
++        "color:a",
++        0.0,
++        max(0.1, duration)
++    ).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
++    tween.tween_callback(func() -> void:
++        if overlay != null and is_instance_valid(overlay):
++            overlay.queue_free()
++        if _story_cut_overlay == overlay:
++            _story_cut_overlay = null
++    )
++
+ func _get_map_overlay_root() -> Control:
+     if map_mode_root != null and is_instance_valid(map_mode_root):
+         return map_mode_root
+@@ -741,6 +899,9 @@ func _clear_map_overlay_children() -> void:
+         child.queue_free()
+ 
+ func _close_map_mode() -> void:
++    if _story_map_travel_active:
++        return
++
+     var map := _get_map_layer()
+     if map != null:
+         if map.has_method("end_pick"):
+@@ -765,6 +926,9 @@ func _close_map_mode() -> void:
+     call_deferred("_verify_ui_input_windows_after_frame", "MAP終了後")
+ 
+ func _on_map_header_back_pressed() -> void:
++    if _story_map_travel_active:
++        return
++
+     if _map_screen_state == MapScreenState.TRAVEL_PREP:
+         _set_map_screen_state(MapScreenState.CITY_FOCUS)
+         return
+@@ -1026,6 +1190,11 @@ func _on_popup_visibility_changed() -> void:
+ 
+ # ---- input (ESC / F3 で操作) ----
+ func _input(event: InputEvent) -> void:
++    if _story_map_travel_active:
++        if event.is_action_pressed("toggle_debug") or event.is_action_pressed("ui_cancel"):
++            get_viewport().set_input_as_handled()
++        return
++
+     if event.is_action_pressed("toggle_debug"):
+         _on_debug_btn()
+         get_viewport().set_input_as_handled()
+@@ -1039,6 +1208,11 @@ func _unhandled_input(event: InputEvent) -> void:
+     _handle_esc_event(event)
+ 
+ func _handle_esc_event(event: InputEvent) -> void:
++    if _story_map_travel_active:
++        if event.is_action_pressed("ui_cancel"):
++            get_viewport().set_input_as_handled()
++        return
++
+     if event.is_action_pressed("ui_cancel"):
+         var closed := false
+ 
