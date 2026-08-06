@@ -1,0 +1,59 @@
+Guild of Merchants 修正計画A 実装概要
+
+TEST-ID:
+GOM-MAP-WINDOW-CLEANUP-20260806
+
+適用元コミット:
+7d2317baaf8c99c986e16792b8387f40dc1bddd7
+
+対象:
+契約画面終了直後にMAPの通常GUI入力だけが一時的に反応しなくなる未再現事象
+
+変更ファイル:
+- ui/menu_panel.gd
+- ui/game_hud.gd
+- others/引継.txt
+
+実装内容:
+1. 契約Windowの共通終了処理
+   - 子Windowからexclusiveを解除
+   - 即時hide
+   - queue_freeで解放
+   - 二重終了時は安全に無視
+
+2. 契約一覧と掲示板の切替
+   - 非表示にする受注済み一覧のexclusiveを先に解除
+   - 掲示板終了後に受注済み一覧を再表示する際だけexclusiveを戻す
+   - MAP遷移中は遅延生成・復帰処理を中止
+
+3. MAP表示境界
+   - MenuPanelへ契約UI整理を依頼してから1フレーム待機
+   - MAP表示処理の連打を_pendingフラグで抑止
+   - Node17固有処理、都市一覧、左パネル、MapLayer入力処理は変更なし
+
+4. DEBUG診断
+   - MAP遷移前後の可視・排他Windowを検出
+   - 整理前に見つけた場合はDebugger標準出力と行動ログへ記録
+   - 1フレーム後も残る場合はDebugger警告と行動ログへ記録
+   - `[MAP入力] 整理前` は安全処理が対象を検出した記録で、単独では失敗ではない
+   - `[MAP入力] 整理後も残存` は入力遮断が残り得るためNG判断に使う
+
+5. 引継更新
+   - 適用元コミットと次テストを更新
+   - 過去の詳細な検証履歴を圧縮
+
+静的確認:
+- git diff --check: 成功
+- 最新コミットへのgit apply --check: 成功
+- 適用後3ファイルの作業版一致: 成功
+- Godot 4.3実行: この作業環境に実行バイナリがないため未実施
+
+適用方法:
+1. リポジトリが適用元コミット、またはその内容を含む状態であることを確認する。
+2. ZIP内の gom_map_window_cleanup_patch_2026-08-06.txt をリポジトリ直下へ置く。
+3. 次を実行する。
+   git apply --check gom_map_window_cleanup_patch_2026-08-06.txt
+   git apply gom_map_window_cleanup_patch_2026-08-06.txt
+4. 同梱テスト表に沿ってGodot 4.3で確認する。
+
+GitHubへのコミット・pushは実施していません。
