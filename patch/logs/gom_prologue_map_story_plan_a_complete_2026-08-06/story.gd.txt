@@ -198,7 +198,7 @@ func _run_dev_command(id: String, seq: int, text: String) -> void:
     if t == "":
         return
 
-    var parts: Array[String] = t.split(" ", false)
+    var parts: PackedStringArray = t.split(" ", false)
     if parts.is_empty():
         return
 
