@@ -117,6 +117,7 @@ var map_mode_root: Control = null
 var map_mode_overlay: Control = null  # 旧導線互換。新MAPでは map_mode_root を返す。
 var embedded_map_layer: MapLayer = null
 var _map_mode_for_move: bool = false
+var _map_open_pending: bool = false
 var _map_screen_state: int = MapScreenState.BROWSE
 var _map_selected_city_id: String = ""
 var _map_travel_context: Dictionary = {}
@@ -1163,6 +1164,30 @@ func _spawn_debug_if_needed() -> void:
             debug_panel.call("_update_stats")
 
 func _open_map_popup(for_move: bool = false) -> void:
+    if _map_open_pending:
+        return
+    _map_open_pending = true
+
+    var exclusive_before: Array[String] = _collect_visible_exclusive_windows()
+    if is_instance_valid(menu_win) and menu_win.has_method("prepare_for_map_transition"):
+        menu_win.call("prepare_for_map_transition")
+
+    if OS.is_debug_build() and not exclusive_before.is_empty():
+        _report_map_exclusive_windows("整理前", exclusive_before, false)
+
+    var tree := get_tree()
+    if tree == null:
+        _map_open_pending = false
+        return
+    await tree.process_frame
+
+    if not is_inside_tree():
+        return
+
+    var exclusive_after: Array[String] = _collect_visible_exclusive_windows()
+    if OS.is_debug_build() and not exclusive_after.is_empty():
+        _report_map_exclusive_windows("整理後も残存", exclusive_after, true)
+
     _ensure_map_mode_root()
     _ensure_embedded_map_layer()
 
@@ -1186,6 +1211,35 @@ func _open_map_popup(for_move: bool = false) -> void:
     _populate_map_city_list()
     _set_map_screen_state(MapScreenState.BROWSE)
     _on_popup_visibility_changed()
+    _map_open_pending = false
+
+
+func _collect_visible_exclusive_windows() -> Array[String]:
+    var result: Array[String] = []
+    var tree := get_tree()
+    if tree == null or tree.root == null:
+        return result
+
+    for node in tree.root.find_children("*", "Window", true, false):
+        var win := node as Window
+        if not is_instance_valid(win):
+            continue
+        if win == tree.root:
+            continue
+        if win.visible and win.exclusive:
+            result.append(str(win.get_path()))
+    return result
+
+
+func _report_map_exclusive_windows(stage: String, paths: Array[String], as_warning: bool) -> void:
+    if paths.is_empty():
+        return
+    var message := "[MAP入力] %sの可視・排他Window: %s" % [stage, ", ".join(paths)]
+    if as_warning:
+        push_warning(message)
+    else:
+        print(message)
+    _record_action_log(message)
 
 
 

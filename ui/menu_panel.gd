@@ -37,6 +37,7 @@ var dlg_save_confirm: ConfirmationDialog
 var dlg_load_confirm: ConfirmationDialog
 var dlg_info: AcceptDialog
 var _pending_slot: int = 0
+var _contract_window_cleanup_in_progress: bool = false
 
 # 信用ウィンドウ
 var trust_win: Window = null
@@ -633,7 +634,46 @@ func _on_trust() -> void:
         trust_win.grab_focus()
 
 func _on_close() -> void:
+    close_contract_windows()
     visible = false
+
+
+func prepare_for_map_transition() -> void:
+    close_contract_windows()
+    visible = false
+
+
+func close_contract_windows() -> void:
+    _contract_window_cleanup_in_progress = true
+    _release_contract_window(get_node_or_null("ContractsOffersWin") as Window)
+    _release_contract_window(get_node_or_null("ContractsActiveWin") as Window)
+    call_deferred("_finish_contract_window_cleanup")
+
+
+func _finish_contract_window_cleanup() -> void:
+    _contract_window_cleanup_in_progress = false
+
+
+func _release_contract_window(win: Window) -> void:
+    if not is_instance_valid(win):
+        return
+    if win.is_queued_for_deletion():
+        return
+
+    for child in win.get_children():
+        if child is Window:
+            _release_contract_window(child as Window)
+
+    win.exclusive = false
+    win.hide()
+    win.queue_free()
+
+
+func _hide_contract_window_for_switch(win: Window) -> void:
+    if not is_instance_valid(win):
+        return
+    win.exclusive = false
+    win.hide()
 
 # --- タイトルバーのドラッグ処理 ---
 func _on_title_gui_input(ev: InputEvent) -> void:
@@ -755,10 +795,10 @@ func _on_contracts() -> void:
 func _open_contracts_window() -> void:
     if world == null:
         return
+    _contract_window_cleanup_in_progress = false
     var old := get_node_or_null("ContractsActiveWin") as Window
     if old:
-        old.hide()
-        old.queue_free()
+        _release_contract_window(old)
 
     var win := Window.new()
     win.name = "ContractsActiveWin"
@@ -767,7 +807,7 @@ func _open_contracts_window() -> void:
     win.exclusive = true
     win.transient = true
     add_child(win)
-    win.close_requested.connect(func(): win.hide())
+    win.close_requested.connect(func(): _release_contract_window(win))
 
     # ── 骨組み ───────────────────────────────
     var margin := MarginContainer.new()
@@ -796,7 +836,7 @@ func _open_contracts_window() -> void:
     var new_btn := Button.new(); new_btn.text = "新規受注"
     top.add_child(new_btn)
     new_btn.pressed.connect(func():
-        win.hide()
+        _hide_contract_window_for_switch(win)
         call_deferred("_open_contracts_offers_window", win)
     )
 
@@ -821,7 +861,7 @@ func _open_contracts_window() -> void:
     # ────────────────────────────────────────
 
     refresh_btn.pressed.connect(func(): _refresh_active_contracts_list(win))
-    close_btn.pressed.connect(func(): win.hide())
+    close_btn.pressed.connect(func(): _release_contract_window(win))
 
     _refresh_active_contracts_list(win)
     _size_and_center(win)
@@ -1045,10 +1085,13 @@ func _days_left_for(ct: Dictionary) -> int:
 func _open_contracts_offers_window(return_window: Window = null) -> void:
     if world == null:
         return
+    if _contract_window_cleanup_in_progress:
+        return
+    if is_instance_valid(return_window) and return_window.is_queued_for_deletion():
+        return
     var old := get_node_or_null("ContractsOffersWin") as Window
     if old:
-        old.hide()
-        old.queue_free()
+        _release_contract_window(old)
 
     var win := Window.new()
     win.name = "ContractsOffersWin"
@@ -1118,19 +1161,25 @@ func _open_contracts_offers_window(return_window: Window = null) -> void:
 
 func _close_contracts_offers_window(win: Window, return_window: Window = null) -> void:
     if is_instance_valid(win):
+        win.exclusive = false
         win.hide()
-        if is_instance_valid(return_window):
+        if is_instance_valid(return_window) and not _contract_window_cleanup_in_progress:
             var restore_callable := Callable(self, "_restore_contracts_active_window").bind(return_window)
             win.tree_exited.connect(restore_callable, CONNECT_ONE_SHOT)
-        win.queue_free()
+        _release_contract_window(win)
         return
-    if is_instance_valid(return_window):
+    if is_instance_valid(return_window) and not _contract_window_cleanup_in_progress:
         call_deferred("_restore_contracts_active_window", return_window)
 
 
 func _restore_contracts_active_window(win: Window) -> void:
+    if _contract_window_cleanup_in_progress:
+        return
     if not is_instance_valid(win):
         return
+    if win.is_queued_for_deletion():
+        return
+    win.exclusive = true
     _refresh_active_contracts_list(win)
     win.popup_centered()
     win.grab_focus()
@@ -1222,12 +1271,12 @@ func _show_contract_detail(offer: Dictionary) -> void:
     dlg.dialog_text = text
 
     dlg.get_ok_button().text = "OK"
-    dlg.canceled.connect(func(): dlg.queue_free())
+    dlg.canceled.connect(func(): _release_contract_window(dlg))
     dlg.confirmed.connect(func():
         var accepted := _accept_offer(offer)
         if accepted:
             _refresh_views_after_accept()
-        dlg.queue_free()
+        _release_contract_window(dlg)
         if accepted:
             call_deferred("_show_contract_accept_info", offers_win)
     )
@@ -1237,8 +1286,11 @@ func _show_contract_detail(offer: Dictionary) -> void:
 
 func _show_contract_accept_info(offers_win: Window) -> void:
     await get_tree().process_frame
+    if _contract_window_cleanup_in_progress:
+        return
     if not is_instance_valid(offers_win) or not offers_win.visible:
-        _show_info("契約を受注しました。")
+        return
+    if offers_win.is_queued_for_deletion():
         return
 
     var info := AcceptDialog.new()
@@ -1248,8 +1300,8 @@ func _show_contract_accept_info(offers_win: Window) -> void:
     info.exclusive = true
     info.transient = true
     offers_win.add_child(info)
-    info.confirmed.connect(info.queue_free, CONNECT_ONE_SHOT)
-    info.canceled.connect(info.queue_free, CONNECT_ONE_SHOT)
+    info.confirmed.connect(Callable(self, "_release_contract_window").bind(info), CONNECT_ONE_SHOT)
+    info.canceled.connect(Callable(self, "_release_contract_window").bind(info), CONNECT_ONE_SHOT)
     info.popup_centered()
 
 
