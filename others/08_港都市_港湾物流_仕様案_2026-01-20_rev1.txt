@@ -1,0 +1,269 @@
+港都市・港湾物流（背景水運） 仕様案 2026-01-20（改訂：港活動消費をMVPに含める）
+
+目的
+- 陸路（徒歩/馬車/荷車）が主役のまま、世界経済としての水運要素（沿岸航路・運河）を説明可能にする。
+- 港都市を「集散地」「価格の安定点」「需給ショックの入口」として機能させる。
+- プレイヤーの移動・道中イベント（1日単位）を壊さない。
+
+非目的（今回やらない）
+- プレイヤーが船に乗って移動するUI・航路選択・海上イベント。
+- 船便の厳密な遅延、積載、船の個体管理。
+- 海賊（当面オフ）。
+
+前提
+- World日次ループが在庫 qty / 目標 target / 生産 prod / 消費 cons を更新し、価格は需給から算出される。
+- 商流としての買い集め（横持ち）は、cons（消費）として在庫を減らさず、target（保持したい量）として表現する。
+
+
+1) 用語
+- 都市消費（Civic Demand）
+  住民や都市活動で消える需要。現行の cons_per_day を基準にする。
+- 港活動消費（Port Activity Consumption）
+  港湾の運用（船員補給、修繕、荷役）に伴う“追加の消費”。少量だけ上乗せして雰囲気を出す。
+- 商流需要（Trade Pull）
+  転売・積み替え・輸出のために商人が買い集める圧力。消費ではなく「買い付け目標」として表現する。
+- export_target
+  港都市が輸送・再販売に備えて保持したい追加目標。target_eff = base_target + export_target。
+- 港交通（port_traffic）
+  その港が外部とどれだけつながっているかの係数。平時は 1.0。将来、海賊・政治・季節で減衰。
+- 水運ルート（water_route）
+  港（または水運拠点）同士を結ぶ背景物流のエッジ。プレイヤー移動とは別。
+- バルク品（bulk）
+  水運の恩恵が大きい重い品（木材、穀物、塩、石材、鉱石など）。初期はこのカテゴリ中心で動かす。
+
+
+2) 港都市の定義
+港都市とは「水運ネットワークに接続し、外部との物資の出入りが平常時に発生する都市」を指す。
+
+2.1 都市パラメータ（MVP）
+- port_level: 0..3
+  0=非港、1=小港、2=地方港、3=大港（交易ハブ）
+- port_kind: sea / river / canal
+  初期は sea のみでよい。river/canal は将来拡張。
+- port_zone: 文字列
+  同一海域/沿岸圏の識別子。将来、海賊・政治・季節効果を掛ける単位。
+- port_traffic_base: 0.0..1.0
+  平時の港交通。MVPは 1.0 固定でもよい。
+
+2.2 データ管理案
+A案: cities.csv に任意列として追加
+  - 既存の読み込みを壊さないため、未入力時はデフォルト値（port_level=0 など）を採用。
+B案: 新CSV city_ports.csv を追加（推奨）
+  city_id,port_level,port_kind,port_zone,port_traffic_base
+
+2.3 水運ルートのデータ（背景物流用）
+- water_routes.csv（新規）
+  route_id,from,to,kind,days,capacity,fee,allowed_categories
+  - kind: coast / canal / river
+  - days: 将来の遅延（配送日数）用。MVPでは参照しないか、常に即時扱い。
+  - capacity: 1日あたりの最大流量（後述）。
+  - fee: 港湾手数料/運賃の概算（都市資金に入れる用途）。
+  - allowed_categories: 例 "bulk|food" のようにフィルタ（未指定なら bulk のみ）。
+
+
+3) 港都市の需要モデル（消費と商流を分離）
+
+3.1 都市消費（cons）= 住民消費 + 港活動消費
+- 住民消費（cons_civic）は既存の cons_per_day を使用。
+- 港活動消費（cons_port）は「少量だけ」上乗せする。
+  目的は “港は補給・修繕で物が動く” の雰囲気付けであり、バランス上は陸路を壊さない強さに留める。
+
+港活動消費のMVP式（推奨）
+- cons_port(city,pid) = port_level(city) * port_traffic(city) * port_cons_coeff[category(pid)]
+
+初期の係数（推奨・小さめ）
+- port_cons_coeff（単位：/日 の上乗せ量）
+  - food: 0.6
+  - materials: 0.25
+  - bulk: 0.10
+  - luxury: 0.0
+  - その他カテゴリ: 0.0
+
+補足
+- food は「船員補給（乾物・飲料含む）」の代表。materials は「ロープ・油脂・板材などの雑多修繕」。bulk は“港内で消えるわけではない”ので極薄。
+- 係数は port_level=3 の大港で「食料が +1.8/日」程度になるイメージ（住民消費を主役にしたまま、港の匂いだけ足す）。
+- 港活動消費を強くしすぎると「港＝常に不足＝価格高騰」になりやすい。
+  → まずは上記の小さめで開始し、必要なら food だけ微調整。
+
+実装上の安全装置
+- port_level==0 の都市は cons_port=0
+- category が未定義の pid は cons_port=0（事故防止）
+
+3.2 商流需要は export_target として target に積む（consには混ぜない）
+- base_target: city_stock.csv の target_stock（または自動補完値）
+- export_target: 港として保持したい追加目標
+- target_eff = base_target + export_target
+
+export_target のMVP案
+- export_target(pid) = port_level * port_traffic * export_coeff[category(pid)]
+
+export_coeff例（初期案）
+- bulk: 8
+- food: 4
+- materials: 3
+- luxury: 0
+
+補足
+- export_target は「毎日消費される」値ではない。
+  → qty が target_eff に近づくほど買い付け圧が弱まり、価格が落ち着く。
+  → qty が target_eff を下回るほど買い付け圧が強まり、価格が上がりやすくなる。
+- 港が“買い集める”動機を、価格変動とNPC商人の行動で自然に表現できる。
+
+3.3 対象品目の初期方針
+- 初期は bulk を中心に水運を効かせる。
+- 例（世界観に合わせて調整）
+  - bulk: 木材、穀物、塩、石材、鉱石
+  - 準bulk: 羊毛、革
+  - luxury: 高級布、宝飾、香料（初期は水運の恩恵を弱く、または無効）
+
+
+4) 背景物流（沿岸・運河）のモデル
+
+方針
+- 「薄く流す」ことで価格差を完全には潰さず、極端な不足だけを緩和する。
+- プレイヤーが陸で運ぶ意味（価格差・イベント・地理）を残す。
+
+4.1 港交通（port_traffic）
+- port_traffic = port_traffic_base * zone_mod
+- MVP: port_traffic_base = 1.0、zone_mod = 1.0（海賊なし）
+
+4.2 日次処理の挿入位置（推奨）
+- World.finalize_day の中で、産業処理の後、消費処理の前に挿入する。
+  理由: 当日生産や加工の結果が港に集まり、同日の消費で使われるイメージに寄せられる。
+- 代替案: 消費後に挿入し、翌日に効かせる（より安定しやすい）。
+
+4.3 物流フロー（MVP: 即時配送、薄流）
+- 各 water_route（A-B）について、対象品目 pid を走査し「余剰→不足」へ少量だけ移す。
+- 対象品目は allowed_categories で制御（MVPは bulk のみ推奨）。
+
+定義
+- target_eff(city,pid) = base_target + export_target
+- surplus(city,pid) = max(0, qty - target_eff * keep_ratio)
+- deficit(city,pid) = max(0, target_eff - qty)
+  keep_ratio は 0.7〜0.95 の範囲で調整。MVP推奨は 0.85。
+
+フロー（擬似）
+- if surplus(A,pid) > 0 and deficit(B,pid) > 0:
+    ship = min(surplus(A,pid), deficit(B,pid), cap(route,pid))
+    qtyA -= ship
+    qtyB += ship
+- elif surplus(B,pid) > 0 and deficit(A,pid) > 0:
+    ship = min(surplus(B,pid), deficit(A,pid), cap(route,pid))
+    qtyB -= ship
+    qtyA += ship
+- else:
+    ship = 0
+
+cap(route,pid)
+- cap = route.capacity * cat_mult[category(pid)] * min(port_traffic(A), port_traffic(B))
+- cat_mult 例
+  - bulk: 1.0
+  - food: 0.7
+  - materials: 0.6
+  - luxury: 0.3（MVPはそもそも対象外推奨）
+
+注意（順序バイアス対策）
+- ルート走査の順序で結果が変わりやすい。
+  → 可能なら「当日分の移動量 delta をいったん集計し、最後に一括反映」する。
+
+4.4 遅延（将来拡張）
+- route.days を使い、ship を即時反映せず in_transit キューに積む。
+- 例: in_transit.append({"arrival_day": day + days, "to": cityB, "pid": pid, "qty": ship})
+- 到着日に qty を加算。
+- 遅延を入れると港の“安定化”が弱まり、ショック表現が強くなる（好みで選択）。
+
+4.5 港湾手数料（都市資金への落ち方）
+- 物流がゼロでも良いが、「港は港で稼ぐ」を入れるなら手数料を足す。
+- fee_total = ship * route.fee
+- 入金先は分かりやすく以下のどちらか
+  - 50:50でAとBに入れる（港使用料の分配）
+  - 到着側Bに寄せる（荷揚げ料の直感）
+
+4.6 バランス指針
+- 物流が強すぎると陸路の意味が消える。
+  推奨目安
+  - 1ルート1品目あたり ship は、対象都市の target_eff の 5〜15%/日 を超えない
+  - capacity は 2〜8 程度から開始（品目の単位感に合わせて調整）
+  - keep_ratio を上げるほど、港が枯れにくくなり、価格差が残りやすい
+
+
+5) 実装メモ（Worldへの差し込み点）
+
+5.1 追加データ
+- city_ports.csv（推奨）
+  city_id,port_level,port_kind,port_zone,port_traffic_base
+- water_routes.csv
+  route_id,from,to,kind,days,capacity,fee,allowed_categories
+
+5.2 World側の保持データ（案）
+- city_ports: Dictionary  # city_id -> {port_level, kind, zone, traffic_base}
+- water_routes: Array[Dictionary]
+- export_coeff_by_category: Dictionary  # "bulk" -> 8 など
+- port_cons_coeff_by_category: Dictionary  # "food" -> 0.6 など
+
+5.3 港活動消費（cons_port）の導入方法（事故りにくい）
+- 消費計算で cons_civic に cons_port を足すだけ。
+- 価格計算が cons を参照している場合でも、港活動消費は小さいので過剰に暴れにくい。
+
+導入位置（例）
+- _calc_cons_for_city_pid(city_id, pid) のような関数があるなら、そこで
+  cons = cons_civic + cons_port
+  とする。
+
+5.4 export_target の導入方法（事故りにくい順）
+A) price計算だけに効かせる（最小）
+- update_prices 内で shortage_ratio を計算する際、target を target_eff に置き換える。
+- qtyやconsの処理は変えない。
+
+B) NPCの行動評価にも効かせる（おすすめ）
+- _best_trade_from など不足スコアを見ている箇所で target_eff を参照。
+- すると港に向けた“持ち込み”が自然に増える。
+
+5.5 背景物流フローの差し込み
+- finalize_day の中に _tick_water_logistics() を追加する。
+  推奨位置: _tick_industries() の後、消費処理（Pass C）の前。
+
+5.6 設計上の安全装置
+- port_level が 0 の都市は water_logistics の対象外。
+- 対象pidはカテゴリフィルタで絞る（bulk優先）。
+- keep_ratio と capacity を低めから開始し、テストで徐々に上げる。
+- port_cons_coeff は「小さめ固定」から開始し、foodのみ微調整。
+
+
+6) UI/情報提示（プレイヤーにどう見せるか）
+
+6.1 最小表示（MVP）
+- 都市名の横にアイコン（港）を表示（port_level>=1）。
+- Trade画面や相場画面で「港交通: 高/中/低」を表示できると理解が速い。
+
+6.2 噂（Rumor）への落とし込み
+- 物流の仕組みを長文で説明するより、噂として結果だけ見せる。
+  例
+  - 「この港は船便が活発で、木材が集まりやすいらしい。」
+  - 「最近は塩の積み出しが増えて、値が落ち着いた。」
+- 実装するなら、当日 ship が一定値を超えた品目を抽選して表示する。
+
+6.3 デバッグ
+- Debugパネルに日次の ship 合計量（ルート別/品目別）を表示できると調整が楽。
+- 物流を強くしすぎたときに即気づける。
+
+
+7) 将来拡張（海賊/運河/河川/契約との接続）
+
+7.1 海賊（後日オンにする）
+- port_zone ごとに piracy_pressure（0.0..1.0）を持つ。
+- zone_mod を以下で作る。
+  - zone_mod = clamp(1.0 - piracy_pressure, 0.0, 1.0)
+- 影響箇所
+  - port_traffic が低下（輸出入が細る）
+  - cap(route,pid) が低下（物流が細る）
+  - 噂やイベントで「欠航」「保険料」などを出せる
+
+7.2 運河/河川
+- 同じ water_routes.csv を使い、kind を canal / river にするだけで同枠に乗る。
+- 運河は capacity は小さめだが安定（zone_mod 影響を弱めるなど）にすると差別化できる。
+
+7.3 契約・委託（世界観の補強）
+- 港限定の契約カテゴリを追加できる。
+  例: 「港に集荷して一定日までに積み出し準備を整える」
+- プレイヤーが直接船を使わなくても、港が“仕事の場”になりやすい。

@@ -1,0 +1,140 @@
+経済プラスα（港都市・背景物流） 実装計画書
+作成日: 2026-01-21
+対象プロジェクト: 商人ゲーム制作（Godot4.3）
+版: v1.0
+
+0. 要旨
+本計画は、現行の陸路中心の行商ゲームを維持しつつ、世界経済としての「水運（沿岸航路・将来の運河/河川）」を背景レイヤとして追加し、港都市の役割（集散・価格安定・需給ショックの入口）を成立させるための実装・データ整備・検証手順をまとめる。
+
+狙いは「プレイヤーが船で移動する」ことではなく、
+1) 港が港らしく見える
+2) 内陸⇄沿岸の価格差・在庫の挙動が説明可能になる
+3) 後日、海賊等のショックを入れても破綻しにくい骨格になる
+…を最小追加要素で達成すること。
+
+1. 背景と課題
+- 都市ノード増加に伴い、物流が陸路（行商人）だけに見える違和感が出やすい。
+- 空ノードが多く、産地・在庫を先に詰めると、後で物流導入時に数値が総崩れしやすい。
+- NPC商人は現状行商人のみ。NPC高度化は工数と調整コストが大きいため、今回は後回しとする。
+
+2. 方針（設計原則）
+A. 主役は陸路の行商（1日単位の道中イベント）を維持
+- 背景物流は「薄く流す」ことで価格差を完全には潰さず、陸路の意味（距離・危険・地理）を残す。
+
+B. 需要を2つに分離して二重計上を避ける
+- 都市消費（cons）: 住民・都市活動で消える需要（現行モデル）
+- 商流需要（買い付け圧）: 転売・積み替えの調達圧力（consに混ぜず target に上乗せ）
+
+C. 実装は「枠→縦スライス→全体展開」
+- まず枠（港活動消費、export_target、薄い背景物流）を最小で入れ、少数都市・少数品目で検証しつつ係数を固める。
+- 全都市・全品目の埋め込みは枠の挙動が安定した後に段階導入。
+
+3. 今回スコープ（MVP）
+3.1 港都市パラメータ
+- port_level: 0..3（0=非港, 1=小港, 2=地方港, 3=大港）
+- port_kind: sea（将来 canal/river）
+- port_zone: 将来の海域制御用（海賊は今回オフ）
+- port_traffic: 平時 1.0（将来ゾーン補正で減衰）
+
+3.2 港活動消費（cons_port）
+- cons = cons_civic + cons_port（少量上乗せ）
+推奨式（MVP）:
+- cons_port(city,pid) = port_level(city) * port_traffic(city) * port_cons_coeff[category(pid)]
+推奨係数（初期）:
+- food: 0.6 / materials: 0.25 / bulk: 0.10 / luxury: 0.0（未定義は0）
+
+3.3 商流需要（買い付け圧）= export_target を target に上乗せ
+- target_eff = base_target + export_target
+- export_target(city,pid) = port_level * port_traffic * export_coeff[category(pid)]
+推奨係数（初期）:
+- bulk: 8 / food: 4 / materials: 3 / luxury: 0
+
+3.4 背景物流（沿岸航路・将来運河）
+- water_routes で都市間を結び、余剰→不足を「薄く」流す。
+- MVPは即時反映（遅延なし）。必要なら route.days による遅延キューへ拡張。
+- 対象品目はまず bulk 中心。
+
+薄流ロジック（MVP）:
+- surplus = max(0, qty - target_eff * keep_ratio)（keep_ratio=0.85推奨）
+- deficit = max(0, target_eff - qty)
+- ship = min(surplus, deficit, cap(route,pid)) を移動
+
+4. 非スコープ（今回やらない）
+- プレイヤーが船で移動するUI（航路選択、海上イベント、乗船操作）
+- 海賊（piracy_pressure、欠航、保険）
+- 船の個体管理（船主・船員・船台）
+- NPC商人の種類増加・高度化（港の大商人、車隊、問屋など）
+※ただし将来拡張のため port_zone、route.days などの枠は残す。
+
+5. 追加データ（案）
+5.1 city_ports.csv（推奨）
+- city_id,port_level,port_kind,port_zone,port_traffic_base
+- 未登録都市は port_level=0 とみなす。
+
+5.2 water_routes.csv
+- route_id,from,to,kind,days,capacity,fee,allowed_categories
+- kind: coast/canal/river（MVPはcoastのみでも可）
+- allowed_categories: "bulk|food" 等（未指定時は bulk のみ）
+
+5.3 カテゴリ対応（products分類との接続）
+- bulk/food/materials/luxury の4分類へマッピング（辞書 or CSV）。
+- 未定義は保守的に「その他」扱い（係数0）で事故防止。
+
+6. 実装タスク（作業分解）
+フェーズ0: 事前確認
+- World日次更新順序（生産/加工→消費→価格等）を確認
+- productsカテゴリの現状を確認（マッピング設計）
+
+フェーズ1: cons_port 導入（低リスク）
+- 消費算出に cons_port を上乗せ
+- デバッグ: 上乗せ量の可視化（港レベル別）
+
+フェーズ2: export_target 導入（効果大）
+- 価格計算の target を target_eff に置換
+- 任意: NPC行商人の不足評価にも target_eff を反映（港へ持ち込みが自然に増える）
+- デバッグ: base_target/export_target/target_eff 内訳表示
+
+フェーズ3: water_routes 薄流導入
+- water_routes 読込、_tick_water_logistics() 追加
+- 順序バイアス対策: delta集計→一括反映（可能なら）
+- デバッグ: ルート別・品目別 ship、cap、keep_ratio
+
+フェーズ4: 縦スライスデータ（検証用）
+- 都市8〜12、品目6〜10で仮データ作成し、30〜90日自動で回す
+- 港1〜2、州都1、産地2、加工1、中継2…を最低限
+
+フェーズ5: チューニング/完了判定
+- keep_ratio/capacity/export_coeff/port_cons_coeff を調整
+
+7. 検証基準（成功条件）
+- 港は bulk が集まりやすく、価格が荒れにくい（完全安定ではない）
+- 内陸は不足が起きやすく、プレイヤー介入余地が残る
+- 背景物流が強すぎて価格差が消えない（薄流維持）
+- 港活動消費が強すぎて港が恒常的な高騰源にならない
+
+8. バランス目安
+- 1ルート1品目の ship は target_eff の 5〜15%/日 を超えない
+- capacity 初期値 2〜8 程度から開始
+- keep_ratio 0.85 基準（上げるほど価格差が残る）
+- 港活動消費は food のみ微調整し、materials/bulkは固定寄り運用が安全
+
+9. 成果物
+- 共有用計画書（本書）
+- 仕様書: 港都市・港湾物流（背景水運）仕様案（rev1）
+- 実装: cons_port / export_target / water_logistics
+- データ: city_ports.csv / water_routes.csv / カテゴリ対応表
+- 検証ログ: 30/90/180日シミュレーション要約
+- デバッグUI: ship量、target_eff内訳、港交通の簡易表示
+
+10. 将来拡張（枠を活かす）
+- 海賊: port_zone + piracy_pressure による port_traffic/capacity 減衰
+- 遅延: route.days による in_transit キュー
+- 運河/河川: kind=canal/river を同枠で追加
+- NPC拡張: 港仲買・車隊・ギルド船などを段階導入
+
+11. 直近の意思決定（着手前に確定したい最小事項）
+- 港都市候補（port_level>=1）を仮割当
+- カテゴリマッピング（粗くてOK）
+- 縦スライス用の都市セット（8〜12）と品目セット（6〜10）
+
+以上
