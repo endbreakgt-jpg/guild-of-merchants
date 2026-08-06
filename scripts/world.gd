@@ -4347,6 +4347,7 @@ func _player_arrive() -> void:
     player["escort_offers"] = []
     generate_escort_offers_for_city(String(player.get("city", "")))
     var city_id := String(player.get("city", ""))
+    _world_message("%sに到着した。" % get_city_name(city_id))
     contracts_try_auto_deliver_at(city_id)
     player_arrived.emit(city_id)
     world_updated.emit()
@@ -6314,7 +6315,7 @@ func _contracts_reputation_delta(contract: Dictionary, result: String) -> float:
         return float(contract.get("rep_failure", contracts_rep_failure_default))
     return 0.0
 
-func _contracts_apply_result(index: int, result: String) -> Dictionary:
+func _contracts_apply_result(index: int, result: String, emit_result_message: bool = true) -> Dictionary:
     if index < 0 or index >= _contracts_active.size():
         return {}
     if result != "done" and result != "expired" and result != "failed":
@@ -6347,7 +6348,7 @@ func _contracts_apply_result(index: int, result: String) -> Dictionary:
     contract["rep_delta_applied"] = applied_delta
     _contracts_active[index] = contract
 
-    if not is_zero_approx(applied_delta):
+    if emit_result_message and not is_zero_approx(applied_delta):
         _world_message("%sの信用 %+0.1f（現在 %.1f）" % [
             province,
             applied_delta,
@@ -6589,7 +6590,7 @@ func contracts_try_auto_deliver_at(city_id: String) -> void:
         player["cash"] = cash_before + reward
 
         # 契約状態を先にdoneへ確定し、通知・診断の失敗で再納品されない順序にする。
-        var resolved := _contracts_apply_result(i, "done")
+        var resolved := _contracts_apply_result(i, "done", false)
         if resolved.is_empty():
             cargo = cargo_before
             cargo_lots = cargo_lots_before
@@ -6599,9 +6600,19 @@ func contracts_try_auto_deliver_at(city_id: String) -> void:
             continue
 
         changed = true
-        _world_message("契約達成: %s を %s に %d 個 納品。報酬 %.0f" % [
-            get_product_name(pid), get_city_name(city_id), need, reward
+        _world_message("契約達成: %s を %s に %d個 納品した。" % [
+            get_product_name(pid), get_city_name(city_id), need
         ])
+        var province := String(resolved.get("rep_province", ""))
+        var rep_delta := float(resolved.get("rep_delta_applied", 0.0))
+        var result_message := "報酬 %.0fG" % reward
+        if province != "":
+            result_message += "／%sの信用 %+0.1f（現在 %.1f）" % [
+                province,
+                rep_delta,
+                get_province_reputation(province),
+            ]
+        _world_message(result_message)
         _contracts_debug_auto_delivery(resolved, city_id, "delivered", have, lot_total, need, deadline_i)
 
     if not active_found:

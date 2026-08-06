@@ -18,6 +18,8 @@ var _auto_travel_dest_city: String = ""
 var _auto_travel_prev_debug_skip: bool = false
 var _auto_travel_dialog_in_use: bool = false
 var _auto_travel_waiting_for_event: bool = false
+var _auto_travel_message_queue: Array[String] = []
+var _auto_travel_message_showing: bool = false
 var _dialog_ui: Node = null
 
 # --- Wait / Time controls ---
@@ -2460,6 +2462,9 @@ func _refresh_event_log() -> void:
     if world and "event_log" in world:
         for m in world.event_log:
             var s := String(m)
+            # 診断行はEXP等のログには保持し、都市画面のプレイヤー向け履歴から除外する。
+            if s.contains("[AUTO納品]"):
+                continue
             if world.has_method("humanize_ids"):
                 s = world.humanize_ids(s)
             lines.append(s)
@@ -2486,6 +2491,12 @@ func _on_supply_event(cid: String, pid: String, qty: int, mode: String, flavor: 
 
     # システムメッセージはトースト/AcceptDialog ではなく DialogPlayer に統一
     if mode == "system":
+        # 自動移動中は進捗表示と通知が同じ Dialog を使うため、専用キューへ積む。
+        # 1件ずつ閉じるまで移動タイマーを止め、道中イベントや到着通知の上書きを防ぐ。
+        if _auto_travel_active:
+            _queue_auto_travel_message(txt)
+            _refresh_event_log()
+            return
         if dialog_player == null:
             _resolve_dialog_player()
         if dialog_player and dialog_player.has_method("show_system_message"):
@@ -2528,7 +2539,17 @@ func _on_supply_event(cid: String, pid: String, qty: int, mode: String, flavor: 
 func _on_dialog_finished_for_auto_travel() -> void:
     if not _auto_travel_active or not _auto_travel_waiting_for_event:
         return
+
+    _auto_travel_message_showing = false
+    if not _auto_travel_message_queue.is_empty():
+        call_deferred("_show_next_auto_travel_message")
+        return
+
     _auto_travel_waiting_for_event = false
+    if world != null and not bool(world.player.get("enroute", false)):
+        _finish_auto_travel_after_notifications()
+        return
+
     if _auto_travel_dialog_in_use:
         _update_travel_progress_text()
     if _auto_travel_timer != null and is_instance_valid(_auto_travel_timer):
@@ -3156,6 +3177,62 @@ func _update_travel_progress_text() -> void:
     lines.append(line)
     _dialog_ui.call("show_lines", lines, "")
 
+func _queue_auto_travel_message(text: String) -> void:
+    var message := text.strip_edges()
+    if message == "":
+        return
+
+    _auto_travel_message_queue.append(message)
+    _auto_travel_waiting_for_event = true
+
+    if _auto_travel_timer != null and is_instance_valid(_auto_travel_timer):
+        _auto_travel_timer.stop()
+
+    call_deferred("_show_next_auto_travel_message")
+
+func _show_next_auto_travel_message() -> void:
+    if not _auto_travel_active or not _auto_travel_waiting_for_event:
+        return
+    if _auto_travel_message_showing:
+        return
+    if _auto_travel_message_queue.is_empty():
+        return
+
+    _ensure_dialog_ui()
+    if _dialog_ui == null or not is_instance_valid(_dialog_ui):
+        # 表示先が無い場合も移動処理を止め続けない。内容は行動ログに残っている。
+        _auto_travel_message_queue.clear()
+        _auto_travel_waiting_for_event = false
+        if world != null and not bool(world.player.get("enroute", false)):
+            _finish_auto_travel_after_notifications()
+        elif _auto_travel_timer != null and is_instance_valid(_auto_travel_timer):
+            _auto_travel_timer.start()
+        return
+
+    var message: String = _auto_travel_message_queue.pop_front()
+    var lines: Array[String] = []
+    lines.append(message)
+    _auto_travel_message_showing = true
+    _auto_travel_dialog_in_use = true
+    _dialog_ui.call("show_lines", lines, "システム")
+
+func _finish_auto_travel_after_notifications() -> void:
+    _auto_travel_active = false
+    _auto_travel_waiting_for_event = false
+    _auto_travel_message_showing = false
+    _auto_travel_message_queue.clear()
+
+    if _auto_travel_timer != null and is_instance_valid(_auto_travel_timer):
+        _auto_travel_timer.stop()
+
+    if _dialog_ui != null and is_instance_valid(_dialog_ui) and _auto_travel_dialog_in_use:
+        _dialog_ui.set("debug_skip_delay", _auto_travel_prev_debug_skip)
+
+    _auto_travel_dialog_in_use = false
+    _auto_travel_dest_city = ""
+    _refresh()
+    _refresh_event_log()
+
 func start_auto_travel() -> void:
     if world == null:
         return
@@ -3180,6 +3257,8 @@ func start_auto_travel() -> void:
 
     _auto_travel_active = true
     _auto_travel_waiting_for_event = false
+    _auto_travel_message_queue.clear()
+    _auto_travel_message_showing = false
 
     _ensure_auto_travel_timer()
     _ensure_dialog_ui()
@@ -3235,6 +3314,8 @@ func _on_auto_travel_tick() -> void:
         world.step_one_day()
 
     _auto_travel_elapsed_days += 1
+    if _auto_travel_waiting_for_event:
+        return
     _update_travel_progress_text()
 
     # この 1 日で到着した場合
@@ -3243,34 +3324,29 @@ func _on_auto_travel_tick() -> void:
 
 
 func _stop_auto_travel(show_arrival: bool) -> void:
+    if show_arrival and _auto_travel_active:
+        var dest_name := ""
+        if world != null and _auto_travel_dest_city != "":
+            if world.cities.has(_auto_travel_dest_city):
+                var city_info: Dictionary = world.cities.get(_auto_travel_dest_city, {}) as Dictionary
+                dest_name = String(city_info.get("name", _auto_travel_dest_city))
+        if dest_name == "":
+            dest_name = "目的地"
+        _queue_auto_travel_message("%sに到着した。" % dest_name)
+        return
+
     _auto_travel_active = false
     _auto_travel_waiting_for_event = false
+    _auto_travel_message_showing = false
+    _auto_travel_message_queue.clear()
 
     if _auto_travel_timer != null and is_instance_valid(_auto_travel_timer):
         _auto_travel_timer.stop()
 
-    var dest_name := ""
-    if world != null and _auto_travel_dest_city != "":
-        if world.cities.has(_auto_travel_dest_city):
-            var city_info : Variant = world.cities.get(_auto_travel_dest_city, {})
-            dest_name = String(city_info.get("name", _auto_travel_dest_city))
-
     if _dialog_ui != null and is_instance_valid(_dialog_ui) and _auto_travel_dialog_in_use:
         # debug_skip_delay を元に戻す
         _dialog_ui.set("debug_skip_delay", _auto_travel_prev_debug_skip)
-
-        if show_arrival:
-            var msg := ""
-            if dest_name != "":
-                msg = "%sに着いた！" % dest_name
-            else:
-                msg = "目的地に着いた！"
-            var lines: Array[String] = []
-            lines.append(msg)
-            _dialog_ui.call("show_lines", lines, "")
-            
-        else:
-            _dialog_ui.call("stop_dialog")
+        _dialog_ui.call("stop_dialog")
 
     _auto_travel_dialog_in_use = false
     _auto_travel_dest_city = ""
