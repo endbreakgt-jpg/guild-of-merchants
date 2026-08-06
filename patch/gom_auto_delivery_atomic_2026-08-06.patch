@@ -1,0 +1,112 @@
+diff --git "a/others/\345\274\225\347\266\231.txt" "b/others/\345\274\225\347\266\231.txt"
+index 96cba41..541c50d 100644
+--- "a/others/\345\274\225\347\266\231.txt"
++++ "b/others/\345\274\225\347\266\231.txt"
+@@ -6,7 +6,7 @@
+ - プロジェクト: guild-of-merchants
+ - Godot 4.3 / GDScript / PC向け体験版
+ - GitHub: https://github.com/endbreakgt-jpg/guild-of-merchants
+-- 適用元コミット: 8c36bbe37f4b7affb17a43bad62fe9f59fed4642（2026-08-06）
++- 適用元コミット: 76a9ede96bbbd1d6841ce1f2bc23ac8f6741b8b7（2026-08-06）
+ - メインシーン: res://scenes/world.tscn
+ - 基準解像度: 1920x1080
+ - 文字コード: UTF-8
+@@ -82,7 +82,8 @@ E. UI / MAP
+ - DBGパネルの不透明化と表示切替、契約ウィンドウの排他制御を修正・検証済み
+ - TEST INV（テスト所持品モード）を実装・実画面検証済み。任意の商品・大切なもの・契約不足品を付与可能
+ - TEST INVの商品・大切なもの選択を、別ポップアップを使わない左右2列のスクロール付きItemListへ変更し、実画面確認済み
+-- 契約受注成功時の排他競合を、安全な子ダイアログと自動納品診断ログで修正済み（実画面確認待ち）
++- 契約受注成功時の排他競合を、安全な子ダイアログで修正済み（実画面確認待ち）
++- 自動納品診断ログの整数IDを`String(...)`へ渡して停止する問題を修正。契約確定後に通知・診断し、確定失敗時は商品・現金・生鮮ロットを復元する（実画面確認待ち）
+ - 契約→MAP→都市復帰→DBGで全入力が停止する未再現事象に対し、MAP非表示中の入力停止、契約Window復元の世代無効化、DBG前整理、Esc終了、`[UI入力]`状態ログを追加（実画面確認待ち）
+ 
+ 3) MAPフェーズの扱い
+@@ -104,6 +105,8 @@ E. UI / MAP
+   - 掲示板から契約を3回受注し、排他ウィンドウエラーが出ないこと
+   - 受注成功通知を閉じた後、通常画面の全ボタンとEXPが反応すること
+   - 目的地到着時に自動納品が成立すること
++  - 商品、現金、信用、契約状態が各1回だけ反映され、`[AUTO納品] result=delivered state=done`が出ること
++  - 同じ都市で再判定しても、達成済み契約が再納品されないこと
+   - 不成立時に[AUTO納品]ログから理由を特定できること
+ - 契約・信用共通基盤の実画面回帰確認
+   - 通常契約の受注一覧表示
+@@ -145,6 +148,9 @@ MAP回帰確認:
+   - 契約解決・信用・保存互換、行動ログ200件とTXT出力、テスト所持品・積載除外・生鮮ロット・契約補充を確認
+   - TEST INVは埋め込みItemList化と動的持ち物ウィンドウ修正まで実画面確認済み
+ - 2026-07-15 契約受注通知の排他競合修正と[AUTO納品]理由ログは実画面確認待ち
++- 2026-08-06 Node17到着時、診断ログが整数の契約IDを`String(...)`へ変換して停止する事象を確認
++  - `str(...)`へ統一し、契約確定後に達成通知と診断ログを出す順序へ変更
++  - 修正前のエラー後状態は商品・報酬だけ反映された可能性があるため、保存せず移動前データへ戻して確認する
+ - 2026-08-06 契約画面終了直後のMAPでGUI入力だけが一時停止する未再現事象を調査
+   - 契約Window共通解放、切替時のexclusive解除、MAP前1フレーム待機、二重遷移防止を追加済み
+   - 追加再現報告を受け、MAP入力の表示期間限定、遅延した契約一覧復元の無効化、DBG前の再整理、埋め込みDBGのEsc終了を追加
+@@ -165,4 +171,4 @@ MAP回帰確認:
+ 
+ 7) 一言メモ
+ - 都市画面とMAP3状態の骨格実装段階は終了
+-- 契約画面終了後のMAP入力と自動納品理由ログを確認後、契約・信用共通基盤の回帰確認とTUT1の縦切りへ進む
++- 自動納品の1回反映とMAP入力回帰を確認後、契約・信用共通基盤の回帰確認とTUT1の縦切りへ進む
+diff --git a/scripts/world.gd b/scripts/world.gd
+index ec9df91..90b39f5 100644
+--- a/scripts/world.gd
++++ b/scripts/world.gd
+@@ -6491,11 +6491,13 @@ func _contracts_debug_auto_delivery(
+     if not OS.is_debug_build():
+         return
+ 
+-    var contract_id := String(contract.get("id", "-"))
+-    var state := String(contract.get("state", "-"))
+-    var kind := String(contract.get("kind", "-"))
+-    var destination := String(contract.get("to", "-"))
+-    var pid := String(contract.get("pid", "-"))
++    # Dictionary値は整数やnullを含み得るため、Stringコンストラクタではなく
++    # Variantを安全に文字列化できるstr()を使う。
++    var contract_id := str(contract.get("id", "-"))
++    var state := str(contract.get("state", "-"))
++    var kind := str(contract.get("kind", "-"))
++    var destination := str(contract.get("to", "-"))
++    var pid := str(contract.get("pid", "-"))
+     var message := "[AUTO納品] result=%s id=%s state=%s kind=%s arrival=%s dest=%s pid=%s have=%d lots=%d need=%d day=%d deadline=%d" % [
+         result,
+         contract_id,
+@@ -6572,21 +6574,35 @@ func contracts_try_auto_deliver_at(city_id: String) -> void:
+         if ct.has("reward_cash"):
+             reward = float(ct.get("reward_cash"))
+ 
++        # 契約確定に失敗した場合に引き渡しだけが残らないよう、復元用状態を保持する。
++        var cash_before := float(player.get("cash", 0.0))
++        var cargo_before := cargo.duplicate(true)
++        var cargo_lots_before := cargo_lots.duplicate(true)
++
+         if _is_perishable(pid):
+             _lots_take(pid, need)
+             cargo[pid] = int(_lots_total(pid))
+         else:
+             cargo[pid] = have - need
+ 
+-        player["cash"] = float(player.get("cash",0.0)) + reward
++        player["cargo"] = cargo
++        player["cash"] = cash_before + reward
+ 
++        # 契約状態を先にdoneへ確定し、通知・診断の失敗で再納品されない順序にする。
++        var resolved := _contracts_apply_result(i, "done")
++        if resolved.is_empty():
++            cargo = cargo_before
++            cargo_lots = cargo_lots_before
++            player["cargo"] = cargo
++            player["cash"] = cash_before
++            _contracts_debug_auto_delivery(ct, city_id, "resolve_failed_rolled_back", have, lot_total, need, deadline_i)
++            continue
++
++        changed = true
+         _world_message("契約達成: %s を %s に %d 個 納品。報酬 %.0f" % [
+             get_product_name(pid), get_city_name(city_id), need, reward
+         ])
+-        _contracts_debug_auto_delivery(ct, city_id, "delivered", have, lot_total, need, deadline_i)
+-        var resolved := _contracts_apply_result(i, "done")
+-        if not resolved.is_empty():
+-            changed = true
++        _contracts_debug_auto_delivery(resolved, city_id, "delivered", have, lot_total, need, deadline_i)
+ 
+     if not active_found:
+         _contracts_debug_auto_delivery({}, city_id, "no_active_contracts")

@@ -1,0 +1,42 @@
+Guild of Merchants 自動納品確定順序 修正概要
+
+TEST-ID: GOM-AUTO-DELIVERY-ATOMIC-20260806
+適用元コミットSHA: 76a9ede96bbbd1d6841ce1f2bc23ac8f6741b8b7
+対象モード: 移動完了 / 契約自動納品
+責務: scripts/world.gd（状態管理）
+
+原因:
+- _contracts_debug_auto_delivery() が整数の契約IDをString(...)へ渡していた。
+- Godot 4.3には整数を受け取るStringコンストラクタがなく、Node17到着時に例外になった。
+- 例外位置が契約結果確定より前だったため、商品と報酬だけ反映され、契約が受注中のまま残る部分適用が起こり得た。
+
+修正内容:
+1. _contracts_debug_auto_delivery()
+   - 辞書由来のid / state / kind / to / pidをstr(...)で安全に文字列化する。
+   - 整数、文字列、null、キー欠落のいずれでも診断ログ作成を停止させない。
+
+2. contracts_try_auto_deliver_at()
+   - 商品引き渡しと報酬反映後、_contracts_apply_result(i, "done")で契約状態を確定する。
+   - 契約確定後の複製resolvedを達成ログへ渡し、state=doneを記録する。
+   - 契約達成メッセージと[AUTO納品]診断を契約確定後へ移動する。
+   - 契約確定が空結果で失敗した場合、商品、現金、生鮮ロットを直前状態へ復元し、result=resolve_failed_rolled_backを記録する。
+
+3. others/引継.txt
+   - 適用元コミット、実装状態、最優先テスト、障害時の注意を更新する。
+
+変更しない範囲:
+- 契約報酬額、信用増減値、期限判定、商品不足判定
+- Node17固有処理
+- MAP、DBG、契約Windowの入力制御
+- セーブ形式
+
+返却形式:
+- world.gdは1000行超のため完成ファイルを同梱しない。
+- 関数差分を含むgit patchで返却する。
+
+検証状況:
+- git diff --check: 成功
+- 基準コミットへのgit apply --check: 成功
+- 適用後2ファイルの完全一致: 成功
+- Godot 4.3実画面: この作業環境にGodot実行ファイルがないため未実施
+- GitHubへのcommit / push: 未実施

@@ -6491,11 +6491,13 @@ func _contracts_debug_auto_delivery(
     if not OS.is_debug_build():
         return
 
-    var contract_id := String(contract.get("id", "-"))
-    var state := String(contract.get("state", "-"))
-    var kind := String(contract.get("kind", "-"))
-    var destination := String(contract.get("to", "-"))
-    var pid := String(contract.get("pid", "-"))
+    # Dictionary値は整数やnullを含み得るため、Stringコンストラクタではなく
+    # Variantを安全に文字列化できるstr()を使う。
+    var contract_id := str(contract.get("id", "-"))
+    var state := str(contract.get("state", "-"))
+    var kind := str(contract.get("kind", "-"))
+    var destination := str(contract.get("to", "-"))
+    var pid := str(contract.get("pid", "-"))
     var message := "[AUTO納品] result=%s id=%s state=%s kind=%s arrival=%s dest=%s pid=%s have=%d lots=%d need=%d day=%d deadline=%d" % [
         result,
         contract_id,
@@ -6572,21 +6574,35 @@ func contracts_try_auto_deliver_at(city_id: String) -> void:
         if ct.has("reward_cash"):
             reward = float(ct.get("reward_cash"))
 
+        # 契約確定に失敗した場合に引き渡しだけが残らないよう、復元用状態を保持する。
+        var cash_before := float(player.get("cash", 0.0))
+        var cargo_before := cargo.duplicate(true)
+        var cargo_lots_before := cargo_lots.duplicate(true)
+
         if _is_perishable(pid):
             _lots_take(pid, need)
             cargo[pid] = int(_lots_total(pid))
         else:
             cargo[pid] = have - need
 
-        player["cash"] = float(player.get("cash",0.0)) + reward
+        player["cargo"] = cargo
+        player["cash"] = cash_before + reward
 
+        # 契約状態を先にdoneへ確定し、通知・診断の失敗で再納品されない順序にする。
+        var resolved := _contracts_apply_result(i, "done")
+        if resolved.is_empty():
+            cargo = cargo_before
+            cargo_lots = cargo_lots_before
+            player["cargo"] = cargo
+            player["cash"] = cash_before
+            _contracts_debug_auto_delivery(ct, city_id, "resolve_failed_rolled_back", have, lot_total, need, deadline_i)
+            continue
+
+        changed = true
         _world_message("契約達成: %s を %s に %d 個 納品。報酬 %.0f" % [
             get_product_name(pid), get_city_name(city_id), need, reward
         ])
-        _contracts_debug_auto_delivery(ct, city_id, "delivered", have, lot_total, need, deadline_i)
-        var resolved := _contracts_apply_result(i, "done")
-        if not resolved.is_empty():
-            changed = true
+        _contracts_debug_auto_delivery(resolved, city_id, "delivered", have, lot_total, need, deadline_i)
 
     if not active_found:
         _contracts_debug_auto_delivery({}, city_id, "no_active_contracts")
