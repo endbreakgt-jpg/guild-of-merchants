@@ -657,6 +657,9 @@ func _ensure_embedded_map_layer() -> void:
 
     embedded_map_layer = map
 
+    if embedded_map_layer.has_method("set_map_input_enabled"):
+        embedded_map_layer.call("set_map_input_enabled", _is_map_mode_open())
+
     if embedded_map_layer.has_signal("city_picked"):
         var cb_pick := Callable(self, "_on_map_city_picked")
         if not embedded_map_layer.is_connected("city_picked", cb_pick):
@@ -683,6 +686,10 @@ func _refresh_map_mode_layout() -> void:
 func _set_map_mode_visible(visible: bool) -> void:
     _ensure_map_mode_root()
 
+    if not visible and embedded_map_layer != null and is_instance_valid(embedded_map_layer):
+        if embedded_map_layer.has_method("set_map_input_enabled"):
+            embedded_map_layer.call("set_map_input_enabled", false)
+
     if city_mode_ui != null and is_instance_valid(city_mode_ui):
         city_mode_ui.visible = show_city_mode_ui and not visible
 
@@ -694,6 +701,9 @@ func _set_map_mode_visible(visible: bool) -> void:
 
     if visible:
         _refresh_map_mode_layout()
+        if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
+            if embedded_map_layer.has_method("set_map_input_enabled"):
+                embedded_map_layer.call("set_map_input_enabled", true)
 
     _refresh_city_action_bar()
     _update_wait_controls_state()
@@ -750,6 +760,7 @@ func _close_map_mode() -> void:
     _map_mode_for_move = false
     _set_map_mode_visible(false)
     _on_popup_visibility_changed()
+    call_deferred("_verify_ui_input_windows_after_frame", "MAP終了後")
 
 func _on_map_header_back_pressed() -> void:
     if _map_screen_state == MapScreenState.TRAVEL_PREP:
@@ -930,6 +941,9 @@ func _toggle_debug() -> void:
     if debug_embed:
         if not is_instance_valid(debug_panel):
             return
+        var opening_debug := not debug_panel.visible
+        if opening_debug:
+            _prepare_for_debug_open()
         _debug_user_open = not debug_panel.visible
         debug_panel.visible = _debug_user_open
         if debug_panel.visible:
@@ -939,16 +953,26 @@ func _toggle_debug() -> void:
                 debug_panel.raise()
             if debug_panel.focus_mode != Control.FOCUS_NONE:
                 debug_panel.grab_focus()
+            call_deferred("_verify_ui_input_windows_after_frame", "DBG表示後")
         return
 
     if is_instance_valid(debug_window):
         _ensure_debug_window_close_behavior()
         _debug_user_open = not debug_window.visible
         if _debug_user_open:
+            _prepare_for_debug_open()
             debug_window.popup_centered()
             debug_window.grab_focus()
+            call_deferred("_verify_ui_input_windows_after_frame", "DBG表示後")
         else:
             debug_window.hide()
+
+func _prepare_for_debug_open() -> void:
+    var contract_windows := _collect_ui_window_states(true)
+    if is_instance_valid(menu_win) and menu_win.has_method("close_contract_windows"):
+        menu_win.call("close_contract_windows")
+    if OS.is_debug_build() and not contract_windows.is_empty():
+        _report_ui_input_windows("DBG表示前に契約Windowを整理", contract_windows, false)
 
 func _ensure_debug_window_close_behavior() -> void:
     if not is_instance_valid(debug_window):
@@ -1040,7 +1064,12 @@ func _handle_esc_event(event: InputEvent) -> void:
             else:
                 menu_win.set("visible", false)
             closed = true
-        if is_instance_valid(debug_window) and debug_window.visible:
+        if debug_embed and is_instance_valid(debug_panel) and debug_panel.visible:
+            _debug_user_open = false
+            debug_panel.hide()
+            closed = true
+        elif is_instance_valid(debug_window) and debug_window.visible:
+            _debug_user_open = false
             debug_window.hide()
             closed = true
 
@@ -1168,12 +1197,12 @@ func _open_map_popup(for_move: bool = false) -> void:
         return
     _map_open_pending = true
 
-    var exclusive_before: Array[String] = _collect_visible_exclusive_windows()
+    var windows_before: Array[String] = _collect_ui_window_states(false)
     if is_instance_valid(menu_win) and menu_win.has_method("prepare_for_map_transition"):
         menu_win.call("prepare_for_map_transition")
 
-    if OS.is_debug_build() and not exclusive_before.is_empty():
-        _report_map_exclusive_windows("整理前", exclusive_before, false)
+    if OS.is_debug_build() and not windows_before.is_empty():
+        _report_ui_input_windows("MAP表示前の整理対象", windows_before, false)
 
     var tree := get_tree()
     if tree == null:
@@ -1182,11 +1211,19 @@ func _open_map_popup(for_move: bool = false) -> void:
     await tree.process_frame
 
     if not is_inside_tree():
+        _map_open_pending = false
         return
 
-    var exclusive_after: Array[String] = _collect_visible_exclusive_windows()
-    if OS.is_debug_build() and not exclusive_after.is_empty():
-        _report_map_exclusive_windows("整理後も残存", exclusive_after, true)
+    var contract_windows_after: Array[String] = _collect_ui_window_states(true)
+    if not contract_windows_after.is_empty():
+        if OS.is_debug_build():
+            _report_ui_input_windows("MAP表示前の整理後も契約Windowが残存", contract_windows_after, true)
+        _map_open_pending = false
+        return
+
+    var windows_after: Array[String] = _collect_ui_window_states(false)
+    if OS.is_debug_build() and not windows_after.is_empty():
+        _report_ui_input_windows("MAP表示前の整理後もWindowが残存", windows_after, true)
 
     _ensure_map_mode_root()
     _ensure_embedded_map_layer()
@@ -1212,9 +1249,10 @@ func _open_map_popup(for_move: bool = false) -> void:
     _set_map_screen_state(MapScreenState.BROWSE)
     _on_popup_visibility_changed()
     _map_open_pending = false
+    call_deferred("_verify_ui_input_windows_after_frame", "MAP表示後")
 
 
-func _collect_visible_exclusive_windows() -> Array[String]:
+func _collect_ui_window_states(contract_related_only: bool) -> Array[String]:
     var result: Array[String] = []
     var tree := get_tree()
     if tree == null or tree.root == null:
@@ -1226,20 +1264,53 @@ func _collect_visible_exclusive_windows() -> Array[String]:
             continue
         if win == tree.root:
             continue
-        if win.visible and win.exclusive:
-            result.append(str(win.get_path()))
+        var is_contract_related := _is_contract_related_window(win)
+        if contract_related_only and not is_contract_related:
+            continue
+        if not contract_related_only:
+            var blocks_input := win.visible and win.exclusive
+            if not is_contract_related and not blocks_input and not win.is_queued_for_deletion():
+                continue
+        result.append("%s [visible=%s, exclusive=%s, queued=%s]" % [
+            str(win.get_path()),
+            str(win.visible),
+            str(win.exclusive),
+            str(win.is_queued_for_deletion()),
+        ])
     return result
 
 
-func _report_map_exclusive_windows(stage: String, paths: Array[String], as_warning: bool) -> void:
-    if paths.is_empty():
+func _is_contract_related_window(win: Window) -> bool:
+    var current: Node = win
+    while current != null:
+        var node_name := String(current.name)
+        if node_name == "ContractsOffersWin" or node_name == "ContractsActiveWin" or node_name == "ContractAcceptInfo":
+            return true
+        current = current.get_parent()
+    return false
+
+
+func _report_ui_input_windows(stage: String, states: Array[String], as_warning: bool) -> void:
+    if states.is_empty():
         return
-    var message := "[MAP入力] %sの可視・排他Window: %s" % [stage, ", ".join(paths)]
+    var message := "[UI入力] %s: %s" % [stage, ", ".join(states)]
     if as_warning:
         push_warning(message)
     else:
         print(message)
     _record_action_log(message)
+
+
+func _verify_ui_input_windows_after_frame(stage: String) -> void:
+    var tree := get_tree()
+    if tree == null:
+        return
+    await tree.process_frame
+    if not is_inside_tree():
+        return
+    var states := _collect_ui_window_states(false)
+    if OS.is_debug_build() and not states.is_empty():
+        _report_ui_input_windows(stage, states, true)
 
 
 

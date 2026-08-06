@@ -121,6 +121,7 @@ var _selected_route: Array[String] = []
 # ---- pick mode ----
 var _pick_mode: bool = false
 var _pick_origin: String = ""
+var _map_input_enabled: bool = true
 
 func _ready() -> void:
     if world == null and world_path != NodePath("") and has_node(world_path):
@@ -131,9 +132,15 @@ func _ready() -> void:
             base_map = tex
     _zoom = clamp(initial_zoom, zoom_min, zoom_max)
     _all_labels = all_labels_default
-    set_process_input(true)
+    set_process_input(_map_input_enabled)
     set_process(true) # ← 追加：毎フレーム処理を有効化
     queue_redraw()
+
+func set_map_input_enabled(enabled: bool) -> void:
+    _map_input_enabled = enabled
+    set_process_input(enabled)
+    if not enabled:
+        _panning = false
 
 func _process(_delta: float) -> void:
     # 安全策：マウス左ボタンが離されていたらパン状態を強制解除
@@ -394,6 +401,9 @@ func _is_pointer_inside_map(screen_position: Vector2) -> bool:
     ).has_point(local_position)
 
 func _input(event: InputEvent) -> void:
+    if not _map_input_enabled or not is_visible_in_tree():
+        return
+
     # ---- All labels toggle key（L）----
     var ke: InputEventKey = event as InputEventKey
     if ke and ke.pressed and not ke.echo:

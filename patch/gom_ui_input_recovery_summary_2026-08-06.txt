@@ -1,0 +1,48 @@
+Guild of Merchants UI入力停止 修正計画A 実装概要
+
+基準コミット:
+8c36bbe37f4b7affb17a43bad62fe9f59fed4642
+
+変更対象:
+- scripts/map_layer.gd
+- ui/game_hud.gd
+- ui/menu_panel.gd
+- others/引継.txt
+
+変更内容:
+1. MAP入力の有効期間を表示中に限定
+- MapLayerにset_map_input_enabled()を追加。
+- MAPを閉じる前にset_process_input(false)とパン状態解除を実行。
+- MAP再表示後だけ入力を再開。
+- _input()に有効フラグとis_visible_in_tree()の二重ガードを追加。
+
+2. DBG表示前の安全整理
+- DBGを開く直前に、MenuPanelが保持する既知の契約Windowを整理。
+- DBGを閉じる操作では整理を実行しない。
+- 埋め込みDBGもEscで閉じ、DebugPanelの既存連動でTEST INVも非表示にする。
+
+3. 契約Windowの遅延復元を無効化
+- 契約Window整理ごとに世代番号を更新。
+- 掲示板終了時に予約された「受注済み一覧へ戻る」処理は、MAP遷移やDBG表示で整理世代が変わった場合に中止。
+- 整理中フラグは少なくとも1フレーム維持し、queue_free()の完了境界を越える。
+
+4. Window状態の診断拡張
+- `[UI入力]`ログにWindowパス、visible、exclusive、queuedを記録。
+- 契約Windowは不可視・非排他でも、解放されずツリー上に残っていれば記録対象。
+- その他のWindowは、可視かつ排他、または解放待ちの場合に記録。
+- MAP表示前の待機後も契約Windowが残る場合は、MAPを開かず入力競合を回避。
+
+変更していない範囲:
+- Node17固有の都市選択、経路計算、移動準備の仕様。
+- 契約の受注、自動納品、報酬、信用のゲーム処理。
+- TEST INVの所持品・積載除外・生鮮ロット処理。
+
+検証状況:
+- git diff --check: 成功
+- 基準コミットへのgit apply --check: 成功
+- 適用後4ファイルの作業版との完全一致: 成功
+- Godot 4.3実画面: 未実施（作業環境にGodot実行バイナリなし）
+
+適用後は同梱の固定IDテスト表
+GOM-UI-INPUT-RECOVERY-20260806
+に沿って確認する。

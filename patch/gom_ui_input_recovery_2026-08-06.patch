@@ -1,0 +1,366 @@
+diff --git "a/others/\345\274\225\347\266\231.txt" "b/others/\345\274\225\347\266\231.txt"
+index db8e6ea..96cba41 100644
+--- "a/others/\345\274\225\347\266\231.txt"
++++ "b/others/\345\274\225\347\266\231.txt"
+@@ -6,7 +6,7 @@
+ - プロジェクト: guild-of-merchants
+ - Godot 4.3 / GDScript / PC向け体験版
+ - GitHub: https://github.com/endbreakgt-jpg/guild-of-merchants
+-- 適用元コミット: 7d2317baaf8c99c986e16792b8387f40dc1bddd7（2026-07-17）
++- 適用元コミット: 8c36bbe37f4b7affb17a43bad62fe9f59fed4642（2026-08-06）
+ - メインシーン: res://scenes/world.tscn
+ - 基準解像度: 1920x1080
+ - 文字コード: UTF-8
+@@ -83,7 +83,7 @@ E. UI / MAP
+ - TEST INV（テスト所持品モード）を実装・実画面検証済み。任意の商品・大切なもの・契約不足品を付与可能
+ - TEST INVの商品・大切なもの選択を、別ポップアップを使わない左右2列のスクロール付きItemListへ変更し、実画面確認済み
+ - 契約受注成功時の排他競合を、安全な子ダイアログと自動納品診断ログで修正済み（実画面確認待ち）
+-- 契約画面終了直後のMAPでGUI入力が一時停止する未再現事象に対し、契約Windowの共通解放、MAP表示前の1フレーム待機、二重遷移防止、DEBUG残存Windowログを追加（実画面確認待ち）
++- 契約→MAP→都市復帰→DBGで全入力が停止する未再現事象に対し、MAP非表示中の入力停止、契約Window復元の世代無効化、DBG前整理、Esc終了、`[UI入力]`状態ログを追加（実画面確認待ち）
+ 
+ 3) MAPフェーズの扱い
+ - 今回対象だった「都市確認から移動判断まで一周できる3状態の骨格」は完了扱い
+@@ -96,10 +96,10 @@ E. UI / MAP
+ 
+ 4) 次タスク
+ 最優先:
+-- 契約受注→契約画面終了→MAP遷移の入力回帰確認
+-  - 通常速度、素早い操作、タイトルバー×の各経路で3〜5回反復
+-  - 右都市一覧、左パネル、MAPノードがすべて反応すること
+-  - `[MAP入力] 整理後も残存` がDebugger・行動ログへ出ないこと
++- 契約受注→MAP遷移→都市復帰→DBG表示の入力回帰確認
++  - 通常速度、素早い操作、タイトルバー×の各経路で5回反復
++  - 右都市一覧、左パネル、DBG、TEST INV、Escがすべて反応すること
++  - `[UI入力] ...残存` が出た場合はWindowのパスとvisible / exclusive / queuedを共有すること
+ - 契約受注後の排他制御と自動納品ログの実画面確認
+   - 掲示板から契約を3回受注し、排他ウィンドウエラーが出ないこと
+   - 受注成功通知を閉じた後、通常画面の全ボタンとEXPが反応すること
+@@ -146,8 +146,9 @@ MAP回帰確認:
+   - TEST INVは埋め込みItemList化と動的持ち物ウィンドウ修正まで実画面確認済み
+ - 2026-07-15 契約受注通知の排他競合修正と[AUTO納品]理由ログは実画面確認待ち
+ - 2026-08-06 契約画面終了直後のMAPでGUI入力だけが一時停止する未再現事象を調査
+-  - 契約Window共通解放、切替時のexclusive解除、MAP前1フレーム待機、二重遷移防止を追加
+-  - DEBUGビルドでは整理前後の可視・排他WindowをDebuggerと行動ログへ記録する
++  - 契約Window共通解放、切替時のexclusive解除、MAP前1フレーム待機、二重遷移防止を追加済み
++  - 追加再現報告を受け、MAP入力の表示期間限定、遅延した契約一覧復元の無効化、DBG前の再整理、埋め込みDBGのEsc終了を追加
++  - DEBUGビルドでは可視、排他、解放待ちを`[UI入力]`でDebuggerと行動ログへ記録する
+   - Godot 4.3での実画面確認は未実施
+ 
+ 6) 実装運用メモ
+diff --git a/scripts/map_layer.gd b/scripts/map_layer.gd
+index 4668afd..a5ee5c6 100644
+--- a/scripts/map_layer.gd
++++ b/scripts/map_layer.gd
+@@ -121,6 +121,7 @@ var _selected_route: Array[String] = []
+ # ---- pick mode ----
+ var _pick_mode: bool = false
+ var _pick_origin: String = ""
++var _map_input_enabled: bool = true
+ 
+ func _ready() -> void:
+     if world == null and world_path != NodePath("") and has_node(world_path):
+@@ -131,10 +132,16 @@ func _ready() -> void:
+             base_map = tex
+     _zoom = clamp(initial_zoom, zoom_min, zoom_max)
+     _all_labels = all_labels_default
+-    set_process_input(true)
++    set_process_input(_map_input_enabled)
+     set_process(true) # ← 追加：毎フレーム処理を有効化
+     queue_redraw()
+ 
++func set_map_input_enabled(enabled: bool) -> void:
++    _map_input_enabled = enabled
++    set_process_input(enabled)
++    if not enabled:
++        _panning = false
++
+ func _process(_delta: float) -> void:
+     # 安全策：マウス左ボタンが離されていたらパン状態を強制解除
+     if _panning and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+@@ -394,6 +401,9 @@ func _is_pointer_inside_map(screen_position: Vector2) -> bool:
+     ).has_point(local_position)
+ 
+ func _input(event: InputEvent) -> void:
++    if not _map_input_enabled or not is_visible_in_tree():
++        return
++
+     # ---- All labels toggle key（L）----
+     var ke: InputEventKey = event as InputEventKey
+     if ke and ke.pressed and not ke.echo:
+diff --git a/ui/game_hud.gd b/ui/game_hud.gd
+index 7ef5a7b..67444f2 100644
+--- a/ui/game_hud.gd
++++ b/ui/game_hud.gd
+@@ -657,6 +657,9 @@ func _ensure_embedded_map_layer() -> void:
+ 
+     embedded_map_layer = map
+ 
++    if embedded_map_layer.has_method("set_map_input_enabled"):
++        embedded_map_layer.call("set_map_input_enabled", _is_map_mode_open())
++
+     if embedded_map_layer.has_signal("city_picked"):
+         var cb_pick := Callable(self, "_on_map_city_picked")
+         if not embedded_map_layer.is_connected("city_picked", cb_pick):
+@@ -683,6 +686,10 @@ func _refresh_map_mode_layout() -> void:
+ func _set_map_mode_visible(visible: bool) -> void:
+     _ensure_map_mode_root()
+ 
++    if not visible and embedded_map_layer != null and is_instance_valid(embedded_map_layer):
++        if embedded_map_layer.has_method("set_map_input_enabled"):
++            embedded_map_layer.call("set_map_input_enabled", false)
++
+     if city_mode_ui != null and is_instance_valid(city_mode_ui):
+         city_mode_ui.visible = show_city_mode_ui and not visible
+ 
+@@ -694,6 +701,9 @@ func _set_map_mode_visible(visible: bool) -> void:
+ 
+     if visible:
+         _refresh_map_mode_layout()
++        if embedded_map_layer != null and is_instance_valid(embedded_map_layer):
++            if embedded_map_layer.has_method("set_map_input_enabled"):
++                embedded_map_layer.call("set_map_input_enabled", true)
+ 
+     _refresh_city_action_bar()
+     _update_wait_controls_state()
+@@ -750,6 +760,7 @@ func _close_map_mode() -> void:
+     _map_mode_for_move = false
+     _set_map_mode_visible(false)
+     _on_popup_visibility_changed()
++    call_deferred("_verify_ui_input_windows_after_frame", "MAP終了後")
+ 
+ func _on_map_header_back_pressed() -> void:
+     if _map_screen_state == MapScreenState.TRAVEL_PREP:
+@@ -930,6 +941,9 @@ func _toggle_debug() -> void:
+     if debug_embed:
+         if not is_instance_valid(debug_panel):
+             return
++        var opening_debug := not debug_panel.visible
++        if opening_debug:
++            _prepare_for_debug_open()
+         _debug_user_open = not debug_panel.visible
+         debug_panel.visible = _debug_user_open
+         if debug_panel.visible:
+@@ -939,17 +953,27 @@ func _toggle_debug() -> void:
+                 debug_panel.raise()
+             if debug_panel.focus_mode != Control.FOCUS_NONE:
+                 debug_panel.grab_focus()
++            call_deferred("_verify_ui_input_windows_after_frame", "DBG表示後")
+         return
+ 
+     if is_instance_valid(debug_window):
+         _ensure_debug_window_close_behavior()
+         _debug_user_open = not debug_window.visible
+         if _debug_user_open:
++            _prepare_for_debug_open()
+             debug_window.popup_centered()
+             debug_window.grab_focus()
++            call_deferred("_verify_ui_input_windows_after_frame", "DBG表示後")
+         else:
+             debug_window.hide()
+ 
++func _prepare_for_debug_open() -> void:
++    var contract_windows := _collect_ui_window_states(true)
++    if is_instance_valid(menu_win) and menu_win.has_method("close_contract_windows"):
++        menu_win.call("close_contract_windows")
++    if OS.is_debug_build() and not contract_windows.is_empty():
++        _report_ui_input_windows("DBG表示前に契約Windowを整理", contract_windows, false)
++
+ func _ensure_debug_window_close_behavior() -> void:
+     if not is_instance_valid(debug_window):
+         return
+@@ -1040,7 +1064,12 @@ func _handle_esc_event(event: InputEvent) -> void:
+             else:
+                 menu_win.set("visible", false)
+             closed = true
+-        if is_instance_valid(debug_window) and debug_window.visible:
++        if debug_embed and is_instance_valid(debug_panel) and debug_panel.visible:
++            _debug_user_open = false
++            debug_panel.hide()
++            closed = true
++        elif is_instance_valid(debug_window) and debug_window.visible:
++            _debug_user_open = false
+             debug_window.hide()
+             closed = true
+ 
+@@ -1168,12 +1197,12 @@ func _open_map_popup(for_move: bool = false) -> void:
+         return
+     _map_open_pending = true
+ 
+-    var exclusive_before: Array[String] = _collect_visible_exclusive_windows()
++    var windows_before: Array[String] = _collect_ui_window_states(false)
+     if is_instance_valid(menu_win) and menu_win.has_method("prepare_for_map_transition"):
+         menu_win.call("prepare_for_map_transition")
+ 
+-    if OS.is_debug_build() and not exclusive_before.is_empty():
+-        _report_map_exclusive_windows("整理前", exclusive_before, false)
++    if OS.is_debug_build() and not windows_before.is_empty():
++        _report_ui_input_windows("MAP表示前の整理対象", windows_before, false)
+ 
+     var tree := get_tree()
+     if tree == null:
+@@ -1182,11 +1211,19 @@ func _open_map_popup(for_move: bool = false) -> void:
+     await tree.process_frame
+ 
+     if not is_inside_tree():
++        _map_open_pending = false
++        return
++
++    var contract_windows_after: Array[String] = _collect_ui_window_states(true)
++    if not contract_windows_after.is_empty():
++        if OS.is_debug_build():
++            _report_ui_input_windows("MAP表示前の整理後も契約Windowが残存", contract_windows_after, true)
++        _map_open_pending = false
+         return
+ 
+-    var exclusive_after: Array[String] = _collect_visible_exclusive_windows()
+-    if OS.is_debug_build() and not exclusive_after.is_empty():
+-        _report_map_exclusive_windows("整理後も残存", exclusive_after, true)
++    var windows_after: Array[String] = _collect_ui_window_states(false)
++    if OS.is_debug_build() and not windows_after.is_empty():
++        _report_ui_input_windows("MAP表示前の整理後もWindowが残存", windows_after, true)
+ 
+     _ensure_map_mode_root()
+     _ensure_embedded_map_layer()
+@@ -1212,9 +1249,10 @@ func _open_map_popup(for_move: bool = false) -> void:
+     _set_map_screen_state(MapScreenState.BROWSE)
+     _on_popup_visibility_changed()
+     _map_open_pending = false
++    call_deferred("_verify_ui_input_windows_after_frame", "MAP表示後")
+ 
+ 
+-func _collect_visible_exclusive_windows() -> Array[String]:
++func _collect_ui_window_states(contract_related_only: bool) -> Array[String]:
+     var result: Array[String] = []
+     var tree := get_tree()
+     if tree == null or tree.root == null:
+@@ -1226,15 +1264,36 @@ func _collect_visible_exclusive_windows() -> Array[String]:
+             continue
+         if win == tree.root:
+             continue
+-        if win.visible and win.exclusive:
+-            result.append(str(win.get_path()))
++        var is_contract_related := _is_contract_related_window(win)
++        if contract_related_only and not is_contract_related:
++            continue
++        if not contract_related_only:
++            var blocks_input := win.visible and win.exclusive
++            if not is_contract_related and not blocks_input and not win.is_queued_for_deletion():
++                continue
++        result.append("%s [visible=%s, exclusive=%s, queued=%s]" % [
++            str(win.get_path()),
++            str(win.visible),
++            str(win.exclusive),
++            str(win.is_queued_for_deletion()),
++        ])
+     return result
+ 
+ 
+-func _report_map_exclusive_windows(stage: String, paths: Array[String], as_warning: bool) -> void:
+-    if paths.is_empty():
++func _is_contract_related_window(win: Window) -> bool:
++    var current: Node = win
++    while current != null:
++        var node_name := String(current.name)
++        if node_name == "ContractsOffersWin" or node_name == "ContractsActiveWin" or node_name == "ContractAcceptInfo":
++            return true
++        current = current.get_parent()
++    return false
++
++
++func _report_ui_input_windows(stage: String, states: Array[String], as_warning: bool) -> void:
++    if states.is_empty():
+         return
+-    var message := "[MAP入力] %sの可視・排他Window: %s" % [stage, ", ".join(paths)]
++    var message := "[UI入力] %s: %s" % [stage, ", ".join(states)]
+     if as_warning:
+         push_warning(message)
+     else:
+@@ -1242,6 +1301,18 @@ func _report_map_exclusive_windows(stage: String, paths: Array[String], as_warni
+     _record_action_log(message)
+ 
+ 
++func _verify_ui_input_windows_after_frame(stage: String) -> void:
++    var tree := get_tree()
++    if tree == null:
++        return
++    await tree.process_frame
++    if not is_inside_tree():
++        return
++    var states := _collect_ui_window_states(false)
++    if OS.is_debug_build() and not states.is_empty():
++        _report_ui_input_windows(stage, states, true)
++
++
+ 
+ func _on_map_background_clicked() -> void:
+     if _map_screen_state == MapScreenState.TRAVEL_PREP:
+diff --git a/ui/menu_panel.gd b/ui/menu_panel.gd
+index 0a4d332..77e0e04 100644
+--- a/ui/menu_panel.gd
++++ b/ui/menu_panel.gd
+@@ -38,6 +38,7 @@ var dlg_load_confirm: ConfirmationDialog
+ var dlg_info: AcceptDialog
+ var _pending_slot: int = 0
+ var _contract_window_cleanup_in_progress: bool = false
++var _contract_window_cleanup_generation: int = 0
+ 
+ # 信用ウィンドウ
+ var trust_win: Window = null
+@@ -644,13 +645,20 @@ func prepare_for_map_transition() -> void:
+ 
+ 
+ func close_contract_windows() -> void:
++    _contract_window_cleanup_generation += 1
++    var cleanup_generation := _contract_window_cleanup_generation
+     _contract_window_cleanup_in_progress = true
+     _release_contract_window(get_node_or_null("ContractsOffersWin") as Window)
+     _release_contract_window(get_node_or_null("ContractsActiveWin") as Window)
+-    call_deferred("_finish_contract_window_cleanup")
++    call_deferred("_finish_contract_window_cleanup", cleanup_generation)
+ 
+ 
+-func _finish_contract_window_cleanup() -> void:
++func _finish_contract_window_cleanup(cleanup_generation: int) -> void:
++    var tree := get_tree()
++    if tree != null:
++        await tree.process_frame
++    if cleanup_generation != _contract_window_cleanup_generation:
++        return
+     _contract_window_cleanup_in_progress = false
+ 
+ 
+@@ -795,6 +803,7 @@ func _on_contracts() -> void:
+ func _open_contracts_window() -> void:
+     if world == null:
+         return
++    _contract_window_cleanup_generation += 1
+     _contract_window_cleanup_in_progress = false
+     var old := get_node_or_null("ContractsActiveWin") as Window
+     if old:
+@@ -1160,19 +1169,22 @@ func _open_contracts_offers_window(return_window: Window = null) -> void:
+ 
+ 
+ func _close_contracts_offers_window(win: Window, return_window: Window = null) -> void:
++    var restore_generation := _contract_window_cleanup_generation
+     if is_instance_valid(win):
+         win.exclusive = false
+         win.hide()
+         if is_instance_valid(return_window) and not _contract_window_cleanup_in_progress:
+-            var restore_callable := Callable(self, "_restore_contracts_active_window").bind(return_window)
++            var restore_callable := Callable(self, "_restore_contracts_active_window").bind(return_window, restore_generation)
+             win.tree_exited.connect(restore_callable, CONNECT_ONE_SHOT)
+         _release_contract_window(win)
+         return
+     if is_instance_valid(return_window) and not _contract_window_cleanup_in_progress:
+-        call_deferred("_restore_contracts_active_window", return_window)
++        call_deferred("_restore_contracts_active_window", return_window, restore_generation)
+ 
+ 
+-func _restore_contracts_active_window(win: Window) -> void:
++func _restore_contracts_active_window(win: Window, restore_generation: int) -> void:
++    if restore_generation != _contract_window_cleanup_generation:
++        return
+     if _contract_window_cleanup_in_progress:
+         return
+     if not is_instance_valid(win):
+

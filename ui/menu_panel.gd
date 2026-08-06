@@ -38,6 +38,7 @@ var dlg_load_confirm: ConfirmationDialog
 var dlg_info: AcceptDialog
 var _pending_slot: int = 0
 var _contract_window_cleanup_in_progress: bool = false
+var _contract_window_cleanup_generation: int = 0
 
 # 信用ウィンドウ
 var trust_win: Window = null
@@ -644,13 +645,20 @@ func prepare_for_map_transition() -> void:
 
 
 func close_contract_windows() -> void:
+    _contract_window_cleanup_generation += 1
+    var cleanup_generation := _contract_window_cleanup_generation
     _contract_window_cleanup_in_progress = true
     _release_contract_window(get_node_or_null("ContractsOffersWin") as Window)
     _release_contract_window(get_node_or_null("ContractsActiveWin") as Window)
-    call_deferred("_finish_contract_window_cleanup")
+    call_deferred("_finish_contract_window_cleanup", cleanup_generation)
 
 
-func _finish_contract_window_cleanup() -> void:
+func _finish_contract_window_cleanup(cleanup_generation: int) -> void:
+    var tree := get_tree()
+    if tree != null:
+        await tree.process_frame
+    if cleanup_generation != _contract_window_cleanup_generation:
+        return
     _contract_window_cleanup_in_progress = false
 
 
@@ -795,6 +803,7 @@ func _on_contracts() -> void:
 func _open_contracts_window() -> void:
     if world == null:
         return
+    _contract_window_cleanup_generation += 1
     _contract_window_cleanup_in_progress = false
     var old := get_node_or_null("ContractsActiveWin") as Window
     if old:
@@ -1160,19 +1169,22 @@ func _open_contracts_offers_window(return_window: Window = null) -> void:
 
 
 func _close_contracts_offers_window(win: Window, return_window: Window = null) -> void:
+    var restore_generation := _contract_window_cleanup_generation
     if is_instance_valid(win):
         win.exclusive = false
         win.hide()
         if is_instance_valid(return_window) and not _contract_window_cleanup_in_progress:
-            var restore_callable := Callable(self, "_restore_contracts_active_window").bind(return_window)
+            var restore_callable := Callable(self, "_restore_contracts_active_window").bind(return_window, restore_generation)
             win.tree_exited.connect(restore_callable, CONNECT_ONE_SHOT)
         _release_contract_window(win)
         return
     if is_instance_valid(return_window) and not _contract_window_cleanup_in_progress:
-        call_deferred("_restore_contracts_active_window", return_window)
+        call_deferred("_restore_contracts_active_window", return_window, restore_generation)
 
 
-func _restore_contracts_active_window(win: Window) -> void:
+func _restore_contracts_active_window(win: Window, restore_generation: int) -> void:
+    if restore_generation != _contract_window_cleanup_generation:
+        return
     if _contract_window_cleanup_in_progress:
         return
     if not is_instance_valid(win):
