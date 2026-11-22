@@ -116,6 +116,7 @@ var tutorial_progress: Dictionary = {}
 @export_range(0.0, 1.0, 0.01) var rumor_acc_target: float = 0.98
 
 @export var use_event_dice: bool = true             # イベントダイスを使う（HUDが可視化→解決を呼ぶ）
+@export var enable_travel_events: bool = true      # 移動イベント専用（経済テスト時はシーン側でOFF）
 @export var daily_event_prob: float = 0.40
 
 @export var weekly_report_interval_days: int = 7
@@ -1333,6 +1334,8 @@ func resolve_daily_with_roll(roll: int) -> void:
     _apply_daily_event(ev)
 
 func resolve_travel_with_roll(roll: int, q: float = -1.0) -> void:
+    if not enable_travel_events:
+        return
     if not bool(player.get("enroute", false)):
         return
 
@@ -1903,6 +1906,8 @@ func _roll_daily_event() -> void:
 
 
 func _roll_travel_event_for_player() -> void:
+    if not enable_travel_events:
+        return
     if _events_travel.size() == 0:
         return
     if not bool(player.get("enroute", false)):
