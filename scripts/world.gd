@@ -264,6 +264,7 @@ var _effects_active: Array[Dictionary] = []  # 効果レイヤ（kind, target_ci
 # 週報（Weekly Reports）
 var intel_provinces: Array[String] = []
 var weekly_reports: Array[Dictionary] = []
+var _market_weekly_intel_by_prov: Dictionary = {}
 var _last_snapshot_by_prov: Dictionary = {}   # prov -> {day, rows}
 var _prev_snapshot_by_prov: Dictionary = {}   # ★追加：prov -> {day, rows}（一週前の「先週」）
 
@@ -5220,6 +5221,11 @@ func _make_save_payload() -> Dictionary:
         "_shortage_ema": _shortage_ema,
         "_effects_active": _effects_active,
 
+        # 受信済みの市場情報と、次回週報の生成に必要な観測履歴。
+        "weekly_market_intel": _market_weekly_intel_by_prov,
+        "weekly_last_snapshot_by_prov": _last_snapshot_by_prov,
+        "weekly_prev_snapshot_by_prov": _prev_snapshot_by_prov,
+
         # 天候（先読み）
         "_weather": {
             "start_day": _weather_forecast_start_day,
@@ -5273,6 +5279,11 @@ func _apply_save_payload(data: Dictionary) -> void:
 
     var state: Dictionary = (data.get("state", {}) as Dictionary)
     day = int(state.get("day", day))
+
+    # 旧セーブでは空から開始し、直前のプレイ状態を持ち越さない。
+    _market_weekly_intel_by_prov = state.get("weekly_market_intel", {}) as Dictionary
+    _last_snapshot_by_prov = state.get("weekly_last_snapshot_by_prov", {}) as Dictionary
+    _prev_snapshot_by_prov = state.get("weekly_prev_snapshot_by_prov", {}) as Dictionary
 
     if state.has("player"):
         player = state.get("player") as Dictionary
@@ -5640,7 +5651,6 @@ func _generate_weekly_reports() -> void:
                 payload["text"] = text
                 payload["delayed"] = true
                 payload["basis_allowed"] = false
-                weekly_report.emit(prov, payload)
             else:
                 payload["delayed"] = true
                 payload["basis_allowed"] = true
@@ -5701,7 +5711,6 @@ func _generate_weekly_reports() -> void:
 
                 # 見出しはHUD側で生成するため簡易文言のみ
                 payload["text"] = "[週報（遅延）] %s  観測Day %d / 受信Day %d" % [prov, int(payload["obs_day"]), day]
-                weekly_report.emit(prov, payload)
         else:
             # ---- 非遅延（通常）週報 ----
             if prev.is_empty():
@@ -5714,7 +5723,6 @@ func _generate_weekly_reports() -> void:
                     var __watch_first__ := _compute_watchlist_from_rows(cur.get("rows", []), weekly_report_top_n)
                     payload["watch_scarcity"] = __watch_first__.get("scarcity", [])
                     payload["watch_surplus"]  = __watch_first__.get("surplus", [])
-                weekly_report.emit(prov, payload)
             else:
                 # 上下トップ（prev→cur の率変化）
                 var diffs: Array[Dictionary] = _compute_weekly_changes(prev, cur)
@@ -5763,12 +5771,74 @@ func _generate_weekly_reports() -> void:
                 payload["watch_scarcity"] = __watch_now__.get("scarcity", [])
                 payload["watch_surplus"]  = __watch_now__.get("surplus", [])
 
-                weekly_report.emit(prov, payload)
-
         # スナップショット更新
         if not prev.is_empty():
             _prev_snapshot_by_prov[prov] = prev
         _last_snapshot_by_prov[prov] = cur
+        _capture_weekly_market_intel(prov, payload)
+        weekly_report.emit(prov, payload)
+
+func _capture_weekly_market_intel(prov: String, payload: Dictionary) -> void:
+    if prov == "" or prov == "World (ALL)":
+        return
+
+    # 配信された価格行だけを使う。遅延週報の初回通知には価格行がない。
+    var rows: Array = payload.get("rows_delayed", payload.get("rows", []))
+    var mids_by_product: Dictionary = {}
+    for row in rows:
+        if not bool(row.get("has_stock", false)):
+            continue
+        var city_id: String = String(row.get("city", ""))
+        var pid: String = String(row.get("pid", ""))
+        var mid: float = float(row.get("mid", 0.0))
+        if city_id == "" or pid == "" or mid <= 0.0 or not is_finite(mid):
+            continue
+        if _city_province(city_id) != prov:
+            continue
+        if not mids_by_product.has(pid):
+            mids_by_product[pid] = {}
+        var mids_by_city: Dictionary = mids_by_product[pid]
+        if not mids_by_city.has(city_id):
+            mids_by_city[city_id] = mid
+
+    var averages: Dictionary = {}
+    for pid in mids_by_product:
+        var mids_by_city: Dictionary = mids_by_product[pid]
+        var total: float = 0.0
+        for mid in mids_by_city.values():
+            total += float(mid)
+        averages[pid] = total / float(mids_by_city.size())
+
+    if averages.is_empty():
+        if payload.has("rows_delayed") or payload.has("rows"):
+            _market_weekly_intel_by_prov.erase(prov)
+        return
+    _market_weekly_intel_by_prov[prov] = {
+        "observed_day": int(payload.get("obs_day", day)),
+        "received_day": day,
+        "avg_mid_by_pid": averages,
+    }
+
+
+func get_weekly_market_regions() -> Array[String]:
+    var regions: Array[String] = []
+    for prov in _market_weekly_intel_by_prov:
+        regions.append(String(prov))
+    regions.sort()
+    return regions
+
+
+func get_weekly_market_average(prov: String, pid: String) -> Dictionary:
+    var record: Dictionary = _market_weekly_intel_by_prov.get(prov, {})
+    var averages: Dictionary = record.get("avg_mid_by_pid", {})
+    if not averages.has(pid):
+        return {}
+    return {
+        "average_mid": float(averages[pid]),
+        "observed_day": int(record["observed_day"]),
+        "received_day": int(record["received_day"]),
+    }
+
 
 func _make_weekly_summary_text(title: String, prev: Dictionary, cur: Dictionary) -> String:
     # prev / cur は _make_price_snapshot_for_province() の戻り値

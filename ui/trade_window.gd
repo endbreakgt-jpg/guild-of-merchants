@@ -22,6 +22,9 @@ var m_buy_btn: Button
 var m_sell_btn: Button
 var m_max_btn: Button
 var m_info: RichTextLabel
+var m_weekly_region: OptionButton
+var _weekly_regions: Array[String] = []
+var _weekly_selected_region: String = ""
 
 var c_list: ItemList
 var c_qty: SpinBox
@@ -55,6 +58,7 @@ func _ready() -> void:
 
     if world and not world.world_updated.is_connected(Callable(self, "_on_world_updated")):
         world.world_updated.connect(_on_world_updated)
+        world.weekly_report.connect(_on_weekly_report_for_market)
 
     if has_signal("close_requested"):
         close_requested.connect(func():
@@ -117,6 +121,7 @@ func _show_page(mode: int) -> void:
         MODE_MARKET:
             _build_market_if_needed()
             page_market.visible = true
+            _refresh_weekly_region_options()
             _market_rebuild_lists()
             _market_refresh()
         MODE_CONSIGN:
@@ -206,6 +211,20 @@ func _build_market_if_needed() -> void:
     m_inventory_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     m_inventory_list.custom_minimum_size = Vector2(260, 220)
     right.add_child(m_inventory_list)
+
+    var weekly_row := HBoxContainer.new()
+    weekly_row.add_theme_constant_override("separation", 8)
+    vb.add_child(weekly_row)
+
+    var weekly_label := Label.new()
+    weekly_label.text = "週報比較地域"
+    weekly_row.add_child(weekly_label)
+
+    m_weekly_region = OptionButton.new()
+    m_weekly_region.name = "WeeklyRegion"
+    m_weekly_region.custom_minimum_size.x = 210
+    m_weekly_region.item_selected.connect(_on_weekly_region_selected)
+    weekly_row.add_child(m_weekly_region)
 
     m_info = RichTextLabel.new(); m_info.name = "Info"
     m_info.bbcode_enabled = true
@@ -317,6 +336,7 @@ func _on_world_updated() -> void:
     if page_market and m_product_list and m_product_list.item_count > 0:
         keep = _cur_pid_market()
     if page_market:
+        _refresh_weekly_region_options()
         _market_rebuild_lists(keep)
         _market_refresh()
     if page_consign:
@@ -324,6 +344,42 @@ func _on_world_updated() -> void:
         _consign_refresh()
     if page_fair:
         _fair_refresh()
+
+func _refresh_weekly_region_options() -> void:
+    if world == null:
+        return
+    var regions: Array[String] = world.get_weekly_market_regions()
+    if regions == _weekly_regions and m_weekly_region.item_count > 0:
+        return
+
+    _weekly_regions = regions
+    m_weekly_region.clear()
+    m_weekly_region.disabled = regions.is_empty()
+    if regions.is_empty():
+        _weekly_selected_region = ""
+        m_weekly_region.add_item("週報未受信")
+        m_weekly_region.select(0)
+        return
+
+    for region in regions:
+        m_weekly_region.add_item(region)
+    if not regions.has(_weekly_selected_region):
+        var city_id: String = String(world.player.get("city", ""))
+        var current_region: String = String(world.cities.get(city_id, {}).get("province", ""))
+        _weekly_selected_region = regions[0]
+        if regions.has(current_region):
+            _weekly_selected_region = current_region
+    m_weekly_region.select(regions.find(_weekly_selected_region))
+
+func _on_weekly_region_selected(index: int) -> void:
+    _weekly_selected_region = _weekly_regions[index]
+    _market_refresh()
+
+func _on_weekly_report_for_market(_province: String, _payload: Dictionary) -> void:
+    if not visible or page_market == null or not page_market.visible:
+        return
+    _refresh_weekly_region_options()
+    _market_refresh()
 
 func _market_rebuild_lists(keep_pid: String = "") -> void:
     if page_market == null or world == null: return
@@ -399,6 +455,7 @@ func _market_refresh() -> void:
             var tax: float = float(bid) * float(qty) * float(world.trade_tax_rate)
             var est: float = float(qty) * (bid - ask) - tax
             txt += "\n仮益（同都市）: %.1f" % est
+        txt += _weekly_market_comparison_text(cid, pid)
     if pid != "" and int(m_qty_spin.value) > 0 and world.has_method("_route_days") and world.has_method("_route_toll"):
         var pv_lines: Array = []
         var qtyp: int = int(m_qty_spin.value)
@@ -429,6 +486,34 @@ func _market_refresh() -> void:
     var disabled := moving
     m_buy_btn.disabled = disabled
     m_sell_btn.disabled = disabled
+
+func _weekly_market_comparison_text(city_id: String, pid: String) -> String:
+    var heading: String = "\n\n[b]週報による地域価格比較[/b]\n"
+    if _weekly_selected_region == "":
+        return heading + "週報未受信"
+
+    var info: Dictionary = world.get_weekly_market_average(_weekly_selected_region, pid)
+    if info.is_empty():
+        return heading + "%s / この商品の価格情報なし" % _weekly_selected_region
+
+    var average_mid: float = float(info["average_mid"])
+    var local_mid: float = world.get_mid_price(city_id, pid)
+    var details: String = "比較地域 %s  /  週報平均中値 %.1f G\n当地中値 %.1f G" % [
+        _weekly_selected_region, average_mid, local_mid,
+    ]
+    if local_mid <= 0.0 or average_mid <= 0.0 or not is_finite(local_mid) or not is_finite(average_mid):
+        details += "  /  比較不可"
+    else:
+        var pct: float = snappedf((local_mid / average_mid - 1.0) * 100.0, 0.1)
+        var direction: String = "地域平均と同水準"
+        if pct < 0.0:
+            direction = "地域平均より安い"
+        elif pct > 0.0:
+            direction = "地域平均より高い"
+        details += "  /  週報比 %+.1f%%（%s）" % [pct, direction]
+
+    details += "\n観測 Day %d  /  受信 Day %d" % [info["observed_day"], info["received_day"]]
+    return heading + details
 
 func _on_max() -> void:
     if world == null: return
