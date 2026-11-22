@@ -1,0 +1,23 @@
+TEST-ID: DOCS-REORG-2026-11-22
+対象: others配下資料整理 + PR標準運用の文書変更
+適用元mainコミット: e8315f09a6738b8a9ed6ba098f0309f927eca454
+実施環境: GitHubのブランチ差分（Godot実画面対象外）
+変更種別: ドキュメント／参照パス（稼働コードは変更しない）
+
+A-01 操作: PRの変更一覧でothers直下を確認
+期待結果: 入口のはじめに・引継・憲法・索引とMAP素材だけが残る
+A-02 操作: others/README.mdからspecs/reference/archive/testsの索引を開く
+期待結果: 各文書の配置を追跡できる
+A-03 操作: 旧others/完了/のCSVと.importを比較
+期待結果: CSV本文は不変、importのsource_file/dest_filesは移動後のパスになっている
+A-04 操作: MAPnew.pngとMAPnew.png.importの差分を確認
+期待結果: 現位置・内容ともに変更なし
+B-01 操作: はじめに.txtの承認とGitHub運用を確認
+期待結果: 計画承認後は作業ブランチで実装・PR、mainマージは別承認
+B-02 操作: 引継.txtを参照
+期待結果: 古い固定SHAやローカル差分適用前提が現行ルールとして残っていない
+B-03 操作: 本PRの内容を確認
+期待結果: GDScript、シーン、CSV本番データ、MAP素材には機能変更なし
+
+結果: GitHub API上の移動・作成反映はコミット後に確認。
+      Godot 4.3の再インポート・UI起動テストは未実施。
