@@ -1,0 +1,13 @@
+# 移動イベント独立スイッチ：検証票
+2026-11-22 / Godot 4.3
+状態: 静的チェック済み。Godot 4.3実機テスト未実施。
+適用元main: 38b267ea2ea5d85e6b1c1de63fa16846d3582dd5
+
+A-01 [未実施] World Inspector: use_event_dice=false、enable_travel_events=falseになっている。
+A-02 [未実施] Day 121（Pilton、空荷）のセーブからDurtonへ移動。日数と費用をメモし、移動イベント通知がなく正常到着する。
+A-03 [未実施] Inspectorでenable_travel_events=trueにした別のテスト実行で、旧式移動抽選が従来どおり呼ばれる。
+B-01 [未実施] use_event_dice=true、enable_travel_events=falseで出発。移動イベントダイスは表示されず、日次処理と到着が進む。
+B-02 [未実施] use_event_dice=true、enable_travel_events=trueで出発。従来どおり移動イベントダイスが表示される。
+B-03 [未実施] 都市内でuse_event_dice=trueの日次イベントは維持。
+B-04 [未実施] Day 121セーブのロード、通常売買、Day更新、週報、EXPを確認。
+注意: 日次の天候・コンディション、滞在費等は独立した処理。本スイッチでは無効化しない。
