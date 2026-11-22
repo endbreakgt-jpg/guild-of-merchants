@@ -457,29 +457,50 @@ func _market_refresh() -> void:
             txt += "\n仮益（同都市）: %.1f" % est
         txt += _weekly_market_comparison_text(cid, pid)
     if pid != "" and int(m_qty_spin.value) > 0 and world.has_method("_route_days") and world.has_method("_route_toll"):
-        var pv_lines: Array = []
+        # 遠方の現在価格を覗かず、受信済み週報の都市別観測売値だけを参照する。
+        var pv_lines: Array[Dictionary] = []
         var qtyp: int = int(m_qty_spin.value)
         var tcost: float = float(world.travel_cost_per_day)
         var taxr: float = float(world.trade_tax_rate)
-        for dest in world.cities.keys():
-            if String(dest) == cid: continue
-            var d: int = int(world._route_days(cid, String(dest)))
-            if d <= 0: continue
-            var toll: float = float(world._route_toll(cid, String(dest)))
-            var bid2: float = float(world.get_bid_price(String(dest), pid))
-            var ask2: float = float(world.get_ask_price(cid, pid))
-            var net: float = float(qtyp) * (bid2 * (1.0 - taxr) - ask2) - float(d) * tcost - toll
-            var per_day: float = (net / float(d)) if d > 0 else 0.0
-            pv_lines.append({"dest": String(dest), "days": d, "net": net, "per": per_day})
-        pv_lines.sort_custom(func(a, b): return a["net"] > b["net"]) 
-        var show_n: int = min(3, pv_lines.size())
-        if show_n > 0:
-            txt += "\n利益プレビュー:"
+        var ask2: float = float(world.get_ask_price(cid, pid))
+        for quote in world.get_weekly_market_city_bids(pid):
+            var dest: String = String(quote.get("city", ""))
+            if dest == "" or dest == cid:
+                continue
+            var d: int = int(world._route_days(cid, dest))
+            if d <= 0:
+                continue
+            var toll: float = float(world._route_toll(cid, dest))
+            var observed_bid: float = float(quote.get("bid", 0.0))
+            var net: float = float(qtyp) * (observed_bid * (1.0 - taxr) - ask2) - float(d) * tcost - toll
+            var per_day: float = net / float(d)
+            pv_lines.append({
+                "dest": dest,
+                "days": d,
+                "net": net,
+                "per": per_day,
+                "observed_day": int(quote.get("observed_day", 0)),
+                "received_day": int(quote.get("received_day", 0)),
+            })
+
+        pv_lines.sort_custom(func(a, b): return float(a["net"]) > float(b["net"]))
+        txt += "\n週報に基づく推定利益（到着時の価格変動は未反映）:"
+        if pv_lines.is_empty():
+            txt += "\n週報に基づく候補なし（未受信地域・商品は対象外）"
+        else:
+            var show_n: int = min(3, pv_lines.size())
             for i in range(show_n):
-                var rec = pv_lines[i]
+                var rec: Dictionary = pv_lines[i]
                 var dcity: String = String(rec["dest"])
                 var dname: String = String(world.cities.get(dcity, {}).get("name", dcity))
-                txt += "\n%s: %+0.1f (/日 %+0.1f, %d日)" % [dname, float(rec["net"]), float(rec["per"]), int(rec["days"])]
+                txt += "\n%s: %+0.1f G (/日 %+0.1f, %d日) [観測Day %d / 受信Day %d]" % [
+                    dname,
+                    float(rec["net"]),
+                    float(rec["per"]),
+                    int(rec["days"]),
+                    int(rec["observed_day"]),
+                    int(rec["received_day"]),
+                ]
     m_info.text = txt
 
     var moving := bool(world.player.get("enroute", false))
