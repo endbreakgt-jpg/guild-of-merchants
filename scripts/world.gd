@@ -116,6 +116,7 @@ var tutorial_progress: Dictionary = {}
 @export_range(0.0, 1.0, 0.01) var rumor_acc_target: float = 0.98
 
 @export var use_event_dice: bool = true             # イベントダイスを使う（HUDが可視化→解決を呼ぶ）
+@export var enable_travel_events: bool = true      # 移動イベント専用（経済テスト時はシーン側でOFF）
 @export var daily_event_prob: float = 0.40
 
 @export var weekly_report_interval_days: int = 7
@@ -1333,6 +1334,8 @@ func resolve_daily_with_roll(roll: int) -> void:
     _apply_daily_event(ev)
 
 func resolve_travel_with_roll(roll: int, q: float = -1.0) -> void:
+    if not enable_travel_events:
+        return
     if not bool(player.get("enroute", false)):
         return
 
@@ -1903,6 +1906,8 @@ func _roll_daily_event() -> void:
 
 
 func _roll_travel_event_for_player() -> void:
+    if not enable_travel_events:
+        return
     if _events_travel.size() == 0:
         return
     if not bool(player.get("enroute", false)):
@@ -5782,10 +5787,15 @@ func _capture_weekly_market_intel(prov: String, payload: Dictionary) -> void:
     if prov == "" or prov == "World (ALL)":
         return
 
-    # 配信された価格行だけを使う。遅延週報の初回通知には価格行がない。
+    # 受信した週報の観測値のみを保存する。現在の世界価格は参照しない。
+    # 遅延週報の初回通知は価格行を持たないため、保存済み情報を変更しない。
     var rows: Array = payload.get("rows_delayed", payload.get("rows", []))
     var mids_by_product: Dictionary = {}
-    for row in rows:
+    var bids_by_product: Dictionary = {}
+    for row_any in rows:
+        if not row_any is Dictionary:
+            continue
+        var row: Dictionary = row_any
         if not bool(row.get("has_stock", false)):
             continue
         var city_id: String = String(row.get("city", ""))
@@ -5795,11 +5805,22 @@ func _capture_weekly_market_intel(prov: String, payload: Dictionary) -> void:
             continue
         if _city_province(city_id) != prov:
             continue
+
         if not mids_by_product.has(pid):
             mids_by_product[pid] = {}
         var mids_by_city: Dictionary = mids_by_product[pid]
         if not mids_by_city.has(city_id):
             mids_by_city[city_id] = mid
+
+        # 売値は週報スナップショットのbid。推定利益専用で中値とは混同しない。
+        var observed_bid: float = float(row.get("bid", 0.0))
+        if observed_bid <= 0.0 or not is_finite(observed_bid):
+            continue
+        if not bids_by_product.has(pid):
+            bids_by_product[pid] = {}
+        var bids_by_city: Dictionary = bids_by_product[pid]
+        if not bids_by_city.has(city_id):
+            bids_by_city[city_id] = observed_bid
 
     var averages: Dictionary = {}
     for pid in mids_by_product:
@@ -5813,11 +5834,46 @@ func _capture_weekly_market_intel(prov: String, payload: Dictionary) -> void:
         if payload.has("rows_delayed") or payload.has("rows"):
             _market_weekly_intel_by_prov.erase(prov)
         return
+
     _market_weekly_intel_by_prov[prov] = {
         "observed_day": int(payload.get("obs_day", day)),
         "received_day": day,
         "avg_mid_by_pid": averages,
+        "bid_by_pid_by_city": bids_by_product,
     }
+
+
+# 利益プレビュー用: 受信済み週報の都市別売値だけを返す。
+# 地域比較用プルダウンの選択には依存せず、取得済みの全地域を参照する。
+func get_weekly_market_city_bids(pid: String) -> Array[Dictionary]:
+    var destinations: Array[Dictionary] = []
+    if pid == "":
+        return destinations
+
+    for prov_any in _market_weekly_intel_by_prov.keys():
+        var prov: String = String(prov_any)
+        if prov == "" or prov == "World (ALL)":
+            continue
+
+        var record: Dictionary = _market_weekly_intel_by_prov.get(prov, {})
+        var by_product: Dictionary = record.get("bid_by_pid_by_city", {})
+        var by_city: Dictionary = by_product.get(pid, {})
+        for city_any in by_city.keys():
+            var city_id: String = String(city_any)
+            if not cities.has(city_id) or _city_province(city_id) != prov:
+                continue
+            var observed_bid: float = float(by_city[city_any])
+            if observed_bid <= 0.0 or not is_finite(observed_bid):
+                continue
+            destinations.append({
+                "city": city_id,
+                "province": prov,
+                "bid": observed_bid,
+                "observed_day": int(record.get("observed_day", 0)),
+                "received_day": int(record.get("received_day", 0)),
+            })
+
+    return destinations
 
 
 func get_weekly_market_regions() -> Array[String]:

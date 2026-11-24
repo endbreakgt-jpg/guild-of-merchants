@@ -579,8 +579,9 @@ func _trigger_event_rolls() -> void:
         moving = bool(world.player.get("enroute", false))
 
     if moving:
-        # 移動中は「移動イベントダイス」だけ振る
-        await show_event_roll("travel", -1.0)
+        # 経済テスト中は移動イベントを表示せず、日次処理のみを継続する。
+        if world.enable_travel_events:
+            await show_event_roll("travel", -1.0)
     else:
         # 通常時は従来どおり日次イベントダイス
         await show_event_roll("daily")

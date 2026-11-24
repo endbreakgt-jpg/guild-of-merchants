@@ -1,0 +1,26 @@
+# 経済テスト向け移動イベント独立ON/OFF
+日付: 2026-11-22
+対象: Godot 4.3
+対象コード: scripts/world.gd / ui/game_hud.gd / scenes/world.tscn
+
+## 背景
+現行のworld.tscnはuse_event_dice=falseだが、world.gdのstep_one_dayは旧式の_roll_travel_event_for_playerを呼ぶ。従って移動中に日数変更・貨物損失などのランダムイベントが発生し得る。経済テストの比較条件を汚染する。
+
+## 決定
+1. Worldに@export var enable_travel_events: bool = trueを追加。既存シーン以外のデフォルトの移動イベント動作は維持する。
+2. scenes/world.tscnにenable_travel_events = falseを明示する。経済テストの標準シーンではOFFとする。
+3. 旧式の抽選 _roll_travel_event_for_player() 冒頭でenable_travel_eventsを判定し、OFFならイベント抽選・効果・通知を発生させない。
+4. 演出付きの resolve_travel_with_roll() でもOFFなら何も適用しない。
+5. HUDの _trigger_event_rolls() は、移動中にOFFならダイス演出自体を出さず、日次処理の完了（finalize_day）は妨げない。
+6. 移動以外のイベント（通常の日次ダイス）、天候、移動費、消費、生産、加工、NPC交易、日付進行、護衛やコンディションの通常の日次変化、週報への変更は行わない。
+7. enable_travel_eventsはシーン／Inspector設定であり、セーブに書き込まない。Day 121の既存セーブも変更なくロード可能。
+8. 今回は設定切替のUIボタンは追加せず、InspectorのWorldノードから切替。実環境の既定はOFF、通常イベント検証時はONに戻す。
+
+## 確認
+A-01: シーンのWorldノードでuse_event_dice=false、enable_travel_events=falseである。
+A-02: Day 121セーブから空荷移動し、到着日が予定どおりでイベント由来の追加日数・貨物損失がない。
+A-03: enable_travel_events=true / use_event_dice=falseで、既存の旧式イベント抽選が実行可能。
+B-01: use_event_dice=true / enable_travel_events=falseで移動中にダイス演出が差し込まれない。日付は進む。
+B-02: use_event_dice=true / enable_travel_events=trueで移動中の演出付きダイスが出る。
+B-03: 通常都市内のuse_event_dice=trueの日次イベントは従来どおり。
+B-04: セーブ／ロード、交易、経済CSV出力、週報は従来どおり。
