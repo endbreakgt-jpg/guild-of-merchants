@@ -1,0 +1,282 @@
+Guild of Merchants | 都市画面の待機欄が戻らない不具合
+確認日: 2026-11-25
+適用元コミット: dcc4ffd59f6e3e913b0c51ca4c1b0b3b553086dc（main）
+対象: ui/game_hud.gd
+エンジン: Godot 4.3 / 文字コード: UTF-8（BOMなし） / 改行: LF
+
+原因
+セーブ／ロード画面の「閉じる」とロード成功時にウィンドウが hide() する経路では、
+HUD が待機欄の表示条件を再評価しないため、直前の非表示状態が残っていた。
+ウィンドウの visibility_changed とダイス処理の開始・終了で状態を更新する。
+ダイアログの開閉時にワールドの一時停止を反映する既存処理からも、待機欄を同期する。
+
+適用手順
+1. VS Codeで ui/game_hud.gd を開く。
+2. 下記8関数を関数名で検索し、各 func 宣言から関数末尾までを対応するコードで置き換える。
+   「----」の区切り行と見出しは貼り付けない。隣接するコメントや変数定義はそのまま残す。
+3. 保存し、Godot 4.3で起動して確認する。
+   8関数の置換で検証対象の差分と一致することを確認済み。
+
+テスト（Pilton、市内で待機できる状態から開始。セーブ検証には空きスロットを使用）
+結果は Godot 4.3 Linuxヘッドレスでの確認。画面上の実クリック・見た目は未実施。
+
+A-01 起動・初期表示
+  操作: 新規起動して都市画面を表示する。
+  期待結果: 「1日待機」「指定日まで待機」と日付欄が操作できる。
+  結果: OK
+A-02 セーブ／ロードを閉じる
+  操作: セーブ／ロードを開き、画面内の「閉じる」を押す。3回繰り返し、タイトルバーの×も試す。
+  期待結果: 開いている間は待機欄が隠れ、閉じるたびに待機欄が直ちに復帰する。
+  結果: OK（修正前の画面内「閉じる」は3回ともNG）
+A-03 保存・ロードの成功
+  操作: テスト用スロットに保存し、日付を進めてから都市メニューの「読込」で読み戻す。
+  期待結果: 保存時の日付に戻り、待機欄が表示され、日付範囲が復元した当日＋1〜7日になる。
+  結果: OK（テスト用スロットは World の保存処理で作成。読み込みはボタンと確認のシグナルを使用）
+A-04 自動進行中の開閉
+  操作: Playで自動進行を開始し、セーブ／ロードを開閉する。
+  期待結果: 開いている間は自動進行が止まり、閉じた直後に再開する。
+  結果: OK
+B-01 都市から他画面へ移動して戻る
+  操作: 取引、メニュー／設定、荷物、MAPをそれぞれ開いて閉じる。
+  期待結果: 都市に戻った時点で待機欄を操作できる。移動中は非表示。
+  結果: OK（表示状態をシグナルと移動フラグで確認。実際の移動・MAP描画は未実施）
+B-02 市場の噂・週報
+  操作: ダイアログ表示を有効にし、市場の噂・週報を開いて閉じる。
+  期待結果: ダイアログ表示中は待機欄が隠れ、閉じると復帰する。
+  結果: OK
+B-03 待機をキャンセル・実行
+  操作: 指定日まで待機の確認をキャンセルし、再度開いて2日待機を実行する。
+  期待結果: キャンセルでは日付が進まず待機欄が復帰する。実行時は目標日に終了し再度操作できる。
+  結果: OK
+B-04 日次ダイス・チュートリアル制限
+  操作: use_event_dice を有効にして1日待機する。日付進行のチュートリアルロックも切り替える。
+  期待結果: ダイス演出が終わると待機欄が復帰する。ロック中は表示されたまま操作不可。
+  結果: OK
+
+試験時の補足
+修正前後で、Linux上の地図画像名の大文字小文字差と、ダイス使用時の
+DiceOverlayの重複add_childがログに記録された。上記の表示判定は完了した。
+
+----------------------------------------------------------------------------
+1. _on_day
+----------------------------------------------------------------------------
+func _on_day(_d: int) -> void:
+    _refresh()
+    if world and world.use_event_dice:
+        if _is_rolling:
+            return
+        _is_rolling = true
+        _update_wait_controls_state()
+        await _trigger_event_rolls()
+        world.finalize_day()
+        _is_rolling = false
+        _update_wait_controls_state()
+
+----------------------------------------------------------------------------
+2. _on_popup_visibility_changed
+----------------------------------------------------------------------------
+func _on_popup_visibility_changed() -> void:
+    _sync_pause_state()
+
+----------------------------------------------------------------------------
+3. _spawn_menu_if_needed
+----------------------------------------------------------------------------
+func _spawn_menu_if_needed() -> void:
+    if menu_win == null:
+        var MenuPanelScript: Script = preload("res://ui/menu_panel.gd")
+        var mp: Control = MenuPanelScript.new()
+        mp.name = "MenuPanel"
+        get_tree().root.add_child(mp)
+        mp.visible = false
+        if mp.has_method("set_anchors_preset"):
+            mp.call("set_anchors_preset", Control.PRESET_TOP_LEFT)
+        mp.world = world
+        mp.hud = self
+        menu_win = mp
+        mp.visibility_changed.connect(_on_popup_visibility_changed)
+
+----------------------------------------------------------------------------
+4. _spawn_trade_if_needed
+----------------------------------------------------------------------------
+func _spawn_trade_if_needed() -> void:
+    if trade_win == null:
+        var TradeWindow: Script = preload("res://ui/trade_window.gd")
+        var tw: Window = TradeWindow.new()
+        tw.name = "TradeWindow"
+        tw.world = world
+        var main := get_window()
+        if main:
+            main.add_child(tw)
+        else:
+            get_tree().root.add_child(tw)
+        tw.hide()
+        tw.close_requested.connect(func(): tw.hide())
+        trade_win = tw
+        tw.visibility_changed.connect(_on_popup_visibility_changed)
+
+----------------------------------------------------------------------------
+5. _open_inventory_window
+----------------------------------------------------------------------------
+func _open_inventory_window() -> void:
+    if is_instance_valid(inventory_window):
+        _size_and_center_window(inventory_window)
+        inventory_window.show()
+        inventory_window.grab_focus()
+        return
+    var InvWin: Script = preload("res://ui/inventory_window.gd")
+    inventory_window = InvWin.new()
+    inventory_window.name = "InventoryWindow"
+    inventory_window.title = "Inventory"
+    inventory_window.unresizable = false # 修正: unresizable -> resizable
+    inventory_window.hide()
+    if inventory_window.has_method("set"):
+        inventory_window.set("world", world)
+    var main := get_window()
+    if main:
+        main.add_child(inventory_window)
+    else:
+        get_tree().root.add_child(inventory_window)
+    inventory_window.visibility_changed.connect(_on_popup_visibility_changed)
+    _size_and_center_window(inventory_window)
+    inventory_window.show()
+    inventory_window.grab_focus()
+    inventory_window.close_requested.connect(func():
+        if is_instance_valid(inventory_window):
+            inventory_window.hide()
+            inventory_window.queue_free()
+        inventory_window = null
+    )
+
+----------------------------------------------------------------------------
+6. _sync_pause_state
+----------------------------------------------------------------------------
+func _sync_pause_state() -> void:
+    if world == null:
+        return
+    var any := _any_popup_visible() or _any_supply_dialog_visible()
+    if any:
+        _popup_paused = true
+        world.pause()
+    else:
+        _popup_paused = false
+        if _user_paused:
+            world.pause()
+        else:
+            world.resume()
+    _update_play_button()
+    _update_wait_controls_state()
+
+----------------------------------------------------------------------------
+7. _ensure_weekly_dialog
+----------------------------------------------------------------------------
+func _ensure_weekly_dialog() -> void:
+    if _weekly_dialog != null and is_instance_valid(_weekly_dialog):
+        return
+
+    _weekly_dialog = AcceptDialog.new()
+    _weekly_dialog.name = "WeeklyReport"
+    _weekly_dialog.title = "週報"
+    _weekly_dialog.dialog_text = ""
+    add_child(_weekly_dialog)
+    _weekly_dialog.visibility_changed.connect(_on_popup_visibility_changed)
+
+    var vb := VBoxContainer.new()
+    vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _weekly_dialog.add_child(vb)
+
+    var hb := HBoxContainer.new()
+    hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    hb.add_theme_constant_override("separation", 8)
+    vb.add_child(hb)
+
+    _wr_tog_basis = CheckButton.new()
+    _wr_tog_basis.text = "Basis"
+    _wr_tog_basis.button_pressed = true
+    hb.add_child(_wr_tog_basis)
+
+    _wr_tog_rise = CheckButton.new()
+    _wr_tog_rise.text = "値上がり"
+    _wr_tog_rise.button_pressed = true
+    hb.add_child(_wr_tog_rise)
+
+    _wr_tog_fall = CheckButton.new()
+    _wr_tog_fall.text = "値下がり"
+    _wr_tog_fall.button_pressed = true
+    hb.add_child(_wr_tog_fall)
+
+    _wr_tog_watch = CheckButton.new()
+    _wr_tog_watch.text = "ウォッチ"
+    _wr_tog_watch.button_pressed = true
+    hb.add_child(_wr_tog_watch)
+
+    _weekly_text = RichTextLabel.new()
+    _weekly_text.fit_content = false
+    _weekly_text.scroll_active = true
+    _weekly_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    _weekly_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _weekly_text.custom_minimum_size = Vector2(560, 420)
+    _weekly_text.add_theme_constant_override("line_separation", 4)
+    vb.add_child(_weekly_text)
+
+    # ★初期同期（これが無いと watch が初回に出ません）
+    _wr_show_basis = _wr_tog_basis.button_pressed
+    _wr_show_rise  = _wr_tog_rise.button_pressed
+    _wr_show_fall  = _wr_tog_fall.button_pressed
+    _wr_show_watch = _wr_tog_watch.button_pressed
+
+    _wr_tog_basis.toggled.connect(func(pressed: bool) -> void:
+        _wr_show_basis = pressed
+        _refresh_weekly_text()
+    )
+    _wr_tog_rise.toggled.connect(func(pressed: bool) -> void:
+        _wr_show_rise = pressed
+        _refresh_weekly_text()
+    )
+    _wr_tog_fall.toggled.connect(func(pressed: bool) -> void:
+        _wr_show_fall = pressed
+        _refresh_weekly_text()
+    )
+    _wr_tog_watch.toggled.connect(func(pressed: bool) -> void:
+        _wr_show_watch = pressed
+        _refresh_weekly_text()
+    )
+
+----------------------------------------------------------------------------
+8. _open_save_load_window
+----------------------------------------------------------------------------
+func _open_save_load_window() -> void:
+    if is_instance_valid(_save_load_win):
+        _size_and_center_window(_save_load_win)
+        _save_load_win.show()
+        _save_load_win.popup_centered()
+        _save_load_win.grab_focus()
+        if _save_load_win.has_method("refresh"):
+            _save_load_win.call("refresh")
+        return
+
+    var SaveLoadScript: Script = preload("res://ui/save_load_window.gd")
+    var win: Window = SaveLoadScript.new()
+    win.name = "SaveLoadWindow"
+    win.title = "Save / Load"
+    win.unresizable = false
+    win.transient = true
+    win.exclusive = true
+    win.hide()
+
+    var main := get_window()
+    if main:
+        main.add_child(win)
+    else:
+        get_tree().root.add_child(win)
+
+    if win.has_method("setup"):
+        win.call("setup", world)
+
+    # 画面内の閉じるボタンやロード成功も visibility_changed で拾う。
+    _save_load_win = win
+    win.visibility_changed.connect(_on_popup_visibility_changed)
+    win.close_requested.connect(win.hide)
+    _size_and_center_window(win)
+    win.popup_centered()
+    win.grab_focus()
