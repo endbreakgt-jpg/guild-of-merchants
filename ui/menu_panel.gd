@@ -2,6 +2,8 @@ extends Control
 class_name MenuPanel
 ## ドラッグ移動できる「×付きサブウィンドウ」風メニュー（ツリー事前配置なしでも動く）
 
+const ModalSubwindows = preload("res://ui/modal_subwindows.gd")
+
 @export var world_path: NodePath
 var world: World
 var hud: Node  ## GameHUD から注入
@@ -1108,6 +1110,7 @@ func _open_contracts_offers_window(return_window: Window = null) -> void:
     win.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
     win.exclusive = true
     win.transient = true
+    ModalSubwindows.configure(win)
     add_child(win)
     win.close_requested.connect(func():
         _close_contracts_offers_window(win, return_window)

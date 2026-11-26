@@ -1,6 +1,8 @@
 extends Window
 class_name SaveLoadWindow
 
+const ModalSubwindows = preload("res://ui/modal_subwindows.gd")
+
 var world: World = null
 
 var _slot_rows: Dictionary = {}  # {slot:int: {"label":Label, "btn_load":Button, "btn_save":Button}}
@@ -10,6 +12,7 @@ var _dlg_confirm: ConfirmationDialog = null
 
 var _pending_action: String = ""
 var _pending_slot: int = 0
+var _close_after_result: bool = false
 
 func _ready() -> void:
     title = "Save / Load"
@@ -17,6 +20,8 @@ func _ready() -> void:
     transient = true
     exclusive = true
     unresizable = false
+    ModalSubwindows.configure(self)
+    visibility_changed.connect(_reset_if_hidden)
     _ensure_ui()
     _ensure_dialogs()
     _refresh()
@@ -109,6 +114,8 @@ func _ensure_dialogs() -> void:
         _dlg_ok.name = "OkDialog"
         _dlg_ok.title = "通知"
         add_child(_dlg_ok)
+        _dlg_ok.confirmed.connect(_on_result_dismissed)
+        _dlg_ok.canceled.connect(_on_result_dismissed)
 
     if _dlg_confirm == null:
         _dlg_confirm = ConfirmationDialog.new()
@@ -184,14 +191,25 @@ func _do_pending_action() -> void:
     elif _pending_action == "load":
         var ok2 := world.load_from_slot(_pending_slot)
         if ok2:
+            _close_after_result = true
             _show_ok("読み込みました。")
-            hide()
         else:
             _show_ok("読み込みに失敗しました。")
 
     _refresh()
     _pending_action = ""
     _pending_slot = 0
+
+func _on_result_dismissed() -> void:
+    if _close_after_result:
+        _dlg_ok.hide()
+        hide()
+
+func _reset_if_hidden() -> void:
+    if not visible:
+        _pending_action = ""
+        _pending_slot = 0
+        _close_after_result = false
 
 func _show_ok(msg: String) -> void:
     if _dlg_ok == null:
