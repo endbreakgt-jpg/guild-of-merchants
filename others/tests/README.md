@@ -7,4 +7,4 @@
 状態: OK / NG / 未実施 / 対象外
 番号例: A-01、A-02、B-01（途中の項目番号を振り直さない）
 
-- [Phase 4-A 検証票](gom_phase4a_same_day_departure_test_2026-11-26.txt)：同日再出発・回帰・交易テンポ（未実施）
+- [Phase 4-A 検証票](gom_phase4a_same_day_departure_test_2026-11-26.txt)：同日再出発・回帰・交易テンポ（ヘッドレス結果記録済み、Windows実機確認待ち）

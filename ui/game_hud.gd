@@ -2250,15 +2250,14 @@ func _depart_with_escort_selection(selected_offers: Array) -> void:
 
     var res_ok := false
     if world.has_method("player_move_via") and use_path.size() >= 2:
-        if int(world.player.get("last_arrival_day", -999)) != world.day:
-            res_ok = world.player_move_via(cid, use_path, escort_level)
+        res_ok = world.player_move_via(cid, use_path, escort_level)
     else:
         var r := world.can_player_move_to(cid, escort_level)
         if bool(r.get("ok", false)):
             res_ok = world.player_move(cid, escort_level)
 
     if not res_ok:
-        _set_map_footer_message("出発できません。同日到着制限・経路・資金を確認してください。")
+        _set_map_footer_message("出発できません。移動状態・経路・資金を確認してください。")
         return
 
     if selected_offers.size() > 0 and world.has_method("apply_escort_offer_selection"):
