@@ -3,6 +3,8 @@ class_name MoveWindow
 ## プレイヤーの移動先を選ぶ小窓（隣接都市リスト）
 signal travel_confirmed(origin: String, dest: String, days: int, path: Array)
 
+const ModalSubwindows = preload("res://ui/modal_subwindows.gd")
+
 var world: World
 
 # UI
@@ -31,6 +33,7 @@ func _ready() -> void:
     unresizable = true
     size = Vector2i(420, 320)
     min_size = Vector2i(360, 260)
+    ModalSubwindows.configure(self)
     set_process_unhandled_input(true)
     close_requested.connect(func(): hide())
 
