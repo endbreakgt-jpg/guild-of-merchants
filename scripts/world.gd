@@ -4378,12 +4378,11 @@ func _player_arrive() -> void:
     player_arrived.emit(city_id)
     world_updated.emit()
 
+# ARRIVED_TODAY は列挙値の互換性のために予約値として残す。
 enum MoveErr { OK, ARRIVED_TODAY, NOT_ADJACENT, LACK_CASH }
 
 func can_player_move_to(dest: String, escort_level: int = 0) -> Dictionary:
     var a: String = String(player.get("city", ""))
-    if int(player.get("last_arrival_day", -999)) == day:
-        return {"ok": false, "err": MoveErr.ARRIVED_TODAY}
     if not adj.has(a) or not (dest in (adj[a] as Array)):
         return {"ok": false, "err": MoveErr.NOT_ADJACENT}
     var cap_used: int = _cargo_used(player)
@@ -4414,8 +4413,6 @@ func can_player_move_to(dest: String, escort_level: int = 0) -> Dictionary:
 func player_move(dest: String, escort_level: int = 0) -> bool:
     # 1ステップ移動も player_move_via に統一して扱う
     if bool(player.get("enroute", false)):
-        return false
-    if int(player.get("last_arrival_day", -999)) == day:
         return false
 
     var a: String = String(player.get("city", ""))
@@ -4609,8 +4606,6 @@ func compute_path(a: String, b: String, weight_type: String = "fastest") -> Dict
 
 func player_move_via(dest: String, path: Array[String], escort_level: int = 0) -> bool:
     if bool(player.get("enroute", false)):
-        return false
-    if int(player.get("last_arrival_day", -999)) == day:
         return false
     if path.size() < 2:
         return false
