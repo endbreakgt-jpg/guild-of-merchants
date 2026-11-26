@@ -487,9 +487,11 @@ func _on_day(_d: int) -> void:
         if _is_rolling:
             return
         _is_rolling = true
+        _update_wait_controls_state()
         await _trigger_event_rolls()
         world.finalize_day()
         _is_rolling = false
+        _update_wait_controls_state()
 
 func _refresh() -> void:
     if world == null:
@@ -1187,7 +1189,6 @@ func _any_popup_visible() -> bool:
 
 func _on_popup_visibility_changed() -> void:
     _sync_pause_state()
-    _update_wait_controls_state()
 
 # ---- input (ESC / F3 で操作) ----
 func _input(event: InputEvent) -> void:
@@ -1501,7 +1502,7 @@ func _on_map_background_clicked() -> void:
 func _spawn_menu_if_needed() -> void:
     if menu_win == null:
         var MenuPanelScript: Script = preload("res://ui/menu_panel.gd")
-        var mp: Node = MenuPanelScript.new()
+        var mp: Control = MenuPanelScript.new()
         mp.name = "MenuPanel"
         get_tree().root.add_child(mp)
         mp.visible = false
@@ -1510,6 +1511,7 @@ func _spawn_menu_if_needed() -> void:
         mp.world = world
         mp.hud = self
         menu_win = mp
+        mp.visibility_changed.connect(_on_popup_visibility_changed)
 
 func _get_menu_panel_for_city_actions() -> Node:
     _spawn_menu_if_needed()
@@ -1539,6 +1541,7 @@ func _spawn_trade_if_needed() -> void:
         tw.hide()
         tw.close_requested.connect(func(): tw.hide())
         trade_win = tw
+        tw.visibility_changed.connect(_on_popup_visibility_changed)
 
 # ---- Move / Inventory ----
 var _move_confirm_dlg: ConfirmationDialog = null
@@ -2485,6 +2488,7 @@ func _open_inventory_window() -> void:
     inventory_window.name = "InventoryWindow"
     inventory_window.title = "Inventory"
     inventory_window.unresizable = false # 修正: unresizable -> resizable
+    inventory_window.hide()
     if inventory_window.has_method("set"):
         inventory_window.set("world", world)
     var main := get_window()
@@ -2492,11 +2496,13 @@ func _open_inventory_window() -> void:
         main.add_child(inventory_window)
     else:
         get_tree().root.add_child(inventory_window)
+    inventory_window.visibility_changed.connect(_on_popup_visibility_changed)
     _size_and_center_window(inventory_window)
     inventory_window.show()
     inventory_window.grab_focus()
     inventory_window.close_requested.connect(func():
         if is_instance_valid(inventory_window):
+            inventory_window.hide()
             inventory_window.queue_free()
         inventory_window = null
     )
@@ -2756,6 +2762,7 @@ func _sync_pause_state() -> void:
         else:
             world.resume()
     _update_play_button()
+    _update_wait_controls_state()
 
 # --- InputMap の保証（Esc / F3） ---
 func _ensure_ui_cancel() -> void:
@@ -3549,6 +3556,7 @@ func _ensure_weekly_dialog() -> void:
     _weekly_dialog.title = "週報"
     _weekly_dialog.dialog_text = ""
     add_child(_weekly_dialog)
+    _weekly_dialog.visibility_changed.connect(_on_popup_visibility_changed)
 
     var vb := VBoxContainer.new()
     vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -4494,7 +4502,6 @@ func _open_save_load_window() -> void:
         _save_load_win.grab_focus()
         if _save_load_win.has_method("refresh"):
             _save_load_win.call("refresh")
-        _on_popup_visibility_changed()
         return
 
     var SaveLoadScript: Script = preload("res://ui/save_load_window.gd")
@@ -4504,6 +4511,7 @@ func _open_save_load_window() -> void:
     win.unresizable = false
     win.transient = true
     win.exclusive = true
+    win.hide()
 
     var main := get_window()
     if main:
@@ -4514,16 +4522,10 @@ func _open_save_load_window() -> void:
     if win.has_method("setup"):
         win.call("setup", world)
 
+    # 画面内の閉じるボタンやロード成功も visibility_changed で拾う。
+    _save_load_win = win
+    win.visibility_changed.connect(_on_popup_visibility_changed)
+    win.close_requested.connect(win.hide)
     _size_and_center_window(win)
-    win.show()
     win.popup_centered()
     win.grab_focus()
-
-    win.close_requested.connect(func():
-        if is_instance_valid(win):
-            win.hide()
-        _on_popup_visibility_changed()
-    )
-
-    _save_load_win = win
-    _on_popup_visibility_changed()
