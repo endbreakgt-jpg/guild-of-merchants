@@ -1,5 +1,7 @@
 extends Window
 
+const ModalSubwindows = preload("res://ui/modal_subwindows.gd")
+
 var world: World
 
 enum {
@@ -47,6 +49,7 @@ func _ready() -> void:
     size = Vector2i(820, 540)
     min_size = Vector2i(680, 420)
     unresizable = false
+    ModalSubwindows.configure(self)
     _ensure_root()
 
     if world == null:

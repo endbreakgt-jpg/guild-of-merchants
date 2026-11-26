@@ -1,6 +1,8 @@
 extends Window
 class_name DebugInventoryWindow
 
+const ModalSubwindows = preload("res://ui/modal_subwindows.gd")
+
 var world: World = null
 
 var _status_label: Label
@@ -22,6 +24,7 @@ func _ready() -> void:
     exclusive = false
     transient = false
     always_on_top = true
+    ModalSubwindows.configure(self)
 
     _build_ui()
     _populate_lists()

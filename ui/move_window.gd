@@ -3,6 +3,8 @@ class_name MoveWindow
 ## プレイヤーの移動先を選ぶ小窓（隣接都市リスト）
 signal travel_confirmed(origin: String, dest: String, days: int, path: Array)
 
+const ModalSubwindows = preload("res://ui/modal_subwindows.gd")
+
 var world: World
 
 # UI
@@ -31,6 +33,7 @@ func _ready() -> void:
     unresizable = true
     size = Vector2i(420, 320)
     min_size = Vector2i(360, 260)
+    ModalSubwindows.configure(self)
     set_process_unhandled_input(true)
     close_requested.connect(func(): hide())
 
@@ -243,9 +246,7 @@ func _open_confirm_for(cid: String, use_path: Array = []) -> void:
                 p2 = use_path
             else:
                 p2 = path
-            # 資金チェックと同日到着チェックはHUD準拠
-            var arrived_today := int(world.player.get("last_arrival_day", -999)) == world.day
-            if (not arrived_today) and cash >= total:
+            if cash >= total:
                 res_ok = world.player_move_via(cid, p2)
         else:
             var r := world.can_player_move_to(cid)
@@ -325,7 +326,6 @@ func _on_depart() -> void:
         return
 
     var origin := String(world.player.get("city", ""))
-    var arrived_today := int(world.player.get("last_arrival_day", -999)) == world.day
     var adjacent := world.adj.has(origin) and (dest in (world.adj[origin] as Array))
     var days := world._route_days(origin, dest)
     var travel_cost := world.travel_cost_per_day * float(days)
@@ -336,9 +336,7 @@ func _on_depart() -> void:
     var cash := float(world.player.get("cash", 0.0))
 
     var ok := false
-    if arrived_today:
-        ok = false
-    elif not adjacent:
+    if not adjacent:
         ok = false
     elif cash < total:
         ok = false
@@ -349,9 +347,7 @@ func _on_depart() -> void:
         hide()  # 成功時のみ閉じる
     else:
         var msg := ""
-        if arrived_today:
-            msg = "本日は到着日のため出発できません。\n翌日以降にもう一度お試しください。"
-        elif not adjacent:
+        if not adjacent:
             msg = "その都市は隣接していません。"
         elif cash < total:
             msg = "資金が不足しています。\n必要: %.1f / 所持: %.1f" % [total, cash]
