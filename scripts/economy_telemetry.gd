@@ -4,7 +4,10 @@ extends RefCounted
 signal recording_failed(message: String)
 
 const HEADERS = {
-    "npc_daily": "day,npc_id,role,city_id,dest_id,enroute,departed,arrived,cash,cargo_used,capacity,decision_result,executed_result",
+    "npc_deliveries": "delivery_id,phase,day,npc_id,commissioner_type,commissioner_id,src,dst,pid,planned_qty,actual_qty,capacity_used,days,reward_reserved,reward_paid,reference_travel_cost,reference_toll,reference_tax,reference_total,delivered_qty,backlog_absorbed,net_stock_delta,status",
+    "npc_empty_moves": "move_id,phase,day,npc_id,src,dst,days,reference_cost,followup_delivery,status",
+    "city_funds_daily": "day,city_id,funds,reward_spent,reserved_balance,rejected_candidates,unassigned_funds_days",
+    "npc_daily": "day,npc_id,role,city_id,dest_id,enroute,departed,arrived,cash,cargo_used,capacity,decision_result,executed_result,movement_kind,depart_kind,arrive_kind",
     "npc_rejections": "day,npc_id,role,stage,reason,count",
     "npc_trades": "trade_id,phase,day,npc_id,role,src,dst,pid,planned_qty,actual_qty,planned_profit,purchase_cost,travel_cost,toll,travel_tax,travel_total,sale_gross,sale_tax,net_profit,status",
     "water_daily": "day,route_id,capacity,shipped,received,lost,utilization,status",
@@ -77,7 +80,13 @@ func start(w, detailed: bool) -> bool:
     var industry_count := 0
     for group in w.industries_by_city.values():
         industry_count += group.size()
-    meta = {"schema_version":1,"session_id":path.get_file(),"start_time":stamp,"start_day":w.day,"last_day":w.day,"days":0,"detail":detail,"end_reason":"open","error":"","sha":"unknown","seed":"unknown","cities":w.cities.size(),"products":w.products.size(),"npcs":w.traders.size(),"industries":industry_count,"routes":w.water_routes.size(),"ports":w.enable_ports,"water":w.enable_water_logistics,"imports":w.enable_port_imports,"event_dice":w.use_event_dice,"travel_events":w.enable_travel_events}
+    meta = {"schema_version":2,"session_id":path.get_file(),"start_time":stamp,"start_day":w.day,"last_day":w.day,"days":0,"detail":detail,"end_reason":"open","error":"","sha":"unknown","seed":"unknown","cities":w.cities.size(),"products":w.products.size(),"npcs":w.traders.size(),"industries":industry_count,"routes":w.water_routes.size(),"ports":w.enable_ports,"water":w.enable_water_logistics,"imports":w.enable_port_imports,"event_dice":w.use_event_dice,"travel_events":w.enable_travel_events}
+    for key in ["enable_commission_logistics","commission_source_keep_ratio","logistics_target_fill_ratio","logistics_reward_base","logistics_reward_per_cap_day","logistics_allow_empty_move","logistics_depart_same_day","commission_city_initial_funds_per_rank"]:
+        meta[key] = w.get(key)
+    var initial_funds := {}
+    for c in w.cities:
+        initial_funds[c] = w.cities[c].funds
+        totals["funds/"+c] = {"initial":initial_funds[c],"minimum":initial_funds[c],"final":initial_funds[c],"initial_reserved":0}
     for r in w._loader.load_csv_dicts(w.data_dir + "products.csv"):
         scopes[r.product_id] = r.get("trade_scope","player")
     for table in HEADERS:
@@ -91,12 +100,18 @@ func start(w, detailed: bool) -> bool:
         f.store_line(HEADERS[table])
     for t in w.traders:
         totals["npc/" + t.id] = {"start_cash":t.cash,"min_cash":t.cash,"cash":t.cash}
-        if t.enroute:
+        if t.enroute and t.has("carrier_job"):
+            var job: Dictionary = t.carrier_job
+            carrier_legs[t.id] = job.duplicate()
+            partial_legs[t.id] = true
+            if job.movement_kind == "commission":
+                add("funds/"+job.source_city,"initial_reserved",job.reserved_reward)
+        elif t.enroute:
             for pid in t.cargo:
                 if t.cargo[pid] > 0:
                     var j := journey(t, t.city, t.dest, pid)
                     journeys[t.id + "/" + pid] = j
-    report_file("baseline", {"day":w.day,"stock":w.stock,"traders":w.traders,"backlog":w.backlog})
+    report_file("baseline", {"day":w.day,"stock":w.stock,"traders":w.traders,"backlog":w.backlog,"city_funds":initial_funds})
     if active:
         report_file("session",meta)
     return active
@@ -197,17 +212,93 @@ func input_used(day,c,ind,p,required,available,used) -> void:
         add("input/"+c+"/"+ind.industry_id+"/"+p,"short_days",1)
         add("input/"+c+"/"+ind.industry_id+"/"+p,"short_qty",shortage)
 
+var carrier_legs := {}
+var partial_legs := {}
+var waiting_followup := {}
+
+func _carrier_row(tid, job, phase, day, status, cost = {}, net = null, success = null) -> void:
+    var arriving: bool = phase == "arrive"
+    var departing: bool = phase == "depart"
+    var id := "%s-%d" % [tid, job.departure_day]
+    if job.movement_kind == "empty":
+        row("npc_empty_moves", [id,phase,day,tid,job.source_city,job.destination_city,job.days,cost.get("total"),success,status])
+        return
+    var absorbed = null
+    if arriving:
+        absorbed = job.quantity - net
+    row("npc_deliveries", [id,phase,day,tid,job.commissioner_type,job.commissioner_id,
+        job.source_city,job.destination_city,job.product_id,job.planned_qty,job.quantity,
+        job.capacity_used,job.days,job.reserved_reward if departing else null,
+        job.reserved_reward if arriving else null,cost.get("travel"),cost.get("toll"),
+        cost.get("tax"),cost.get("total"),job.quantity if arriving else null,absorbed,net,status])
+
+func carrier_depart(t: Dictionary, job: Dictionary, cost: Dictionary) -> void:
+    carrier_legs[t.id] = job.duplicate()
+    _carrier_row(t.id,job,"depart",job.departure_day,"open",cost)
+    flag(t,"departed",true)
+    flag(t,"depart_kind",job.movement_kind)
+    flag(t,"execution",job.movement_kind)
+    add("carrier/"+t.id,job.movement_kind+"_departures",1)
+    if job.movement_kind == "commission":
+        flow(job.source_city,"npc_out",job.quantity)
+        flow(job.source_city,"reward_spent",job.reward)
+        add("carrier_out/"+job.source_city+"/"+job.destination_city,job.product_id,job.quantity)
+        add("funds/"+job.source_city,"spent",job.reward)
+
+func carrier_arrive(t: Dictionary, job: Dictionary, day: int, net: float) -> void:
+    var status := "partial" if partial_legs.has(t.id) else "complete"
+    partial_legs.erase(t.id)
+    _carrier_row(t.id,job,"arrive",day,status,{},net)
+    carrier_legs.erase(t.id)
+    flag(t,"arrive_kind",job.movement_kind)
+    if job.movement_kind == "empty":
+        waiting_followup[t.id] = job.duplicate()
+    else:
+        flow(job.destination_city,"npc_in",job.quantity)
+        add("carrier/"+t.id,"reward_paid",job.reward)
+        add("funds/"+job.source_city,"paid",job.reward)
+        add("carrier_in/"+job.source_city+"/"+job.destination_city,job.product_id,job.quantity)
+
+func carrier_decision(t: Dictionary, day: int, loaded: bool) -> void:
+    flag(t,"decision","selected" if loaded else "no_commission")
+    if not loaded and flags[t.id].get("funds_limited",false):
+        flow(t.city,"unassigned_funds_days",1)
+    if waiting_followup.has(t.id):
+        _carrier_row(t.id,waiting_followup[t.id],"decision",day,"assessed",{},null,loaded)
+        waiting_followup.erase(t.id)
+        add("carrier/"+t.id,"empty_assessed",1)
+        add("carrier/"+t.id,"empty_success",int(loaded))
+
+func _record_city_funds(w, c, reserved: float) -> void:
+    var funds: float = w.cities[c].funds
+    var account: Dictionary = totals["funds/"+c]
+    account.minimum = minf(account.minimum,funds)
+    account.final = funds
+    account.reserved = reserved
+    if funds <= 0 and not account.has("first_zero_day"):
+        account.first_zero_day = w.day
+    var rejects_today: int = flows.get(c+"/funds_rejections",0)
+    var unassigned: int = flows.get(c+"/unassigned_funds_days",0)
+    add("funds/"+c,"rejected_candidates",rejects_today)
+    add("funds/"+c,"unassigned_funds_days",unassigned)
+    row("city_funds_daily",[w.day,c,funds,flows.get(c+"/reward_spent",0),reserved,rejects_today,unassigned])
+
 func close_day(w) -> void:
     for k in rejects:
         var cols: Array = [w.day]
         cols.append_array(k.split("/"))
         cols.append(rejects[k])
         row("npc_rejections",cols)
+    var reserved := {}
     for t in w.traders:
         var f: Dictionary = flags.get(t.id,{})
         var departed: bool = f.get("departed",false)
         var arrived: bool = f.get("arrived",false)
-        row("npc_daily",[w.day,t.id,t.role,t.city,t.dest,t.enroute,departed,arrived,t.cash,w._cargo_used(t.duplicate()),t.cap,f.get("decision","enroute"),f.get("execution","none")])
+        var kind: String = t.get("carrier_job",{}).get("movement_kind","trade" if t.enroute else "stay")
+        if kind == "commission":
+            var job: Dictionary = t.carrier_job
+            reserved[job.source_city] = reserved.get(job.source_city,0.0) + job.reserved_reward
+        row("npc_daily",[w.day,t.id,t.role,t.city,t.dest,t.enroute,departed,arrived,t.cash,w._cargo_used(t.duplicate()),t.cap,f.get("decision","enroute"),f.get("execution","none"),kind,f.get("depart_kind","trade" if departed else ""),f.get("arrive_kind","trade" if arrived else "")])
         var key: String = "npc/"+t.id
         totals[key].cash = t.cash
         totals[key].min_cash = minf(totals[key].min_cash,t.cash)
@@ -218,6 +309,7 @@ func close_day(w) -> void:
             add(group,"moving",int(t.enroute))
             add(group,"staying",int(not t.enroute))
     for c in w.cities:
+        _record_city_funds(w,c,reserved.get(c,0.0))
         var count := 0
         var qty := 0
         var empty := 0
@@ -257,12 +349,16 @@ func close_day(w) -> void:
 func summary() -> String:
     if path.is_empty() or not error.is_empty():
         return ""
-    report_file("summary",{"session":meta,"totals":totals,"pending":journeys.values()})
+    report_file("summary",{"session":meta,"totals":totals,"pending":journeys.values(),"pending_carriers":carrier_legs,"awaiting_empty_decision":waiting_followup})
     return ProjectSettings.globalize_path(path+"/summary.txt") if error.is_empty() else ""
 
 func finish(reason: String) -> void:
     if not active:
         return
+    for tid in carrier_legs:
+        _carrier_row(tid,carrier_legs[tid],"end",meta.last_day,"pending")
+    for tid in waiting_followup:
+        _carrier_row(tid,waiting_followup[tid],"end",meta.last_day,"awaiting_decision")
     for j in journeys.values():
         trade_row(j,"end",meta.last_day,null,null,null,null,"pending")
     for table in files:

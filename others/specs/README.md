@@ -24,3 +24,5 @@
 - [Phase 4-C-01 経済CSV調整](gom_phase4c01_economy_csv_spec_2026-11-27.txt)：既存36品の調整。採用値は[設定比較表](gom_c01_parameters.txt)、全24都市は[理論収支表](gom_c01_balance.txt)。
 
 - [Phase 4-C-01b-1 物流計測仕様](gom_phase4c01b1_economy_telemetry_spec_2026-11-27.txt)：NPC・水運・工房・市場の計測基盤（実装済み）
+
+- [Phase 4-C-01b-2 委託輸送型NPC仕様](gom_phase4c01b2_commission_logistics_spec_2026-11-27.txt)：都市金庫による報酬・需給判断・空荷移動（実装済み）
