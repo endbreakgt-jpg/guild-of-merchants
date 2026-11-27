@@ -1,5 +1,5 @@
 Guild of Merchants / Phase 4-C-01 既存商品経済CSV調整
-2026-11-27 / 実装計画案・未実装
+2026-11-27 / 実装済み（CSV a50c31b）。採用値・理由は gom_c01_parameters.txt、全24都市の収支は gom_c01_balance.txt。
 関連: gom_phase4b_economy_design_2026-11-27.txt
 1. 範囲
 現行36品の生産、消費、初期/目標在庫、工房能力を調整する。24都市の経済を対象にPilton圏7都市を優先する。C-02需要倍率、C-03新商品、NPC、水運、価格式、劣化、売買対象フィルタ、海賊、セーブ形式は変更しない。塩・パンのtrade_scopeも今回は維持。タラPR005名称維持。

@@ -1,5 +1,5 @@
 Guild of Merchants / Phase 4-C-01 検証票
-2026-11-27 / 適用SHA未定 / 全項目未実施
+2026-11-27 / 適用SHA a50c31b / 項目別実績・実機確認手順は gom_c01_results.txt、指定日の比較は gom_c01_snapshots.txt。
 前提: Godot4.3、平常時、同一開始条件・可能なら同一乱数条件、イベント設定を記録。Phase3旧データ保全。新規ゲーム使用。比較用旧版と新版のEXP/経済CSVを保存。
 A-01 CSV列数、数値、重複(city_id,product_id)、商品・都市・工房参照、UTF-8確認。
 A-02 36品維持、PR005名称、PR036名称整合、C-02/C-03やコードに範囲外差分なし。
