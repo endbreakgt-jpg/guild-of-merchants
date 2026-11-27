@@ -1,0 +1,40 @@
+Guild of Merchants / Phase 4-C-01b-1 物流計測仕様・実装計画
+2026-11-27 / ユーザー承認済みの計画を具体化 / 未実装
+基準 main 43a5d4d46f8fa12b53421f24dba9eb2492255db5
+関連: gom_phase4b_economy_design_2026-11-27.txt, gom_c01_parameters.txt, ../tests/gom_c01_results.txt
+1. 目的と範囲
+C-01後の120日比較でPilton 4品25個、Highmoor 470個、Wolkess毛織物稼働6.4%、全19工房52.8%、backlog473.1。生産・消費の変更だけでは流通を維持できない。現行NPC9人（物流6、利益3、全員初期資金200・積載30）、水運5航路の実際の活動を測定する。
+今回は計測のみ。NPC選択・人数・資金・積載・経路・価格・税・在庫・産業・水運・乱数・日次順序・イベント・セーブ形式は変更禁止。水運keep_ratio=.85による損失も現状通り。既存の不具合を発見した場合は記録し別工程に分ける。
+2. 構成
+scripts/economy_telemetry.gd 新設（RefCounted等の独立モジュール）、world.gdが所有し計測点で実際の値を渡す。計測からゲーム状態を変更しない。既存の関数呼び直し、乱数消費、辞書順序変更、商品レコード作成、経済信号追加発火を行わない。計測OFFは早期return、ファイル生成なし。既存200件行動ログとEXP3ファイルは維持。
+公開API案: start_economy_trace(include_product_daily: bool=true), stop_economy_trace(), reset_economy_trace(), get_economy_trace_status(), export_economy_trace_summary()。戻り値・エラー契約は実装時に明記。ヘッドレスとHUDで同じAPIを使う。
+3. セッション
+初期OFF。開始で user://exports/economy_trace_<timestamp>_<unique_suffix>/ を作る。衝突時は連番、上書き禁止。開始時の状態をbaselineとして別記し、完了日数には含めない。開始・終了は日次処理境界の安全な状態でのみ許可（途中の可視ダイス、自動移動・待機中等は不可または境界まで延期）。日付はfinalize_day完了時のday、T単位では記録しない。開始日と最初の完了日は区別。日次確定は通知前、価格確定後。重複・逆行を検出し、異常は報告するがゲーム進行を止めない。
+通常セーブでは継続。成功したロードで現在のセッションを終了し、ロード後はOFF。失敗ロードは継続。新規ゲーム・終了時は確定処理、異常終了時は記録済みファイルを残す。リセットは旧セッションを終了し新規開始、削除しない。セーブpayloadに計測情報を入れない。
+途中開始時に輸送中のNPCはpartial（観測開始前の仕入費・出発日は不明なら空欄）。終了時未到着はpendingとして識別。partial/pendingを完了取引利益の分母に含めない。
+4. 出力形式
+UTF-8 CSV、ヘッダ1回、CSVエスケープ、安定した列順、数値は小数点、IDで結合可能、未知は空欄（0と区別）。各CSVにdayまたは期間識別子を持たせ、schema_versionをsession.txtに記す。列名は下記を基準に実装時に確定しデータ辞書を追記。
+session.txt: ID、開始日時・開始日、最後の完了日、完了日数、詳細ON/OFF、都市/商品/NPC/工房/航路数、終了理由、記録エラー・欠落、基準SHA（取得不可はunknown、テスト側で記録）、乱数seed（外部指定時のみ、取得不可はunknown）、関連設定。baselineのNPC資金・都市在庫等は別記またはbaselineフラグ付き行とし日次分母除外。
+summary.txt: 期間、役割別/個体別出発・到着・移動/滞在日、資金初終・最小、拒否理由、取引成立・予想/実利益、品目別/経路別搬出入、工房稼働・原料不足日数、航路利用・損失、輸入、都市市場推移、backlog、記録異常。完了・未完了・部分取引を区別。集計結果は明細と照合できること。
+npc_daily.csv: day,npc_id,role,city_id,dest_id,enroute,departed,arrived,cash,cargo_used,capacity,decision_result,executed_result。移動状態は日末、出発/到着は独立フラグ。移動日率は日末enroute日数/観測日数（実移動日数と同義でない）。
+npc_rejections.csv: day,npc_id,role,stage,reason,count。候補探索の最初の除外理由と実行時失敗は別。候補は都市×商品（経路段階のNO_ROUTE/PROVINCE_LOCKは別stage）、評価順序を変えない。全候補の拒否数と当日出発不可の件数を混同しない。
+npc_trades.csv: trade_id,phase,day,npc_id,role,src,dst,pid,planned_qty,actual_qty,planned_profit,purchase_cost,travel_cost,toll,travel_tax,sale_gross,sale_tax,net_profit,status。出発・到着を同じIDで追記し、既存行を書き換えない。移動費内訳の合計がtotalと一致。売却は実際のgross、taxを採取し再計算しない。実利益=売上-売上税-購入費-移動費総額。計画数量と実数量を区別。予想利益は既存planの値であり正しい利益推定に修正しない。計測開始前の輸送・終了時未到着の扱いは3参照。
+water_daily.csv: day,route_id,capacity,shipped,received,lost,utilization,status。全有効航路で輸送ゼロの日も記録。OFF/無効は明示または対象外。capacity単位は現行の商品数量であり積載換算しない。ゼロ理由は既存分岐から対象なし/余剰不足/需要不足/容量枯渇等を識別可能な範囲で記録。
+water_shipments.csv: day,route_id,src,dst,pid,shipped,received,lost,keep_ratio。実際の更新値を記録。現状の水運はbacklog吸収関数を経由しないことも明示。
+port_imports.csv: day,city_id,pid,gross_qty,absorbed_qty,net_stock_delta。_add_stock_inflow直前直後の数量差を記録。外部輸入と都市間水運は別。
+industry_daily.csv: day,city_id,industry_id,out_pid,desired_out,actual_out,utilization。稼働0を含む全有効工房、無効/能力0は別区分。既存last_out/last_utilを活用。
+industry_inputs.csv: day,city_id,industry_id,pid,required_at_full,available_before,consumed,shortage_at_full。加工直前の在庫（同一都市の先行工房消費後）を参照。不足=max(0,最大稼働必要量-加工直前在庫)。実消費は実処理から採取。未稼働でも記録。
+city_daily.csv: day,city_id,buyable_count,player_qty,background_qty,stockout_count,backlog,npc_in,npc_out,water_in,water_out。購入可能数はplayer対象かつfloor(qty)>=1、合計は各商品の整数購入可能数の和（C-01比較に合わせる）、背景量は小数在庫合計。欠品は登録済みplayer商品のfloor(qty)<1を基本とし定義を明記。未登録を欠品と混同しない。NPC搬入は総納品量、backlog吸収後の純増とは区別。水運搬入は損失後。その他の移動/消費は既存経済スナップショットを参照。
+product_daily.csv: day,city_id,pid,qty,target,target_eff,mid,bid,ask,backlog,trade_scope。登録済み行のみ、未登録は行なしと明記。詳細ON時のみ。既存価格/目標値取得の副作用確認。日末値であり当日途中の取引とは区別。
+5. 拒否理由の実装
+NO_SURPLUS,NO_DEMAND,NO_DEST_RECORD,NO_PROFIT,NO_CASH,NO_CAPACITY,PROVINCE_LOCK,LOT_TOO_SMALL,ARRIVAL_COOLDOWN,NO_ROUTEを基本にNO_SOURCE_RECORD,INELIGIBLE_PRODUCT等、現行continue/return条件に対応する理由を追加可。候補が成立した日でも除外理由は記録。候補なし・選択済み・実行失敗・移動中・到着待機を区別。理由推定のため経済計算を再実行しない。
+6. 記録方式・障害
+当日分の小さなバッファと集計カウンタのみ保持。日次確定でCSVへ追記・flush。ファイル数固定、120日×24×36最大103680商品行（baseline除外）。過去全行をメモリに保持しない。出力は日次の実績を破壊しない。途中出力は確定済みデータのみ、何度でも可能。部分書き込み/失敗はセッションを不完全と明示し、計測停止または安全な復旧、既存データ維持、UIにエラー通知。出力エラーで日次処理を中断しない。再試行の重複追記を避ける。
+7. UI
+game_hud.gd _on_export_btn_pressed() を簡素なEXPメニューに変更。通常EXP出力（既存3ファイル・クリップボード/通知維持）、計測開始（商品別詳細ON既定）、終了、結果出力（フォルダ/summaryのパス）、リセット（新規開始・削除なし）、状態/開始日/完了日数/エラー表示。新常設ボタン不要。排他WINDOW、Esc/閉じる、元画面の復元、入力ロックと自動待機・移動中の安全性を確認。通常プレイで計測を自動開始しない。商品別詳細以外の計測対象は一括有効でよい。
+8. world.gd計測点
+finalize_day（開始/確定・NPC判断）、_best_trade_profit_from/_best_trade_logistics_from（分岐）、_plan_and_depart（計画/実行値）、_arrive_and_trade（実売上）、_tick_industries（actual_out=0のcontinue前含む）、_tick_water_logistics（航路別利用/明細）、_tick_port_imports（吸収前後）、_apply_save_payloadまたは成功ロード境界（セッション終了）。新規ゲーム初期化と終了時も実際の呼び出し経路を確認。既存セーブ構造は変更しない。
+9. 実装順
+モジュール/API→NPC計測→水運/輸入/工房→都市/商品→集計/EXP→ON/OFF比較→120日試験。Godot4.3、スペース統一、C系三項演算子禁止。変更箇所を関数単位で報告。今回の段階では物流の改善を実施しない。
+10. 完了条件
+計測ON/OFF同一条件の経済状態一致、明細と集計一致、120日記録成功、既存EXP/セーブ/UI回帰。実行できない検証は未実施。現行mainとの差分を確認し文書PRに実装を追加、mainマージはユーザー。
