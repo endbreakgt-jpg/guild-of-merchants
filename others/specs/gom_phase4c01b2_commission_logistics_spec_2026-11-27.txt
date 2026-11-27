@@ -1,5 +1,5 @@
 Guild of Merchants / Phase 4-C-01b-2 委託輸送型NPC仕様・実装計画
-2026-11-27 / 方針承認済み / 未実装
+2026-11-27 / 実装済み / 52a4075
 基準 main b9974cb0a6ece680660bce631a514735b2f14126
 関連: gom_phase4b_economy_design_2026-11-27.txt、gom_phase4c01b1_economy_telemetry_spec_2026-11-27.txt、../tests/gom_c01b1_logistics_results.txt
 1. 目的・範囲
@@ -38,3 +38,9 @@ npc_dailyにmovement_kind、積荷/空荷出発・到着区分。city_dailyにfu
 利益型・プレイヤーの売買移動/契約、経済CSV、生産消費、価格式、NPC人数・積載・初期個人資金、水運/輸入、工房需要/長距離輸送、商品追加、都市定期収入、ギルド会計、商品代金決済、NPC資金の使途・能力成長。既存不具合は別報告。Godot4.3、スペース、C系三項演算子禁止。
 11. 実装順
 最新mainとPR差分・既存save/telemetry実体確認→仕様コミット→world.gd等に新方式分岐/設定/候補→報酬確保と納品→空荷/同日再出発→計測→旧方式一致・新方式ON/OFF一致→120日比較→Windows手順・結果記録→PR更新。mainマージはユーザー。
+
+12. 実装補足
+World.load_dataで新規都市金庫を設定。finalize_dayは既存の個体順で到着→当日の判断を行う。進行中carrier_jobがある場合は設定変更後も出発時方式で精算する。_incoming_cargo・_commission_offer・_best_commissionで候補を評価し、_plan_carrier_dayが積込地探索、_dispatch_commissionが再検証、_start_carrier_leg/_finish_carrier_legが出発・到着を担当。同点はadj→productsの既存順。
+_make_save_payload/_apply_save_payloadはver 2に省略可能なtradersとcity_fundsを追加。旧mainには両欄がなく、旧ファイルから当時の都市金庫・各NPCの位置/現金/購入済み貨物を推定できない。該当欄がない時だけ旧新規開始相当の都市0・NPC初期配置/200に復帰する。商品・所持金が記録された移動中NPCにcarrier_jobがない場合は既存の売買到着処理を使う。新版保存済みの金庫0もそのまま復元する。
+economy_telemetryのstart/close_day/finish/summaryとcarrier_depart/carrier_arrive/carrier_decision/_record_city_fundsを拡張。schema 2。委託ID/空荷IDはNPC IDと出発日の組。npc_deliveriesはreservedとpaidを該当フェーズだけに記録。pendingのactual_qtyは未達数量。空荷のdecisionは最初に判定できた日の成否、終了時awaiting_decisionは未判定。途中開始の区分partialと期首確保額はbaseline/summaryで確認する。参考費は出発時の内訳（空荷は合計）、実費計上なし。
+city_funds_dailyの最低・枯渇は開始と日末観測値。rejected_candidatesは当該積込地の資金不足候補（仮探索を含む）。unassigned_funds_daysは現地で資金不足候補があり積荷が成立しなかったNPC日。これだけで資金以外の制約を除外できない。商品サイズ別・経路別・空荷判断後成功率・財政は比較結果表を参照。

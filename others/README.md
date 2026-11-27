@@ -28,4 +28,4 @@
 ## 直近の経済調整資料
 - [Phase 4-C-01b-1 物流計測仕様](specs/gom_phase4c01b1_economy_telemetry_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01b1_economy_telemetry_test_2026-11-27.txt)：実装・120日計測済み。Windows動作確認完了（ユーザー報告、個別項目未記録）。
 
-- [Phase 4-C-01b-2 委託輸送仕様](specs/gom_phase4c01b2_commission_logistics_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01b2_commission_logistics_test_2026-11-27.txt)：計画承認済み、未実装。
+- [Phase 4-C-01b-2 委託輸送仕様](specs/gom_phase4c01b2_commission_logistics_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01b2_commission_logistics_test_2026-11-27.txt)：実装・4条件検証済み。[経済比較結果](tests/gom_c01b2_logistics_results.txt)。
