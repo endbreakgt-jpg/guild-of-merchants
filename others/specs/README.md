@@ -19,3 +19,6 @@
 各仕様の最新版を明示する場合は、ファイルを上書きする前に関連コード・引継との差分を確認してください。
 
 - [Phase 4-A 到着日の再出発制限撤廃](gom_phase4a_same_day_departure_spec_2026-11-26.txt)：05・11の補足仕様／実装計画（Windows実機確認待ち）
+
+- [Phase 4-B 平常時経済設計](gom_phase4b_economy_design_2026-11-27.txt)：全体MAP・商品・都市・市場規模の設計
+- [Phase 4-C-01 経済CSV調整](gom_phase4c01_economy_csv_spec_2026-11-27.txt)：既存36品の調整計画（未実装）
