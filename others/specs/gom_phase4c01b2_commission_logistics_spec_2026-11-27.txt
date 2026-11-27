@@ -1,0 +1,40 @@
+Guild of Merchants / Phase 4-C-01b-2 委託輸送型NPC仕様・実装計画
+2026-11-27 / 方針承認済み / 未実装
+基準 main b9974cb0a6ece680660bce631a514735b2f14126
+関連: gom_phase4b_economy_design_2026-11-27.txt、gom_phase4c01b1_economy_telemetry_spec_2026-11-27.txt、../tests/gom_c01b1_logistics_results.txt
+1. 目的・範囲
+C-01b-1の120日実測: 物流型6人の完了取引71件、実利益-76.52、赤字40件、日末移動率98/720=13.61%。利益型3人は完了91件、実利益2723.53。Durton→Boroughambe丸太0、Wolkess羊毛搬入0、Pilton錫塊/なめし革搬入0。物流型を売買差益型から委託輸送業者へ転換する。独立商人profitのロジックは維持。NPCは9人、配置、cap30、cash200の初期値は維持。新方式では個人cashを輸送可否に使わない。現行C-01b-1計測基盤を活用し、挙動の改善を数値評価する。
+C-01b-2a 委託輸送と都市報酬、2b 数量・優先順位・輸送中数量、2c 空荷移動、2d 同日再出発、2e 計測拡張、2f 比較検証。一つのPRで実装、段階別コミット推奨。C-01b-3工房需要/広域輸送、4水運、5人数/能力、6総合検証は後続。
+2. 設定
+enable_commission_logistics=true、commission_source_keep_ratio=1.0、logistics_target_fill_ratio=.8、logistics_reward_base=3.0、logistics_reward_per_cap_day=.25、logistics_allow_empty_move=true、logistics_depart_same_day=true、commission_city_initial_funds_per_rank=100.0（名称は実装時確定）。すべて暫定値で再調整可能。既存logistics_source_keep_ratio=.8、priority/relief/relay等は旧方式専用として保存。新方式は隣接1辺、1商品、整数個数、既存route/province_lockに従う。旧方式OFF切替時に新フラグは無効、都市初期金庫0、従来挙動を復元。新フラグは新規ゲームで比較する。途中切替時も進行中の業務は出発時方式で完了させる。
+3. 都市金庫・委託主
+輸送元都市が委託主。内部データにはcommissioner_type=city、commissioner_id=source_city、source_city、destination_city、product_id、quantity、reward、departure_day、arrival_day、movement_kind、reserved_rewardを保持。将来ギルド等に拡張可。委託主の会計を別システム化しない。
+新方式の新規ゲームのみ既存cities[cid].fundsをrank*100で初期化。rank3=300、rank5=500、rank7=700。既存セーブの都市金庫は維持し、無断加算・再読込による再付与をしない。旧セーブで資金不足なら業務不成立とし、今回の比較は新規ゲームで実施。新規開始条件を記録。ロード時の都市データ初期化/上書き順を確認。
+既存の税・護衛・プレイヤー/利益型NPCの収入処理は変更しない。定期税収・資金救済・借入・商品代金決済は今回なし。都市財政は試験モデルであり長期収支の均衡を保証しない。都市資金不足の実測後に調整。報酬以外の委託物流旅費・通行税は参考費用として計測するのみ、NPC/都市資金に増減を発生させない。空荷報酬0。NPC報酬は蓄積し使途は未実装。
+4. 輸送候補と数量
+出発地/到着地に既存stockレコードがある品目を対象（未登録需要の導入はC-01b-3）。現行商品のtrade_scopeにかかわらず対象。高級品も禁止しないが旧優先倍率・赤字許容・中継価格・利益条件を使わない。目標在庫はmax(1,_target_eff(cid,pid,base_target))、価格用backlog加算は輸送目標に含めない。工房需要、将来消費予測は今回なし。
+S=max(0,source_qty-source_target*keep_ratio)
+G=destination_target*fill_ratio
+D=max(0,G-destination_qty-incoming_qty)
+C=floor(空き積載/ max(1,商品size))
+Q=floor(min(S,D,C))。Q>=1を必要条件とし、旧最小端数ロットの切上げなし。source保護を破らない。Gが1未満のレコードでは輸送が成立しない等の制約を記録し、今回勝手に下限を追加しない。incoming_qtyは現行NPC全員の到着予定貨物（売買/委託）のうち同一最終到着都市・商品を総数量で集計。バックログ吸収前の保守的な値。空荷の仮計画は含めない。先行NPC出発後の最新状態を使用し、候補探索で在庫/資金/予約を書き換えない。
+R=3+Q*size*max(1,route_days)*.25。委託元資金がR未満なら数量を払える整数まで縮小（1個も払えないならNO_COMMISSION_FUNDS）。実行時に最新在庫、需要、容量、資金、経路を再検証し、縮小時にR再計算。部分数量の採用は財政不足による全停止を避けるための実装上の補足。採用数量が0なら何も変更しない。
+shortage=clamp(D/max(G,小正数),0,1)、score=shortage*Q/max(1,route_days)。個数ベースで大サイズ品が不利になる可能性は測定。報酬額をscoreに加えない。同点は安定順（既存adj/products順または明示的ID順、実装で固定）、乱数を使わない。NO_SOURCE_RECORD,NO_DEST_RECORD,NO_SURPLUS,NO_DEMAND,LOT_TOO_SMALL,NO_CAPACITY,NO_COMMISSION_FUNDS,PROVINCE_LOCK等を記録。価格は更新するが候補選定に使わない。
+5. 出発・納品と会計
+有効な候補を選択後、実行時の再確認を全て通過してから状態変更。出発時: source stockからQを減算、cargoにQを格納、source fundsからRを減算、NPCの業務データreserved_reward=Rに確保し、movement_kind=commission、dest/arrival_day/enrouteを設定。出発地価格を既存の方法で更新。商品購入代金・売上税・旅費は個人資金から引かない。金庫と確保報酬を二重計上しない。
+到着時: _add_stock_inflowによる納品、既存の価格更新。納品総量=市場純増+backlog吸収。cargoを空にし、確保報酬をNPC cashに一度だけ加え、業務状態を消去。売却処理/売上税/都市への旅費加算なし。都市資金不足になっても確保済み報酬を必ず支払う。正常処理で負の金庫を作らない。失敗出発では商品・資金を一切変更しない。状態破損等の異常時は報酬二重払い・貨物消失を避け、明示的に報告する（将来の契約取消・返金制度は未実装）。
+6. 空荷移動
+新方式物流型のみ。貨物0かつ現在地に成立可能な委託業務なしの場合、隣接都市を仮の積込地として候補探索（4の資金条件も含む）。仮候補のscoreは不足率*Q/(空荷日数+積荷日数)。現在のNPCの個人cashは参照しない。候補評価は副作用なし、通常候補拒否集計と空荷探索をstageで区別。空荷先に向かう他NPCが既にいれば原則同じ積込地を選ばない（暫定の重複抑制、永続予約なし）。到着後の仕事は保証しない。movement_kind=empty、dest、arrival_day、enrouteのみ必要な更新、商品/都市金庫/NPC資金を動かさない。参考移動費は記録。到着日に最新需給で積荷業務を再評価するが、仕事がなければその日は再空荷移動せず待機。翌日以降再評価可能。空荷専用の予約報酬なし。隣接以外の探索/輸送はC-01b-3。
+7. 日次と互換
+既存finalize_dayのNPCループ順を維持。物流型のみ新方式ONかつlogistics_depart_same_dayで到着日に再出発可（旧方式の到着は従来処理、切替後の次業務は新設定）。利益型は従来のdepart_same_dayに従う。1日1回の出発、最低移動1日、同日到着の再帰処理なし。空荷到着時の再空荷禁止を優先。
+既存saveのtraders/citiesの保存実態を確認し、確保報酬/委託主/移動種別を保存復元。旧セーブでmovement_kind欠落かつ積荷輸送中の物流NPCは旧売買として完了させる（購入済みの商品・資金を失わせない）。旧セーブの現金や都市金庫は維持。新方式の輸送中に設定OFFへ変更しても確保済み報酬を精算、空荷も正しく到着。旧セーブ欠落キーの安全な補完を行い、既存形式と互換を維持、必要な形式変更があれば理由を明記。新方式のセーブを旧バイナリで動かす互換は要求しない。
+8. 計測拡張
+economy_telemetry.gd schema_versionを更新し、既存EXPと既存売買ログ列/定義を維持。npc_deliveries.csv: delivery_id,phase,day,npc_id,commissioner_type,commissioner_id,src,dst,pid,planned_qty,actual_qty,capacity_used,days,reward_reserved,reward_paid,reference_travel_cost/toll/tax,total,delivered_qty,backlog_absorbed,net_stock_delta,status等。出発/到着/pending/partialを区別し、一度の支出・受領を照合できる。npc_empty_moves.csv: move_id,phase,day,npc_id,src,dst,days,reference_cost,followup_delivery,status等。同日再出発OFFの場合は最初の許可された判断日における積荷業務成立を空荷成功判定に用い、終了前未判定を分母から除く。実際の成功判定日を記録。
+npc_dailyにmovement_kind、積荷/空荷出発・到着区分。city_dailyにfunds、当日委託報酬確保額、確保残高（委託元別）、都市資金不足拒否件数等を追加、または専用city_funds_daily.csv。都市別に開始/終了/最低残高、枯渇日、支出累計を集計。全資金不足候補件数と業務不成立NPC日を区別。商品輸送量は既存npc_in/outにも加算、空荷は0。委託収支は売買利益に混ぜない。全体資金差は報酬/通常売買費用/その他既存取引の実測で説明する。報酬保存則は都市支出=NPC受領+期末確保-期首確保（期間内）で検証。部分観測の未知は空欄、baselineに業務と確保状態を含める。計測ON/OFF同一性、乱数非消費、日次flush、失敗時ゲーム継続を維持。session/summaryに設定値とスキーマ、区分ごとの集計を記録。
+9. 比較試験と判断
+基準=旧方式（初期金庫0）、A=新方式（初期金庫rank*100）+空荷OFF+同日再出発OFF、B=A+空荷ON、C=B+同日再出発ON。基準/Aは新しい財政・数量・選択方式を含む複合比較であり各効果を単独と断定しない。補助として資金不足が支配的な場合は初期金庫のみを増やした感度試験を別枠で実施可、正式設定は無断変更しない。seed40401、Day120開始、120日無介入、C-01b-1と同じ初期化・設定。最終候補は可能なら別2seedで比較。プレイヤー交易は別試験、復路/旅費/税/劣化を区別。
+基準: 物流積荷71回、移動率13.61%、Boroughambe製材19.2%、丸太搬入0、Pilton4品25個、Highmoor470個、全backlog473.1。目安: 積荷回数増加、移動率25～40%（空荷別）、製材50%に近づく、主要輸送増、過剰在庫/欠品/backlog改善、空荷成立率70%程度、プレイヤーに複数黒字商機。都市資金推移と拒否、NPC報酬、確保額、商品サイズ偏りも必須。目安未達は原因を報告、今回の実装合否とは分離。都市資金不足が頻発しても自動救済や収入追加はしない。120日超の財政持続性は後続。
+10. 対象外
+利益型・プレイヤーの売買移動/契約、経済CSV、生産消費、価格式、NPC人数・積載・初期個人資金、水運/輸入、工房需要/長距離輸送、商品追加、都市定期収入、ギルド会計、商品代金決済、NPC資金の使途・能力成長。既存不具合は別報告。Godot4.3、スペース、C系三項演算子禁止。
+11. 実装順
+最新mainとPR差分・既存save/telemetry実体確認→仕様コミット→world.gd等に新方式分岐/設定/候補→報酬確保と納品→空荷/同日再出発→計測→旧方式一致・新方式ON/OFF一致→120日比較→Windows手順・結果記録→PR更新。mainマージはユーザー。
