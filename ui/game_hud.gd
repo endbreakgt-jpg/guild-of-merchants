@@ -408,7 +408,75 @@ func _create_export_button() -> void:
         export_btn.pressed.disconnect(cb)
     export_btn.pressed.connect(cb)
 
+var _export_menu: PopupMenu
+var _export_detail := true
+
+func show_trace_error(message: String) -> void:
+    if is_instance_valid(export_btn):
+        export_btn.text = "EXP !"
+        export_btn.tooltip_text = message
+
+func trace_ui_busy() -> bool:
+    return _auto_travel_active or _auto_wait_active or _is_rolling or _story_map_travel_active
+
 func _on_export_btn_pressed() -> void:
+    if world == null or trace_ui_busy() or _any_supply_dialog_visible():
+        return
+    for node in get_tree().root.find_children("*","Window",true,false):
+        if node.visible:
+            return
+    if not is_instance_valid(_export_menu):
+        _export_menu = PopupMenu.new()
+        _export_menu.exclusive = true
+        add_child(_export_menu)
+        _export_menu.visibility_changed.connect(_on_popup_visibility_changed)
+        _export_menu.id_pressed.connect(_on_export_action)
+    var status := world.get_economy_trace_status()
+    _export_menu.clear()
+    var label := "計測停止中"
+    if status.active:
+        label = "計測中"
+    _export_menu.add_separator("%s  開始 Day %d / 完了 %d日" % [label,status.start_day,status.days])
+    if status.error != "":
+        _export_menu.add_separator(status.error)
+    _export_menu.add_item("通常EXP（3ファイル）",1)
+    _export_menu.add_check_item("商品別の日次明細（次回開始時）",2)
+    _export_menu.set_item_checked(_export_menu.get_item_index(2),_export_detail)
+    _export_menu.add_item("計測開始",3)
+    _export_menu.add_item("計測終了",4)
+    _export_menu.add_item("集計結果を出力",5)
+    _export_menu.add_item("新しいセッションで再計測",6)
+    _export_menu.set_item_disabled(_export_menu.get_item_index(3),status.active or not world.trace_boundary_safe())
+    _export_menu.set_item_disabled(_export_menu.get_item_index(4),not status.active or not world.trace_boundary_safe())
+    _export_menu.set_item_disabled(_export_menu.get_item_index(5),status.path == "")
+    _export_menu.set_item_disabled(_export_menu.get_item_index(6),not world.trace_boundary_safe())
+    _export_menu.popup_centered()
+
+func _on_export_action(id: int) -> void:
+    match id:
+        1:
+            _export_standard_files()
+        2:
+            _export_detail = not _export_detail
+        3:
+            world.start_economy_trace(_export_detail)
+        4:
+            world.stop_economy_trace()
+        5:
+            var path := world.export_economy_trace_summary()
+            if path != "":
+                DisplayServer.clipboard_set(path)
+                OS.alert(path,"物流計測")
+        6:
+            world.reset_economy_trace(_export_detail)
+    var status := world.get_economy_trace_status()
+    if status.error != "":
+        OS.alert(status.error,"物流計測")
+    elif is_instance_valid(export_btn):
+        export_btn.text = "EXP"
+        export_btn.tooltip_text = ""
+
+func _export_standard_files() -> void:
     if world == null:
         OS.alert("World is not ready.", "Export")
         return
@@ -1185,7 +1253,7 @@ func _any_popup_visible() -> bool:
     var f := is_instance_valid(_save_load_win) and _save_load_win.visible
     var g := is_instance_valid(_move_confirm_dlg) and _move_confirm_dlg.visible
     var h := is_instance_valid(_escort_confirm_dlg) and _escort_confirm_dlg.visible
-    return a or b or c or d or e or f or g or h
+    return a or b or c or d or e or f or g or h or (is_instance_valid(_export_menu) and _export_menu.visible)
 
 func _on_popup_visibility_changed() -> void:
     _sync_pause_state()

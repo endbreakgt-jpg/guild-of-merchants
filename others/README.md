@@ -24,3 +24,6 @@
 - 関数差分のTXTは標準成果物ではありません。直接GitHubブランチを更新しPRでレビューします。
 - 完了済みの独立したパッチ・試験ログは `others/archive/` へ移動し、古い運用説明を書き換えません。
 - `引継.txt` は履歴を追記し続けず、現在有効な要点に上書き・圧縮します。
+
+## 直近の経済調整資料
+- [Phase 4-C-01b-1 物流計測仕様](specs/gom_phase4c01b1_economy_telemetry_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01b1_economy_telemetry_test_2026-11-27.txt)：実装・120日計測済み。Windows実機確認待ち。
