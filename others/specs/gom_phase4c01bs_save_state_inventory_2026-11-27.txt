@@ -1,0 +1,18 @@
+C-01b-S1 保存対象管理台帳 / 2026-11-27 / 基準 e9e087e3f400b0de34e0e201fef4bb14e4ff94e7
+静的調査。全19 GDScriptのファイル書込・save/load・乱数呼出検索、worldの宣言/日次/保存復元/CSV読込、storyの章境界、両保存UIを確認。動作検証未実施。下記は主要状態の台帳であり、実装前に全代入箇所とシーン参照を照合して漏れを補う。
+分類 P=永続、M=現行マスター、D=再生成、T=一時、C=設定。現状 S/L=保存/復元あり、Sのみ=復元欠落、なし=非保存。
+clock: day S/L P、turn なし P（0..turns_per_day-1）、_day_in_progress T（安全境界以外禁止）、_speed_mult/_paused/_timer T（停止）。
+player: player S/L P（id,city,cash,cap,cargo,key_items,enroute,dest,arrival_day,escort関連,convoy,経路等の全キーを調査）、cargo_lots S/L P、player_home_city C（変更機能があればP）、key_items定義 M。debug_test_inventory_active/_debug_capacity_exempt_cargo/_debug_test_inventory_snapshot T（有効中保存不可、ロード成功時解除）。
+economy: stock S/L 混在。qty P、target/prod M（現行コードでゲーム内変更される箇所がある場合は別の動的差分として保存）、cons P（日次計算結果で毎日更新、CSV初期consとは別）。price S/L P、history なし P、_shortage_ema S/L P、backlog なし P、_supply_sched なし P(buf,next,cool,phase)、_last_supply_day なし P、_emergency_shortage_streak/_emergency_last_day S/L P、_price_reason_today/_price_reason_last_day/_price_reason_day_end/_price_reason_day_end_day P（DBGの観測履歴、欠落時空/日=-1）。
+industries_by_city 混在 M=recipe,out_per_day,enabled,level（現在CSV定義。ゲーム内変化は別差分）、P=last_util,last_out、キーcity_id+industry_id。新工房は初期値。供給count_today/total/by_month/by_city/by_pid Sのみ P、event_log S/L P（200件制限維持）。
+cities M=定義/rank、P=funds S/L、treasury なし P（屋台売上税が別キーに加算される現行挙動を保全、統合は対象外）。traders S/L P 全個体・順序・carrier_job・確保報酬・空荷状態。輸送中旧方式はそのまま精算。
+events: _effects_active Sのみ P、route_hazard_deltas なし P、route_hazard_layers/map/route_id_to_key M/D、_weather_forecast_start_day/_weather_forecast S/L P。_last_roll_kind/value T（表示のみなら初期化、実処理依存ならP）、_events_daily/_events_travel M。fair_schedule M/C、fair_active なし P、stalls なし P（委託品はプレイヤー貨物から引かれるため重要）。
+intel: _market_weekly_intel_by_prov/_last_snapshot_by_prov/_prev_snapshot_by_prov S/L P、intel_provinces/weekly_reports なし P（実使用/生成箇所確認、履歴の消失を防ぐ）。
+progress: rep_global/rep_by_province/rep_by_city/unlocked_city_ids S/L P（空配列=全解放維持）、tutorial_state/locks/progress S/L P、_contract_offers/_contracts_active/_contracts_next_id/_contracts_last_month_key S/L P、_contracts_last_sweep_day なし P（日次処理キャッシュの実依存確認、再生成可なら理由明記）。
+story.gd: prologue_done/prologue_step/ctx_place/_current_story_idは章境界の永続進行として扱う。_running_prologue/_story_map_active/_overlay_active/_resume_info/_pending_*等の会話・演出途中はT。実行中保存禁止、ロードも安全境界のみ。旧saveはtutorial.stateを根拠に完了判定、根拠なしは推測しない。TUT1開始以降は完了扱い。DEV命令の再実行禁止。
+UI: game_hud auto_travel/auto_wait timers/counters/message_queue, dice overlay, modal, selection, map animation等T。安全境界でのみ保存/ロード。成功時に古い選択/通知/タイマーを破棄し画面を同期。save_load_windowとmenu_panelの両方がworld APIを呼ぶ。後者は現在成功時のみ通知。失敗理由表示を両方に追加。
+master: products/product_category/product_decay_cfg,cities定義,routes/adj,city_ports,port_category_by_pid,water_routes,consume_rules/_consume_period_cache/consume_base_override,rank_table,escort_templates,route_hazard_layers/map,events, key_items, industries定義, fair_schedule, supply_rules, scene設定等 M/C/D。escort_offers_by_cityは決定的な日付/都市seedのキャッシュならD、購入済み/選択済み状態はplayer P。最新マスターを使い、旧プレイの値を持ち越さない。
+telemetry _trace T: 保存で継続、成功ロードで終了、失敗ロードで継続。記録ファイルは変更しない。
+乱数: world._ready randomize、グローバルrandf/randi/randi_range/Array.shuffle（天候/日次イベント/供給/水運/輸入/屋台等）、護衛/契約は個別RandomNumberGenerator。今回グローバル乱数の状態保存・置換は対象外。同一未来の完全再現は保証しない。専用RNGへの移行は別工程。
+ファイル書込: world save_to_slot (user://saves)、EXP3種(user://exports)、economy_telemetry (user://exportsのsession/summary/CSV等)。全19本の静的検索ではres://dataへの書込なし。csv_loaderは読取。master CSVは今後も読取専用。Git履歴で開発時初期値を管理。
+既知の別課題: stock.consはfinalize_dayで需要計算結果へ上書き。stockの全辞書上書きは最新CSVを無効化。屋台税treasuryとfundsの分離、load_dataの再初期化漏れ候補（products/cities等のclear不足）、初期化順は今回の分離で確認するが経済挙動を勝手に修正しない。
