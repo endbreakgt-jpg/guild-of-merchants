@@ -26,3 +26,5 @@
 - [Phase 4-C-01b-1 物流計測仕様](gom_phase4c01b1_economy_telemetry_spec_2026-11-27.txt)：NPC・水運・工房・市場の計測基盤（実装済み）
 
 - [Phase 4-C-01b-2 委託輸送型NPC仕様](gom_phase4c01b2_commission_logistics_spec_2026-11-27.txt)：都市金庫による報酬・需給判断・空荷移動（実装済み）
+
+- [Phase 4-C-01b-S 保存対象台帳](gom_phase4c01bs_save_state_inventory_2026-11-27.txt)／[セーブver.3仕様](gom_phase4c01bs_save_v3_spec_2026-11-27.txt)：マスター分離・旧版移行・安全な保存復元（未実装）
