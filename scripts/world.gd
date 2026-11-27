@@ -197,6 +197,14 @@ var _consume_period_cache: Dictionary = {}         # pid→period（最適化）
 var industries_by_city: Dictionary = {}
 
 @export var pay_toll_on_depart: bool = true      # 出発時に通行料を支払う（両端都市に折半）
+@export var enable_commission_logistics := true
+@export_range(0.0, 2.0) var commission_source_keep_ratio := 1.0
+@export_range(0.0, 1.0) var logistics_target_fill_ratio := 0.8
+@export_range(0.0, 100.0) var logistics_reward_base := 3.0
+@export_range(0.0, 10.0) var logistics_reward_per_cap_day := 0.25
+@export var logistics_allow_empty_move := true
+@export var logistics_depart_same_day := true
+@export_range(0.0, 10000.0) var commission_city_initial_funds_per_rank := 100.0
 @export var depart_same_day: bool = false      # 到着日に再出発しない（方針）
 
 # ヒストリ＆速度
@@ -677,15 +685,27 @@ func finalize_day() -> void:
     # NPC商人の到着＆出発
     for t in traders:
         var just_arrived: bool = bool(t.get("enroute", false)) and int(t.get("arrival_day", 0)) <= day
+        var carrier: bool = enable_commission_logistics and t.role == "logistics"
+        var previous_kind: String = t.get("carrier_job", {}).get("movement_kind", "")
+        var can_redepart := depart_same_day
+        if carrier and previous_kind != "":
+            can_redepart = logistics_depart_same_day
         if just_arrived:
             if _trace.active:
                 _trace.flag(t,"arrived",true)
-                if not depart_same_day:
+                if not can_redepart:
                     _trace.flag(t,"decision","arrival_cooldown")
                     _trace.reject(t,"day","ARRIVAL_COOLDOWN")
-            _arrive_and_trade(t)
+            if t.has("carrier_job"):
+                if not _finish_carrier_leg(t):
+                    continue
+            else:
+                _arrive_and_trade(t)
 
-        if not bool(t.get("enroute", false)) and (depart_same_day or not just_arrived):
+        if not bool(t.get("enroute", false)) and (can_redepart or not just_arrived):
+            if carrier:
+                _plan_carrier_day(t, not just_arrived or previous_kind != "empty")
+                continue
             var city_id3: String = String(t.get("city", ""))
             if city_id3 != "":
                 var plan: Dictionary = _best_trade_from(city_id3, t)
@@ -2155,6 +2175,9 @@ func load_data() -> void:
             "rank": int(_num(row2.get("CityRANK", row2.get("rank", 3))))
         }
 
+        if enable_commission_logistics:
+            cities[cid].funds = cities[cid].rank * commission_city_initial_funds_per_rank
+
     # routes
     routes.clear()
     var route_rows: Array[Dictionary] = _loader.load_csv_dicts(data_dir + "routes.csv")
@@ -3054,6 +3077,167 @@ func _plan_and_depart(t: Dictionary, plan: Dictionary) -> void:
         float(plan.get("profit", 0.0))
     ])
 
+
+# Commissioned carriers move goods already owned by their client.
+func _carrier_route_allowed(t: Dictionary, src: String, dst: String) -> bool:
+    if not dst in adj.get(src, []):
+        return false
+    var home: String = t.get("home_province", "")
+    return not t.get("province_lock", false) or home.is_empty() or cities[dst].province == home
+
+func _incoming_cargo() -> Dictionary:
+    var incoming := {}
+    for other in traders:
+        if not other.enroute:
+            continue
+        if not incoming.has(other.dest):
+            incoming[other.dest] = {}
+        var scheduled: Dictionary = incoming[other.dest]
+        for pid in other.cargo:
+            scheduled[pid] = scheduled.get(pid, 0) + int(other.cargo[pid])
+    return incoming
+
+func _commission_reject(t: Dictionary, stage: String, reason: String, src: String) -> Dictionary:
+    if _trace.active:
+        _trace.reject(t, stage, reason)
+        if reason == "NO_COMMISSION_FUNDS":
+            _trace.flow(src, "funds_rejections", 1)
+            if stage == "commission":
+                _trace.flag(t, "funds_limited", true)
+    return {}
+
+func _commission_offer(t: Dictionary, src: String, dst: String, pid: String, incoming: Dictionary, free: int, empty_days: int, stage: String, limit: int = 2147483647) -> Dictionary:
+    if not stock[src].has(pid):
+        return _commission_reject(t, stage, "NO_SOURCE_RECORD", src)
+    if not stock[dst].has(pid):
+        return _commission_reject(t, stage, "NO_DEST_RECORD", src)
+    var origin: Dictionary = stock[src][pid]
+    var market: Dictionary = stock[dst][pid]
+    var surplus: float = origin.qty - _target_eff(src, pid, origin.target) * commission_source_keep_ratio
+    if surplus <= 0:
+        return _commission_reject(t, stage, "NO_SURPLUS", src)
+    var goal: float = _target_eff(dst, pid, market.target) * logistics_target_fill_ratio
+    var need: float = goal - market.qty - incoming.get(dst, {}).get(pid, 0)
+    if need <= 0:
+        return _commission_reject(t, stage, "NO_DEMAND", src)
+    var size := maxi(1, int(products[pid].size))
+    var capacity := floori(float(free) / size)
+    if capacity < 1:
+        return _commission_reject(t, stage, "NO_CAPACITY", src)
+    var qty := mini(limit, mini(capacity, floori(minf(surplus, need))))
+    if qty < 1:
+        return _commission_reject(t, stage, "LOT_TOO_SMALL", src)
+    var days := maxi(1, _route_days(src, dst))
+    var unit_reward := logistics_reward_per_cap_day * size * days
+    var available: float = cities[src].funds - logistics_reward_base
+    if available < 0 or (unit_reward > 0 and available < unit_reward):
+        return _commission_reject(t, stage, "NO_COMMISSION_FUNDS", src)
+    if unit_reward > 0 and qty * unit_reward > available:
+        qty = floori(available / unit_reward)
+    var score := clampf(need / maxf(goal, 0.000001), 0, 1) * qty / (days + empty_days)
+    return {"source_city":src, "destination_city":dst, "product_id":pid, "quantity":qty,
+        "days":days, "reward":logistics_reward_base + qty * unit_reward, "score":score}
+
+func _best_commission(t: Dictionary, src: String, incoming: Dictionary, empty_days: int) -> Dictionary:
+    var best := {}
+    var stage := "commission" if empty_days == 0 else "empty_search"
+    var free := int(t.cap) - _cargo_used(t)
+    for dst in adj.get(src, []):
+        if not _carrier_route_allowed(t, src, dst):
+            _commission_reject(t, stage, "PROVINCE_LOCK", src)
+            continue
+        for pid in products:
+            var offer := _commission_offer(t, src, dst, pid, incoming, free, empty_days, stage)
+            if not offer.is_empty() and offer.score > best.get("score", -1):
+                best = offer
+    return best
+
+func _start_carrier_leg(t: Dictionary, job: Dictionary) -> void:
+    job.departure_day = day
+    job.arrival_day = day + int(job.days)
+    t.carrier_job = job
+    t.dest = job.destination_city
+    t.arrival_day = job.arrival_day
+    t.enroute = true
+    if _trace.active:
+        _trace.carrier_depart(t, job, _calc_edge_travel_cost(job.source_city, t.dest, _cargo_used(t)))
+
+func _dispatch_commission(t: Dictionary, plan: Dictionary) -> bool:
+    var src: String = t.city
+    var dst: String = plan.destination_city
+    if t.enroute or t.has("carrier_job") or src != plan.source_city or not _carrier_route_allowed(t, src, dst):
+        return false
+    var job := _commission_offer(t, src, dst, plan.product_id, _incoming_cargo(), int(t.cap) - _cargo_used(t), 0, "commission_execution", plan.quantity)
+    if job.is_empty():
+        return false
+    job.movement_kind = "commission"
+    job.commissioner_type = "city"
+    job.commissioner_id = src
+    job.reserved_reward = job.reward
+    job.planned_qty = plan.quantity
+    job.capacity_used = job.quantity * maxi(1, int(products[job.product_id].size))
+    stock[src][job.product_id].qty -= job.quantity
+    cities[src].funds -= job.reward
+    t.cargo[job.product_id] = int(t.cargo.get(job.product_id, 0)) + int(job.quantity)
+    _start_carrier_leg(t, job)
+    _update_price_for(src, job.product_id)
+    return true
+
+func _plan_carrier_day(t: Dictionary, allow_empty: bool) -> void:
+    var incoming := _incoming_cargo()
+    var offer := _best_commission(t, t.city, incoming, 0)
+    var loaded := not offer.is_empty() and _dispatch_commission(t, offer)
+    if _trace.active:
+        _trace.carrier_decision(t, day, loaded)
+    if loaded or not allow_empty or not logistics_allow_empty_move or _cargo_used(t) > 0:
+        return
+    var occupied := {}
+    for other in traders:
+        if other.enroute and other.get("carrier_job", {}).get("movement_kind", "") == "empty":
+            occupied[other.dest] = true
+    var best := {}
+    for next in adj.get(t.city, []):
+        if occupied.has(next) or not _carrier_route_allowed(t, t.city, next):
+            continue
+        var days := maxi(1, _route_days(t.city, next))
+        var opportunity := _best_commission(t, next, incoming, days)
+        if not opportunity.is_empty() and opportunity.score > best.get("score", -1):
+            best = {"movement_kind":"empty", "source_city":t.city, "destination_city":next,
+                "days":days, "score":opportunity.score}
+    if not best.is_empty():
+        _start_carrier_leg(t, best)
+
+func _finish_carrier_leg(t: Dictionary) -> bool:
+    if not t.enroute or not t.has("carrier_job"):
+        return false
+    var job: Dictionary = t.carrier_job
+    var dst: String = t.dest
+    if not cities.has(dst) or job.get("destination_city") != dst:
+        push_error("Invalid carrier destination: " + str(t.id))
+        return false
+    var net := 0.0
+    if job.get("movement_kind") == "commission":
+        var pid: String = job.get("product_id", "")
+        var qty := int(job.get("quantity", 0))
+        var reserved := float(job.get("reserved_reward", -1))
+        if not stock[dst].has(pid) or qty < 1 or int(t.cargo.get(pid, 0)) != qty or reserved < 0 or reserved != job.get("reward") or job.get("commissioner_id") != job.get("source_city"):
+            push_error("Invalid commissioned cargo or escrow: " + str(t.id))
+            return false
+        var before: float = stock[dst][pid].qty
+        _add_stock_inflow(dst, pid, qty)
+        net = stock[dst][pid].qty - before
+        t.cargo[pid] = 0
+        t.cash += reserved
+        _update_price_for(dst, pid)
+    elif job.get("movement_kind") != "empty":
+        push_error("Invalid carrier leg: " + str(t.id))
+        return false
+    t.city = dst
+    t.enroute = false
+    t.erase("carrier_job")
+    if _trace.active:
+        _trace.carrier_arrive(t, job, day, net)
+    return true
 
 func _best_trade_from(city: String, t: Dictionary) -> Dictionary:
     # role switch
@@ -5343,7 +5527,12 @@ func _make_save_payload() -> Dictionary:
         "player_cash": float(player.get("cash",0.0)),
         "saved_at": Time.get_datetime_string_from_system(),
     }
+    var city_funds := {}
+    for cid in cities:
+        city_funds[cid] = cities[cid].funds
     var state: Dictionary = {
+        "traders": traders,
+        "city_funds": city_funds,
         "day": day,
         "player": player,
         "cargo_lots": cargo_lots,
@@ -5409,6 +5598,15 @@ func _apply_save_payload(data: Dictionary) -> void:
     _debug_test_inventory_snapshot.clear()
 
     var state: Dictionary = (data.get("state", {}) as Dictionary)
+    # v2 saves before carrier accounting did not serialize cities or NPCs.
+    # Rebuild their legacy initial state rather than inheriting a later session.
+    var saved_funds: Dictionary = state.get("city_funds", {})
+    for cid in cities:
+        cities[cid].funds = float(saved_funds.get(cid, 0.0))
+    if state.has("traders"):
+        traders.assign(state.traders)
+    else:
+        init_traders()
     day = int(state.get("day", day))
 
     # 旧セーブでは空から開始し、直前のプレイ状態を持ち越さない。
