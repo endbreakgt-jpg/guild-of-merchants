@@ -8,3 +8,5 @@
 番号例: A-01、A-02、B-01（途中の項目番号を振り直さない）
 
 - [Phase 4-A 検証票](gom_phase4a_same_day_departure_test_2026-11-26.txt)：同日再出発・回帰・交易テンポ（ヘッドレス結果記録済み、Windows実機確認待ち）
+
+- [Phase 4-C-01 経済CSV検証票](gom_phase4c01_economy_csv_test_2026-11-27.txt)：静的整合・無介入比較・実交易（未実施）
