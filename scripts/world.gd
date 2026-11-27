@@ -527,6 +527,48 @@ func _on_day_tick() -> void:
 
 
 
+const EconomyTelemetry = preload("res://scripts/economy_telemetry.gd")
+var _trace := EconomyTelemetry.new()
+var _day_in_progress := false
+
+func trace_boundary_safe() -> bool:
+    if _day_in_progress or player.get("enroute", false):
+        return false
+    var hud = get_node_or_null("GameHUD")
+    return hud == null or not hud.trace_ui_busy()
+
+func start_economy_trace(include_product_daily: bool = true) -> bool:
+    if _trace.active or not trace_boundary_safe():
+        return false
+    _trace = EconomyTelemetry.new()
+    var hud = get_node_or_null("GameHUD")
+    if hud != null:
+        _trace.recording_failed.connect(hud.show_trace_error)
+    return _trace.start(self, include_product_daily)
+
+func stop_economy_trace() -> bool:
+    if not _trace.active or not trace_boundary_safe():
+        return false
+    _trace.finish("stopped")
+    return _trace.error.is_empty()
+
+func reset_economy_trace(include_product_daily: bool = true) -> bool:
+    if not trace_boundary_safe():
+        return false
+    _trace.finish("reset")
+    return start_economy_trace(include_product_daily)
+
+func get_economy_trace_status() -> Dictionary:
+    return {"active":_trace.active,"path":_trace.path,"error":_trace.error,"start_day":_trace.meta.get("start_day",0),"days":_trace.meta.get("days",0)}
+
+func export_economy_trace_summary() -> String:
+    if _day_in_progress:
+        return ""
+    return _trace.summary()
+
+func _exit_tree() -> void:
+    _trace.finish("exit")
+
 func step_one_turn() -> void:
     # 1ターン進める。最終ターンの次は日付を進める。
     turn += 1
@@ -539,6 +581,7 @@ func step_one_turn() -> void:
     step_one_day()
 func step_one_day() -> void:
     turn = 0
+    _day_in_progress = true
     # 日付を進め、イベント→（Dice可視化ならHUDへ委譲）→日次処理
     day += 1
     _effects_tick_down()
@@ -568,6 +611,9 @@ func _decay_backlog_daily() -> void:
 
 func finalize_day() -> void:
     # 生産/消費 → 産業 → 供給 → 価格 → 市・屋台 → NPC → プレイヤー到着 → 劣化 → 通知
+    _day_in_progress = true
+    if _trace.active and day != _trace.meta.last_day + 1:
+        _trace.fail("日付が連続していません: Day %d" % day)
     _decay_backlog_daily()  # バックログを日次で少し蒸発
 
     # --- Pass A: 需要計算 & 基礎供給（バッチ放出） ---
@@ -632,12 +678,19 @@ func finalize_day() -> void:
     for t in traders:
         var just_arrived: bool = bool(t.get("enroute", false)) and int(t.get("arrival_day", 0)) <= day
         if just_arrived:
+            if _trace.active:
+                _trace.flag(t,"arrived",true)
+                if not depart_same_day:
+                    _trace.flag(t,"decision","arrival_cooldown")
+                    _trace.reject(t,"day","ARRIVAL_COOLDOWN")
             _arrive_and_trade(t)
 
         if not bool(t.get("enroute", false)) and (depart_same_day or not just_arrived):
             var city_id3: String = String(t.get("city", ""))
             if city_id3 != "":
                 var plan: Dictionary = _best_trade_from(city_id3, t)
+                if _trace.active:
+                    _trace.flag(t,"decision","selected" if plan.get("qty",0) > 0 else "no_candidate")
                 _plan_and_depart(t, plan)
 
     _tick_player_convoy_condition_on_travel_day()
@@ -650,6 +703,9 @@ func finalize_day() -> void:
     # 当日すべての価格再計算が終わった時点の確定スナップショットを保存
     _snapshot_price_reason_day_end()
 
+    if _trace.active:
+        _trace.close_day(self)
+    _day_in_progress = false
     day_advanced.emit(day)
     world_updated.emit()
     _log_day_summary()
@@ -1698,7 +1754,12 @@ func _tick_industries() -> void:
             else:
                 ind["last_util"] = 0.0
 
+            if _trace.active:
+                _trace.industry(day,cid,ind,desire_out,actual_out)
             if actual_out <= 0.0:
+                if _trace.active:
+                    for p in inputs:
+                        _trace.input_used(day,cid,ind,p,inputs[p]*desire_out,stock[cid][p].qty,0)
                 arr[i] = ind
                 continue
 
@@ -1712,6 +1773,8 @@ func _tick_industries() -> void:
                 _ensure_stock_record(cid, in_pid2)
                 var need: float = ratio2 * actual_out
                 var have: float = float(stock[cid][in_pid2].get("qty", 0.0))
+                if _trace.active:
+                    _trace.input_used(day,cid,ind,in_pid2,ratio2*desire_out,have,need)
                 stock[cid][in_pid2]["qty"] = max(0.0, have - need)
 
             # Output supply as inflow (absorbs backlog immediately).
@@ -2052,6 +2115,8 @@ func load_escort_templates() -> void:
 
 
 func load_data() -> void:
+    _trace.finish("new_game")
+    _day_in_progress = false
     # products
     var prod_rows: Array[Dictionary] = _loader.load_csv_dicts(data_dir + "products.csv")
     for row_any in prod_rows:
@@ -2521,8 +2586,11 @@ func _tick_port_imports() -> void:
         qty = max(1, qty)
 
         _ensure_stock_record_smart(cid, pid)
+        var before_import: float = stock[cid][pid].qty if _trace.active else 0.0
         _add_stock_inflow(cid, pid, float(qty))
 
+        if _trace.active:
+            _trace.imported(day,cid,pid,qty,stock[cid][pid].qty-before_import)
         if port_log:
             var cname := String(cities.get(cid, {}).get("name", cid))
             var pname := get_product_name(pid)
@@ -2640,7 +2708,10 @@ func _tick_water_logistics() -> void:
                 continue
 
             stock[src][pid]["qty"] = max(0.0, src_have - ship)
-            stock[dst][pid]["qty"] = float(stock[dst][pid].get("qty", 0.0)) + ship * keep_ratio
+            var received: float = ship * keep_ratio
+            stock[dst][pid]["qty"] = float(stock[dst][pid].get("qty", 0.0)) + received
+            if _trace.active:
+                _trace.shipment(day,wr.route_id,src,dst,pid,ship,received,keep_ratio)
 
             cap_left -= ship
 
@@ -2648,6 +2719,15 @@ func _tick_water_logistics() -> void:
                 var sname := String(cities.get(src, {}).get("name", src))
                 var dname := String(cities.get(dst, {}).get("name", dst))
                 _log("WaterShip: %s -> %s %s %.1f (keep=%.2f)" % [sname, dname, get_product_name(pid), ship, keep_ratio])
+
+        if _trace.active:
+            var capacity: float = wr.capacity
+            var status := "no_surplus_deficit_pair"
+            if cap_left <= 0:
+                status = "capacity_used"
+            elif cap_left < capacity:
+                status = "shipped"
+            _trace.water(day,wr.route_id,capacity,cap_left,status)
 
 func _init_reputation() -> void:
     # 0〜100に正規化
@@ -2877,6 +2957,8 @@ func _arrive_and_trade(t: Dictionary) -> void:
         _update_price_for(String(t["city"]), String(pid))
         var gross: float = qty * get_bid_price(t["city"], pid)
         var tax: float = gross * get_trade_tax_rate(String(t["city"]))
+        if _trace.active:
+            _trace.sell(day,t,pid,qty,gross,tax)
         var revenue: float = gross - tax
         t["cash"] = float(t["cash"]) + revenue
         t["cargo"][pid] = 0
@@ -2894,8 +2976,12 @@ func _plan_and_depart(t: Dictionary, plan: Dictionary) -> void:
     var qty: int = int(plan.get("qty", 0))
 
     if city == "" or dest == "" or pid == "" or qty <= 0:
+        if _trace.active and plan.get("qty",0) > 0:
+            _trace.reject(t,"execution","INVALID_PLAN")
         return
     if not adj.has(city) or not (dest in (adj[city] as Array)):
+        if _trace.active:
+            _trace.reject(t,"execution","NO_ROUTE")
         return
 
     if not t.has("cargo"):
@@ -2911,6 +2997,8 @@ func _plan_and_depart(t: Dictionary, plan: Dictionary) -> void:
     var max_by_cap: int = cap_free / max(1, unit_size)
     qty = max(0, min(qty, avail, max_by_cap))
     if qty <= 0:
+        if _trace.active:
+            _trace.reject(t,"execution","NO_SURPLUS" if avail <= 0 else "NO_CAPACITY")
         return
 
     var ask_price: float = get_ask_price(city, pid)
@@ -2923,6 +3011,8 @@ func _plan_and_depart(t: Dictionary, plan: Dictionary) -> void:
     var max_by_cash: int = int(floor((cash_now - travel_total) / max(1.0, ask_price)))
     qty = max(0, min(qty, max_by_cash))
     if qty <= 0:
+        if _trace.active:
+            _trace.reject(t,"execution","NO_CASH")
         return
 
     # 最終チェック（安全側にもう一度計算）
@@ -2931,11 +3021,14 @@ func _plan_and_depart(t: Dictionary, plan: Dictionary) -> void:
     travel_total = float(edge_cost.get("total", 0.0))
 
     if cash_now < float(qty) * ask_price + travel_total:
+        if _trace.active:
+            _trace.reject(t,"execution","NO_CASH")
         return
 
     # 実際の取引
     stock[city][pid]["qty"] = float(stock[city][pid]["qty"]) - float(qty)
-    t["cash"] = cash_now - float(qty) * ask_price
+    var purchase_cost: float = float(qty) * ask_price
+    t["cash"] = cash_now - purchase_cost
     t["cargo"][pid] = int(t["cargo"].get(pid, 0)) + qty
     _update_price_for(city, pid)
 
@@ -2950,6 +3043,8 @@ func _plan_and_depart(t: Dictionary, plan: Dictionary) -> void:
         if cities.has(dest):
             cities[dest]["funds"] = float(cities[dest].get("funds", 0.0)) + travel_total
 
+    if _trace.active:
+        _trace.depart(day,t,plan,qty,purchase_cost,edge_cost)
     _log("%s depart %s -> %s carrying %s x%d (profit≈%.1f)" % [
         t.get("id", "?"),
         city,
@@ -2971,6 +3066,8 @@ func _best_trade_from(city: String, t: Dictionary) -> Dictionary:
 func _best_trade_profit_from(city: String, t: Dictionary) -> Dictionary:
     var best: Dictionary = {"dest": "", "pid": "", "qty": 0, "profit": -1e20}
     if not adj.has(city):
+        if _trace.active:
+            _trace.reject(t,"route","NO_ROUTE")
         return best
 
     var cap_free: int = max(0, int(t.get("cap", 0)) - _cargo_used(t))
@@ -2982,6 +3079,8 @@ func _best_trade_profit_from(city: String, t: Dictionary) -> Dictionary:
         var nb: String = String(nb_any)
 
         if lock_prov and String(cities.get(nb, {}).get("province", "")) != home_prov:
+            if _trace.active:
+                _trace.reject(t,"route","PROVINCE_LOCK")
             continue
 
         var days: int = _route_days(city, nb)
@@ -2992,12 +3091,16 @@ func _best_trade_profit_from(city: String, t: Dictionary) -> Dictionary:
             var pid: String = String(pid_any)
 
             if not stock.has(city) or not stock[city].has(pid):
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_SOURCE_RECORD")
                 continue
 
             var ask: float = get_ask_price(city, pid)
             var bid: float = get_bid_price(nb, pid)
             var unit_gain: float = bid - ask
             if unit_gain <= 0.0:
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_PROFIT")
                 continue
 
             var unit_size: int = int(products[pid].get("size", 1))
@@ -3006,6 +3109,8 @@ func _best_trade_profit_from(city: String, t: Dictionary) -> Dictionary:
             var max_by_cash: int = int(floor(float(t.get("cash", 0.0)) / max(1.0, ask)))
             var q: int = max(0, min(avail, max_by_cap, max_by_cash))
             if q <= 0:
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_SURPLUS" if avail <= 0 else ("NO_CAPACITY" if max_by_cap <= 0 else "NO_CASH"))
                 continue
 
             var profit: float = unit_gain * float(q) - (travel + toll)
@@ -3013,6 +3118,8 @@ func _best_trade_profit_from(city: String, t: Dictionary) -> Dictionary:
             # 強欲度に応じた最低相対利幅（2%～10%）を要求
             var min_rel: float = 0.02 + 0.08 * float(t.get("greedy", 0.7))
             if (unit_gain / max(1.0, ask)) < min_rel:
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_PROFIT")
                 continue
 
             if profit > float(best.get("profit", -1e20)):
@@ -3026,6 +3133,8 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
     var best_score: float = -1e20
 
     if not adj.has(city):
+        if _trace.active:
+            _trace.reject(t,"route","NO_ROUTE")
         return best
 
     var cap_free: int = max(0, int(t.get("cap", 0)) - _cargo_used(t))
@@ -3037,6 +3146,8 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
         var nb: String = String(nb_any)
 
         if lock_prov and String(cities.get(nb, {}).get("province", "")) != home_prov:
+            if _trace.active:
+                _trace.reject(t,"route","PROVINCE_LOCK")
             continue
 
         var days: int = _route_days(city, nb)
@@ -3047,10 +3158,16 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
             var pid: String = String(pid_any)
 
             if not _is_logistics_pid(pid):
+                if _trace.active:
+                    _trace.reject(t,"candidate","INELIGIBLE_PRODUCT")
                 continue
             if not stock.has(city) or not stock[city].has(pid):
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_SOURCE_RECORD")
                 continue
             if not stock.has(nb) or not stock[nb].has(pid):
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_DEST_RECORD")
                 continue
 
             var ask: float = get_ask_price(city, pid)
@@ -3069,10 +3186,14 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
             var keep_ratio: float = clamp(logistics_source_keep_ratio, 0.0, 1.0)
             var surplus: float = q_src - t_src * keep_ratio
             if surplus <= 0.0:
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_SURPLUS")
                 continue
 
             var need: float = t_dst - q_dst
             if need <= 0.0:
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_DEMAND")
                 continue
 
             var unit_size: int = int(products[pid].get("size", 1))
@@ -3082,11 +3203,15 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
             if q <= 0 and flow_cap >= logistics_min_fractional_lot:
                 q = 1
             if q <= 0:
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_CAPACITY" if max_by_cap <= 0 else "LOT_TOO_SMALL")
                 continue
 
             var max_by_cash: int = int(floor(float(t.get("cash", 0.0)) / max(1.0, ask)))
             q = min(q, max_by_cash)
             if q <= 0:
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_CASH")
                 continue
 
             var shortage: float = clamp(1.0 - (q_dst / t_dst), 0.0, 1.0)
@@ -3107,8 +3232,12 @@ func _best_trade_logistics_from(city: String, t: Dictionary) -> Dictionary:
                     and absf(profit) <= logistics_priority_relief_max_loss
                 )
                 if not allow_relief:
+                    if _trace.active:
+                        _trace.reject(t,"candidate","NO_PROFIT")
                     continue
             elif unit_gain <= 0.0 and not is_priority:
+                if _trace.active:
+                    _trace.reject(t,"candidate","NO_PROFIT")
                 continue
 
             # 目的：不足（shortage）×搬入量 を最大化（距離は軽くペナルティ）
@@ -5198,6 +5327,8 @@ func load_from_slot(slot: int) -> bool:
     var data_any: Variant = JSON.parse_string(f.get_as_text())
     if not (data_any is Dictionary):
         return false
+    _trace.finish("load")
+    _day_in_progress = false
     _apply_save_payload(data_any as Dictionary)
     if has_signal("world_updated"):
         world_updated.emit()
