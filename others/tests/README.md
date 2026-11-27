@@ -9,6 +9,8 @@
 
 - [Phase 4-A 検証票](gom_phase4a_same_day_departure_test_2026-11-26.txt)：同日再出発・回帰・交易テンポ（ヘッドレス結果記録済み、Windows実機確認待ち）
 
-- [Phase 4-C-01 経済CSV検証票](gom_phase4c01_economy_csv_test_2026-11-27.txt)：[検証実績](gom_c01_results.txt)・[120日間の指定日比較](gom_c01_snapshots.txt)（Windows実機確認待ち）
+- [Phase 4-C-01 経済CSV検証票](gom_phase4c01_economy_csv_test_2026-11-27.txt)：[検証実績](gom_c01_results.txt)・[120日間の指定日比較](gom_c01_snapshots.txt)（Windows動作確認完了：ユーザー報告、個別項目未記録）
 
-- [Phase 4-C-01b-1 物流計測検証票](gom_phase4c01b1_economy_telemetry_test_2026-11-27.txt)：ON/OFF同一性・120日計測・実機回帰（[120日実測](gom_c01b1_logistics_results.txt)、Windows確認待ち）
+- [Phase 4-C-01b-1 物流計測検証票](gom_phase4c01b1_economy_telemetry_test_2026-11-27.txt)：ON/OFF同一性・120日計測・実機回帰（[120日実測](gom_c01b1_logistics_results.txt)、Windows動作確認完了：ユーザー報告、個別項目未記録）
+
+- [Phase 4-C-01b-2 委託輸送検証票](gom_phase4c01b2_commission_logistics_test_2026-11-27.txt)：報酬保存・セーブ互換・4条件120日比較（未実施）
