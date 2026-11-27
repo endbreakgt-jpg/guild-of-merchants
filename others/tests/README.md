@@ -15,4 +15,4 @@
 
 - [Phase 4-C-01b-2 委託輸送検証票](gom_phase4c01b2_commission_logistics_test_2026-11-27.txt)：報酬保存・セーブ互換・4条件120日比較（[実測表](gom_c01b2_logistics_results.txt)、Windows実機待ち）
 
-- [Phase 4-C-01b-S 検証票](gom_phase4c01bs_save_v3_test_2026-11-27.txt)：保存復元・旧版移行・CSV更新・ファイル保護（未実施）
+- [Phase 4-C-01b-S 検証票](gom_phase4c01bs_save_v3_test_2026-11-27.txt)：保存復元・旧版移行・CSV更新・ファイル保護（結果追記済み、Windows実機確認待ち）

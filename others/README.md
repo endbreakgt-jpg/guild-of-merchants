@@ -30,4 +30,4 @@
 
 - [Phase 4-C-01b-2 委託輸送仕様](specs/gom_phase4c01b2_commission_logistics_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01b2_commission_logistics_test_2026-11-27.txt)：実装・4条件検証済み。[経済比較結果](tests/gom_c01b2_logistics_results.txt)。
 
-- [Phase 4-C-01b-S 保存対象台帳](specs/gom_phase4c01bs_save_state_inventory_2026-11-27.txt)／[セーブver.3仕様](specs/gom_phase4c01bs_save_v3_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01bs_save_v3_test_2026-11-27.txt)：方針承認済み、未実装。
+- [Phase 4-C-01b-S 保存対象台帳](specs/gom_phase4c01bs_save_state_inventory_2026-11-27.txt)／[セーブver.3仕様](specs/gom_phase4c01bs_save_v3_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01bs_save_v3_test_2026-11-27.txt)：実装済み。Windows実機確認待ち。

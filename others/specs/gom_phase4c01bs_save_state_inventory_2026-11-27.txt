@@ -16,3 +16,14 @@ telemetry _trace T: 保存で継続、成功ロードで終了、失敗ロード
 乱数: world._ready randomize、グローバルrandf/randi/randi_range/Array.shuffle（天候/日次イベント/供給/水運/輸入/屋台等）、護衛/契約は個別RandomNumberGenerator。今回グローバル乱数の状態保存・置換は対象外。同一未来の完全再現は保証しない。専用RNGへの移行は別工程。
 ファイル書込: world save_to_slot (user://saves)、EXP3種(user://exports)、economy_telemetry (user://exportsのsession/summary/CSV等)。全19本の静的検索ではres://dataへの書込なし。csv_loaderは読取。master CSVは今後も読取専用。Git履歴で開発時初期値を管理。
 既知の別課題: stock.consはfinalize_dayで需要計算結果へ上書き。stockの全辞書上書きは最新CSVを無効化。屋台税treasuryとfundsの分離、load_dataの再初期化漏れ候補（products/cities等のclear不足）、初期化順は今回の分離で確認するが経済挙動を勝手に修正しない。
+
+実装後台帳 / 5851997
+正式な保存キーと領域は scripts/save_manager.gd の GROUPS。抽出元は World._extract_save_state、復元先は World._apply_save_payload。対応検証は下記。
+clock: day/turn。B-01～03。速度/一時停止/タイマー/進行待ちフラグはT、ロードは停止状態で復帰。
+player: player全キー/cargo_lots。B-01～04・B-07。player_home_cityは固定のためC。TEST INVの除外・一時コピーはT。
+economy: stock(qty/cons)/price/history/backlog/不足EMA/供給スケジュール/最終供給日/価格理由・観測日/工房last_util・last_out/屋台・定期市。B-01～06/C-03～05。target/prod・工房定義のゲーム内書換を調査。targetの変更は初期/動的生成の自動補完。動的targetには由来フラグを保存し、基準値は最新設定から再計算。prodと工房能力に動的更新なし。
+cities/npc: 都市別funds/存在するtreasury、全traders、業務と報酬。B-01～04・C-01～02・C-06。
+events: effects/route_hazard_deltas/天候予報・起点/緊急供給。B-01～03・B-05～06。直近ダイス表示値は通知用のためT。
+intel/statistics: 週報、比較用観測と履歴、対象地域、供給統計全値、event_log。B-01～03・B-05～06。200件上限は現行設定。
+progress: 信用/都市解放/tutorial/契約/最終sweep日/story章境界。B-01～03・B-07。護衛の都市別提供キャッシュは日付/都市キーで再取得。
+ランタイムUI・計測・乱数は保存対象外。UIは成功時のみ同期し、計測は成功ロードで終了。D-01～03。

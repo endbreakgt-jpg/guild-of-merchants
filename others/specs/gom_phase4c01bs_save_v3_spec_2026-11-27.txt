@@ -1,4 +1,4 @@
-C-01b-S2～S5 セーブ基盤再設計 / 承認済み方針の具体化 / 未実装
+C-01b-S2～S5 セーブ基盤再設計 / 実装済み（5851997）
 基準 e9e087e3f400b0de34e0e201fef4bb14e4ff94e7。台帳 gom_phase4c01bs_save_state_inventory_2026-11-27.txt。前工程C-01b-2マージ済み、Windows動作問題なし（ユーザー報告）。
 1. 目的: 現行経済の保存漏れを解消し、過去ロード時の状態混在を防ぎ、CSV更新・新商品/都市/工房・将来の混載/広域輸送に対応する。新規ゲームの経済ロジックは変えない。
 2. モジュール: scripts/save_manager.gd (RefCounted等、ファイルI/O・形式検証・移行・バックアップ・復元候補構築)、scripts/master_data.gd (CSV読取・基準値/新規初期状態の生成・revision管理)、world.gd (状態所有・適用・日次統括・既存公開API)。可能なら状態の抽出/正規化も独立モジュールに分離。world全体を無条件に渡して変更するだけの外出しは避け、純粋な辞書入出力を優先。master_dataは副作用なく基準スナップショットを取得し、ロードのためにlive worldのload_dataを呼ばない。現行CsvLoader/補助関数の参照・初期化順を守る。段階的に分離し旧main新規120日との一致を確認。無関係な価格/NPC/天候等の移設は後続工程。
@@ -11,3 +11,12 @@ C-01b-S2～S5 セーブ基盤再設計 / 承認済み方針の具体化 / 未実
 9. ロード: read/parse→version/型/必須/有限数/ID検証→移行→master合成→候補全体検証→一括適用。検証前は世界・UI・計測・乱数を変更しない。失敗時は状態/計測継続。適用時に失敗しないよう型正規化し、可能なら復元前状態のrollbackを用意。成功時のみtrace.finish、ランタイム初期化・通知。両save UIにエラー理由と移行警告を表示。get_slot_summaryはempty/corrupt/unsupported/valid/backup_available等を区別し既存exists/date/day/city/cash互換を維持。
 10. 検証: 旧mainとの新規120日経済一致、ver3保存直後/再起動/30日後巻戻しの全P照合、旧ver2前後、CSV変更/新商品/新都市、明示0、ファイル障害/破損/未来ver、NPC確保報酬保存則、屋台/イベント/週報/物語/TEST INV/EXP、Windows両UI。詳細は検証票。実行不能は未実施。
 11. 対象外: 経済パラメータやNPC行動変更、専用RNG移行、過去全ver完全対応、セーブスロット数/オートセーブ/大幅UI改装、ギルド財政、混載/広域輸送。Godot4.3、スペース、C系三項禁止。仕様→モジュール→復元→移行→検証を別コミット推奨。mainマージはユーザー。
+
+12. 実装データ辞書とマスター更新
+レイアウトは {meta,state,number_bits}。meta.ver=3、meta.master_revision=1、現行比較設定の診断値をmeta.settingsに保持。日付・都市・現金・保存日時は従来と同じキー。stateの必須領域とキーはSaveManager.GROUPS、台帳末尾参照。stockはqty/cons、工房は都市→工房ID→last_util/last_out。
+number_bitsはstateの走査順に並べた整数/浮動小数のGodot Variant列（Base64、オブジェクト許可なし）。JSONの数値と照合して元の桁と型を復元する。Godot 4.3のJSONデコードだけでは一部の微小な小数が変化するため。stateの辞書順はそのまま書き出し、手編集で並べ替えない。
+経済CSV、初期化や基準を変更するシーンの設定を更新する際は同じPRでmaster_data.gdのREVISIONを1増やし、移行テストと変更理由を記録。既存IDは維持し、廃止/改名には明示の移行ルールを用意するまでロード拒否。revisionは診断用、最新設定との合成は常に実行する。いずれの通常プレイもCSVは読み取り専用。
+基準はプロセス起動時にロードしたCSVから生成される。master_dataは在庫/工房CSVの読取と初期値/現在プレイ状態の合成を担当。他のCSVの現行処理はWorldの初期化に残る。
+SaveManager.write/read/prepareはデータを検証、移行、合成する。World.save_to_slot/load_from_slotのAPIを維持。load_from_slot(slot,true)でbakのみ明示読込。復元しても元のファイルを書換えない。空欄・破損・未対応はスロット表示と通知で区別。tmpとbak.tmpは途中ファイル。
+新版は移動・演出等の安全境界で保存。プレイヤー移動中の旧ファイルは理由付き拒否。ロード成功後にタイマー停止、速度1倍、MAPからCITYへ復帰（存在する場合）。storyは章境界の値を代入し、会話/DEVは再実行しない。
+旧ver.2の未保存値は復元不能。都市金庫・NPC欄なしのみ旧データの既定値補完（委託ONならrank×100、OFFなら0、NPC初期化）。明示0は維持。供給スケジュールはロード日基準で遅延生成。ver.1以前と未来版は未対応。
