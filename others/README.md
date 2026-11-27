@@ -26,4 +26,4 @@
 - `引継.txt` は履歴を追記し続けず、現在有効な要点に上書き・圧縮します。
 
 ## 直近の経済調整資料
-- [Phase 4-C-01b-1 物流計測仕様](specs/gom_phase4c01b1_economy_telemetry_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01b1_economy_telemetry_test_2026-11-27.txt)：計画承認済み、実装・検証は未着手。
+- [Phase 4-C-01b-1 物流計測仕様](specs/gom_phase4c01b1_economy_telemetry_spec_2026-11-27.txt)／[検証票](tests/gom_phase4c01b1_economy_telemetry_test_2026-11-27.txt)：実装・120日計測済み。Windows実機確認待ち。

@@ -1,5 +1,5 @@
 Guild of Merchants / Phase 4-C-01b-1 物流計測仕様・実装計画
-2026-11-27 / ユーザー承認済みの計画を具体化 / 未実装
+2026-11-27 / 承認仕様・実装済み（第11節参照）
 基準 main 43a5d4d46f8fa12b53421f24dba9eb2492255db5
 関連: gom_phase4b_economy_design_2026-11-27.txt, gom_c01_parameters.txt, ../tests/gom_c01_results.txt
 1. 目的と範囲
@@ -38,3 +38,11 @@ finalize_day（開始/確定・NPC判断）、_best_trade_profit_from/_best_trad
 モジュール/API→NPC計測→水運/輸入/工房→都市/商品→集計/EXP→ON/OFF比較→120日試験。Godot4.3、スペース統一、C系三項演算子禁止。変更箇所を関数単位で報告。今回の段階では物流の改善を実施しない。
 10. 完了条件
 計測ON/OFF同一条件の経済状態一致、明細と集計一致、120日記録成功、既存EXP/セーブ/UI回帰。実行できない検証は未実施。現行mainとの差分を確認し文書PRに実装を追加、mainマージはユーザー。
+
+11. 実装仕様（5cf76bc）
+Worldのstart/stop/resetは成功時true。稼働中の再開始・境界外はfalse。resetは新規フォルダを作る。statusはactive/path/error/start_day/days。exportは確定済み集計の絶対パス（失敗・日次途中は空文字）。成功ロード・再初期化・シーン退出で終了。通常EXPの出力先は従来通り。
+各CSVの列順は economy_telemetry.gd のHEADERS。trade_idはセッション内連番。phase=depart/arrive/end、status=open/complete/partial/pending。travel_costは日数ベースの旅費、travel_total＝travel_cost＋toll＋travel_tax。partialの仕入費・予想利益・実利益は空欄。終了時未到着のstatusはpending、観測前の仕入は空欄。npc_daily.city_idは移動中も出発地、dest_idは現行NPC辞書の値であり、滞在中は直近目的地を保持する場合がある。cargo_usedは積載単位。
+baseline.txtは開始日のstock/traders/backlog。session.txt・summary.txtはUTF-8の整形JSON。期間集計totalsのキーnpc・roleはobservations/moving/stayingなどを持つ。移動日率＝moving/observations。industryの平均稼働率＝utilization_sum/days。routeの利用率＝shipped/capacity。品別輸送のキーは出発地/到着地の順。city_firstとcity_lastは最初・最後の確定日でbaselineとは別。全日の推移はCSVを参照する。
+水運はenabledの航路をロードし、港/水運OFF・容量0・無効端点は対象外。no_surplus_deficit_pairは候補カテゴリ・在庫・余剰/不足の照合後に発送0だったことを示す。出荷は元在庫から減った量、受取はkeep_ratio適用後。工房OFF/無効/能力0は対象外。product_dailyはstock登録済み行だけを出力。bid/ask/target_effは日末状態に対する読取専用の表示値。
+拒否のstageはroute/candidate/execution/day。dayは到着日の再出発制限。利益/余剰等は既存分岐で最初に棄却された理由。plan採用後に数量0に縮小する時はexecution。候補なしの番兵planは実行失敗に含めない。
+書込み異常は計測を停止しEXP !とツールチップに表示。書ける場合はincomplete.txtに記録。部分追記の可能性があるセッションはsession.txtのlast_dayまでを確定済みとして扱う。セッション/集計TXTは一時ファイルから置換。アプリ異常終了でend_reason=openのままなら正常終了として扱わない。基準SHAと外部seedは通常プレイではunknown、本試験値は検証票に記載。
