@@ -499,3 +499,16 @@ func _connect_dialog_triggers() -> void:
     var c := Callable(self, "_on_dialog_line_started")
     if not dialog_player.line_started.is_connected(c):
         dialog_player.line_started.connect(c)
+
+func save_busy() -> bool:
+    return _running_prologue or _story_map_active or _overlay_active or not _current_story_id.is_empty()
+
+func save_progress() -> Dictionary:
+    return {"prologue_done":prologue_done,"prologue_step":prologue_step,"ctx_place":ctx_place,
+        "current_story_id":_current_story_id}
+
+func restore_progress(progress: Dictionary) -> void:
+    prologue_done = progress.prologue_done
+    prologue_step = int(progress.prologue_step)
+    ctx_place = progress.ctx_place
+    _current_story_id = progress.current_story_id
