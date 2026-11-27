@@ -4596,3 +4596,19 @@ func _open_save_load_window() -> void:
     _size_and_center_window(win)
     win.popup_centered()
     win.grab_focus()
+
+func save_ui_busy() -> bool:
+    return trace_ui_busy() or not _auto_travel_message_queue.is_empty()
+
+func sync_after_save_load() -> void:
+    _user_paused = true
+    if is_instance_valid(_auto_travel_timer):
+        _auto_travel_timer.stop()
+    if is_instance_valid(_auto_wait_timer):
+        _auto_wait_timer.stop()
+    _auto_travel_message_queue.clear()
+    _map_selected_city_id = ""
+    _map_travel_context.clear()
+    if _is_map_mode_open():
+        _close_map_mode()
+    _sync_pause_state()

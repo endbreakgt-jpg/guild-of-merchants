@@ -339,3 +339,6 @@ func get_next_non_dev_seq(id: String, after_seq: int) -> int:
             continue
         return s
     return -1
+
+func save_busy() -> bool:
+    return not _active_id.is_empty()

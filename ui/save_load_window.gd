@@ -11,6 +11,7 @@ var _dlg_ok: AcceptDialog = null
 var _dlg_confirm: ConfirmationDialog = null
 
 var _pending_action: String = ""
+var _backup_choice: Button
 var _pending_slot: int = 0
 var _close_after_result: bool = false
 
@@ -123,6 +124,13 @@ func _ensure_dialogs() -> void:
         _dlg_confirm.title = "確認"
         add_child(_dlg_confirm)
         _dlg_confirm.confirmed.connect(_do_pending_action)
+        _backup_choice = _dlg_confirm.add_button("バックアップを読込", true, "backup")
+        _dlg_confirm.custom_action.connect(func(action):
+            if action == "backup":
+                _dlg_confirm.hide()
+                _pending_action = "backup"
+                _do_pending_action()
+        )
 
 func _refresh() -> void:
     if _info == null:
@@ -156,7 +164,11 @@ func _refresh() -> void:
             btn_load.disabled = false
         else:
             lab.text = "Slot %d — (Empty)" % int(slot)
-            btn_load.disabled = true
+            btn_load.disabled = not meta.get("backup_available",false)
+        if meta.get("status") in ["corrupt","unsupported"]:
+            lab.text = "Slot %d — %s" % [int(slot),meta.get("error","読込不可")]
+        if meta.get("backup_available",false):
+            lab.text += " [バックアップあり]"
 
 func _ask_confirm(action: String, slot: int) -> void:
     if _dlg_confirm == null:
@@ -173,6 +185,7 @@ func _ask_confirm(action: String, slot: int) -> void:
     else:
         text = "実行します。よろしいですか？"
 
+    _backup_choice.visible = action == "load" and world.get_slot_summary(slot).get("backup_available", false)
     _dlg_confirm.dialog_text = text
     _dlg_confirm.popup_centered()
 
@@ -182,19 +195,11 @@ func _do_pending_action() -> void:
         return
 
     if _pending_action == "save":
-        var ok := world.save_to_slot(_pending_slot)
-        if ok:
-            _show_ok("保存しました。")
-        else:
-            _show_ok("保存に失敗しました。")
-
-    elif _pending_action == "load":
-        var ok2 := world.load_from_slot(_pending_slot)
-        if ok2:
-            _close_after_result = true
-            _show_ok("読み込みました。")
-        else:
-            _show_ok("読み込みに失敗しました。")
+        world.save_to_slot(_pending_slot)
+        _show_ok(world.save_message)
+    elif _pending_action in ["load","backup"]:
+        _close_after_result = world.load_from_slot(_pending_slot, _pending_action == "backup")
+        _show_ok(world.save_message)
 
     _refresh()
     _pending_action = ""

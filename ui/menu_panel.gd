@@ -36,6 +36,7 @@ var info_cash: Label
 var info_cargo: Label
 
 var dlg_save_confirm: ConfirmationDialog
+var _backup_choice: Button
 var dlg_load_confirm: ConfirmationDialog
 var dlg_info: AcceptDialog
 var _pending_slot: int = 0
@@ -301,9 +302,10 @@ func _ensure_dialogs() -> void:
         dlg_save_confirm.dialog_text = "セーブしますか？"
         add_child(dlg_save_confirm)
         dlg_save_confirm.confirmed.connect(func():
-            if world and world.save_to_slot(_pending_slot):
+            if world:
+                world.save_to_slot(_pending_slot)
                 _refresh_save_menu()
-                _show_info("セーブしました。")
+                _show_info(world.save_message)
         )
     if dlg_load_confirm == null:
         dlg_load_confirm = ConfirmationDialog.new()
@@ -311,17 +313,26 @@ func _ensure_dialogs() -> void:
         dlg_load_confirm.title = "確認"
         dlg_load_confirm.dialog_text = "ロードしますか？"
         add_child(dlg_load_confirm)
-        dlg_load_confirm.confirmed.connect(func():
-            if world and world.load_from_slot(_pending_slot):
-                _rebuild()
-                _refresh_save_menu()
-                _show_info("ロードしました。")
+        dlg_load_confirm.confirmed.connect(func(): _load_pending_slot(false))
+        _backup_choice = dlg_load_confirm.add_button("バックアップを読込", true, "backup")
+        dlg_load_confirm.custom_action.connect(func(action):
+            if action == "backup":
+                dlg_load_confirm.hide()
+                _load_pending_slot(true)
         )
     if dlg_info == null:
         dlg_info = AcceptDialog.new()
         dlg_info.name = "InfoDialog"
         dlg_info.title = "情報"
         add_child(dlg_info)
+
+func _load_pending_slot(backup: bool) -> void:
+    if world == null:
+        return
+    if world.load_from_slot(_pending_slot, backup):
+        _rebuild()
+    _refresh_save_menu()
+    _show_info(world.save_message)
 
 func _show_info(msg: String) -> void:
     if dlg_info == null:
@@ -728,7 +739,11 @@ func _refresh_save_menu() -> void:
             btn_load.disabled = false
         else:
             lab.text = "Slot %d — (Empty)" % s
-            btn_load.disabled = true
+            btn_load.disabled = not meta.get("backup_available",false)
+        if meta.get("status") in ["corrupt","unsupported"]:
+            lab.text = "Slot %d — %s" % [s,meta.get("error","読込不可")]
+        if meta.get("backup_available",false):
+            lab.text += " [バックアップあり]"
 
 func _on_save_slot(slot: int) -> void:
     _pending_slot = slot
@@ -740,6 +755,7 @@ func _on_load_slot(slot: int) -> void:
     _pending_slot = slot
     if dlg_load_confirm == null:
         _ensure_dialogs()
+    _backup_choice.visible = world.get_slot_summary(slot).get("backup_available",false)
     dlg_load_confirm.popup_centered()
 
 

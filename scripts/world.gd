@@ -519,6 +519,7 @@ func _ready() -> void:
 
     # 天気の先読みは day 確定後に初期化する
     _weather_init_forecast()
+    _capture_save_defaults()
 
     world_updated.emit()
 
@@ -2253,72 +2254,27 @@ func load_data() -> void:
         stock[cid] = {}
         price[cid] = {}
         history[cid] = {}
-    var _stock_path := data_dir + "city_stock.csv"
-    var st_rows: Array[Dictionary] = _loader.load_csv_dicts(_stock_path)
-    for st_any in st_rows:
-        var st: Dictionary = st_any
-        var c: String = String(st.get("city_id", ""))
-        var p: String = String(st.get("product_id", ""))
-        if c == "" or p == "":
-            continue
-        if not stock.has(c):
-            stock[c] = {}
-            price[c] = {}
-            history[c] = {}
-        stock[c][p] = {
-            "qty": _num(st.get("stock_qty", 0)),
-            "target": _num(st.get("target_stock", 1)),
-            "prod": _num(st.get("prod_per_day", 0)),
-            "cons": _num(st.get("cons_per_day", 0)),
-        }
+    stock = _master.read_stock(_loader, data_dir + "city_stock.csv", cities.keys(), _num)
+    for cid in stock:
+        if not price.has(cid):
+            price[cid] = {}
+            history[cid] = {}
 
-    # --- Industries (optional) ---
     industries_by_city.clear()
     var ind_path := data_dir + industries_file
     if FileAccess.file_exists(ind_path):
-        var ind_rows: Array[Dictionary] = _loader.load_csv_dicts(ind_path)
-        for ind_any in ind_rows:
-            var ir: Dictionary = ind_any
-            var cid4: String = String(ir.get("city_id", "")).strip_edges()
-            if cid4 == "" or not cities.has(cid4):
-                continue
-
-            var iid: String = String(ir.get("industry_id", ir.get("id", ""))).strip_edges()
-            if iid == "":
-                continue
-
-            var out_pid: String = String(ir.get("out_pid", ir.get("output_pid", ""))).strip_edges()
-            var out_per_day: float = float(_num(ir.get("out_per_day", ir.get("output_per_day", 0.0))))
-            var inputs_txt: String = String(ir.get("inputs", ir.get("input_list", "")))
-            var inputs: Dictionary = _parse_industry_inputs(inputs_txt)
-
-            var name_str: String = String(ir.get("name_ja", ir.get("name", iid)))
-            var enabled: int = int(_num(ir.get("enabled", 1)))
-            var lvl: int = max(1, int(_num(ir.get("level", 1))))
-
-            var ind: Dictionary = {
-                "industry_id": iid,
-                "name": name_str,
-                "enabled": enabled,
-                "out_pid": out_pid,
-                "out_per_day": out_per_day,
-                "inputs": inputs,
-                "level": lvl,
-                "last_util": 1.0,
-                "last_out": 0.0,
-            }
-
-            if not industries_by_city.has(cid4):
-                industries_by_city[cid4] = []
-            (industries_by_city[cid4] as Array).append(ind)
-
-            # Ensure related stock records exist.
-            if out_pid != "":
-                _ensure_stock_record(cid4, out_pid)
-            for k2 in inputs.keys():
-                _ensure_stock_record(cid4, String(k2))
-
-        _log("Industries: loaded=%d (%s)" % [ind_rows.size(), ind_path])
+        var definitions := _master.read_industries(_loader, ind_path, cities, _num, _parse_industry_inputs)
+        for entry in definitions.entries:
+            var city: String = entry.city
+            var workshop: Dictionary = entry.industry
+            if not industries_by_city.has(city):
+                industries_by_city[city] = []
+            industries_by_city[city].append(workshop)
+            if workshop.out_pid != "":
+                _ensure_stock_record(city, workshop.out_pid)
+            for pid in workshop.inputs:
+                _ensure_stock_record(city, pid)
+        _log("Industries: loaded=%d (%s)" % [definitions.rows_read, ind_path])
 
     # --- イベントテーブル読込（無ければ空配列） ---
     _events_daily = _loader.load_csv_dicts(data_dir + events_daily_file)
@@ -2575,6 +2531,10 @@ func _ensure_stock_record_smart(c: String, pid: String) -> void:
     var base: float = _consume_base_for(pid)
     var per_day: float = base * _rank_consume_mult(rk)
     stock[c][pid]["target"] = max(1.0, per_day * days)
+    if not _master.stock.get(c, {}).has(pid):
+        if not _smart_stock_targets.has(c):
+            _smart_stock_targets[c] = {}
+        _smart_stock_targets[c][pid] = true
 
 
 func _tick_port_imports() -> void:
@@ -5467,77 +5427,139 @@ func _classify_travel_row(r: Dictionary) -> int:
 func _slot_path(slot: int) -> String:
     return "user://saves/slot%02d.json" % slot
 
+const SaveManager = preload("res://scripts/save_manager.gd")
+const MasterData = preload("res://scripts/master_data.gd")
+var _save := SaveManager.new()
+var _master := MasterData.new()
+var _save_defaults := {}
+var _smart_stock_targets := {}
+var save_message := ""
+
+func _capture_save_defaults() -> void:
+    var automatic_targets := {}
+    if auto_target_fill_enable:
+        for cid in cities:
+            automatic_targets[cid] = {}
+            var rank: int = cities[cid].rank
+            var multiplier := _rank_consume_mult(rank)
+            var safety_days := _rank_safety_days(rank)
+            for pid in products:
+                automatic_targets[cid][pid] = maxf(1.0, _consume_base_for(pid) * multiplier * safety_days)
+    _master.capture(stock, price, history, industries_by_city, cities, products, key_items, adj, automatic_targets)
+    _save_defaults = _extract_save_state().duplicate(true)
+
+func _save_boundary_safe() -> bool:
+    if _day_in_progress or player.get("enroute", false) or debug_test_inventory_active:
+        return false
+    var hud = get_node_or_null("GameHUD")
+    var story = get_node_or_null("Story")
+    var dialog = get_node_or_null("Dialog")
+    var dialog_player = get_node_or_null("DialogPlayer")
+    return (hud == null or not hud.save_ui_busy()) and (story == null or not story.save_busy()) and (dialog == null or not dialog.is_dialog_mode) and (dialog_player == null or not dialog_player.save_busy())
+
 func get_slot_summary(slot: int) -> Dictionary:
     var path := _slot_path(slot)
-    var da := DirAccess.open("user://")
-    if da and not da.dir_exists("user://saves"):
-        return {"exists": false}
+    var reader := SaveManager.new()
+    var backup := not reader.read(path + ".bak").is_empty()
     if not FileAccess.file_exists(path):
-        return {"exists": false}
-    var f := FileAccess.open(path, FileAccess.READ)
-    if f == null:
-        return {"exists": false}
-    var data_any: Variant = JSON.parse_string(f.get_as_text())
-    if data_any is Dictionary:
-        var data_dict: Dictionary = data_any
-        var meta: Dictionary = data_dict.get("meta", {}) as Dictionary
-        return {
-            "exists": true,
-            "date": String(meta.get("date", "")),
-            "day": int(meta.get("day", 0)),
-            "city": String(meta.get("player_city", "")),
-            "cash": float(meta.get("player_cash", 0.0)),
-        }
-    return {"exists": false}
+        return {"exists":false,"status":"empty","backup_available":backup}
+    var data := reader.read(path)
+    if data.is_empty() or reader.prepare(data, _save_defaults, _master, maxi(1,turns_per_day)).is_empty():
+        var status := "corrupt"
+        if reader.error.begins_with("未対応"):
+            status = "unsupported"
+        return {"exists":true,"status":status,"backup_available":backup,"error":reader.error}
+    var meta: Dictionary = data.meta
+    return {"exists":true,"status":"valid","backup_available":backup,"date":meta.get("date",""),
+        "day":meta.get("day",0),"city":meta.get("player_city",""),"cash":meta.get("player_cash",0)}
 
 func save_to_slot(slot: int) -> bool:
-    var path := _slot_path(slot)
-    DirAccess.make_dir_recursive_absolute("user://saves")
-    var f := FileAccess.open(path, FileAccess.WRITE)
-    if f == null:
+    if not _save_boundary_safe():
+        save_message = "現在の進行中は保存できません。会話・移動・待機やTEST INVを終了してください。"
         return false
-    var payload := _make_save_payload()
-    f.store_string(JSON.stringify(payload))
-    f.flush()
-    return true
+    var ok := _save.write(_slot_path(slot), _make_save_payload(), _save_defaults, _master, maxi(1,turns_per_day))
+    save_message = "保存しました。" if ok else _save.error
+    return ok
 
-func load_from_slot(slot: int) -> bool:
+func load_from_slot(slot: int, backup: bool = false) -> bool:
+    if not _save_boundary_safe():
+        save_message = "現在の進行中は読み込めません。会話・移動・待機やTEST INVを終了してください。"
+        return false
     var path := _slot_path(slot)
-    if not FileAccess.file_exists(path):
-        return false
-    var f := FileAccess.open(path, FileAccess.READ)
-    if f == null:
-        return false
-    var data_any: Variant = JSON.parse_string(f.get_as_text())
-    if not (data_any is Dictionary):
+    if backup:
+        path += ".bak"
+    var data := _save.read(path)
+    var candidate := {}
+    if not data.is_empty():
+        candidate = _save.prepare(data, _save_defaults, _master, maxi(1,turns_per_day))
+    if candidate.is_empty():
+        save_message = _save.error
+        if not backup and FileAccess.file_exists(_slot_path(slot) + ".bak"):
+            save_message += "\nバックアップは読込確認画面から選択できます。"
         return false
     _trace.finish("load")
-    _day_in_progress = false
-    _apply_save_payload(data_any as Dictionary)
-    if has_signal("world_updated"):
-        world_updated.emit()
+    _apply_save_payload(candidate)
+    pause()
+    set_speed(1.0)
+    var hud = get_node_or_null("GameHUD")
+    if hud != null:
+        hud.sync_after_save_load()
+    save_message = "バックアップを読み込みました。" if backup else "読み込みました。"
+    if not _save.notice.is_empty():
+        save_message += "\n" + _save.notice
+        _log(_save.notice)
+    world_updated.emit()
     return true
 
 func _make_save_payload() -> Dictionary:
     var meta: Dictionary = {
-        "ver": 2,
+        "ver": SaveManager.VERSION,
+        "master_revision": MasterData.REVISION,
+        "settings": {"commission":enable_commission_logistics,"empty_move":logistics_allow_empty_move,
+            "same_day":logistics_depart_same_day,"turns_per_day":turns_per_day},
         "date": (format_date() if has_method("format_date") else "Day %d" % day),
         "day": day,
         "player_city": String(player.get("city","")),
         "player_cash": float(player.get("cash",0.0)),
         "saved_at": Time.get_datetime_string_from_system(),
     }
+    return _save.pack(meta, _extract_save_state())
+
+func _extract_save_state() -> Dictionary:
+    var city_treasury := {}
     var city_funds := {}
     for cid in cities:
         city_funds[cid] = cities[cid].funds
-    var state: Dictionary = {
+        if cities[cid].has("treasury"):
+            city_treasury[cid] = cities[cid].treasury
+    var story = get_node_or_null("Story")
+    return {
+        "turn": turn,
+        "history": history,
+        "backlog": backlog,
+        "_supply_sched": _supply_sched,
+        "_last_supply_day": _last_supply_day,
+        "_price_reason_today": _price_reason_today,
+        "_price_reason_last_day": _price_reason_last_day,
+        "_price_reason_day_end": _price_reason_day_end,
+        "_price_reason_day_end_day": _price_reason_day_end_day,
+        "_smart_stock_targets": _smart_stock_targets,
+        "stalls": stalls,
+        "fair_active": fair_active,
+        "route_hazard_deltas": route_hazard_deltas,
+        "_contracts_last_sweep_day": _contracts_last_sweep_day,
+        "intel_provinces": intel_provinces,
+        "weekly_reports": weekly_reports,
+        "city_treasury": city_treasury,
+        "industries": _master.extract_industries(industries_by_city),
+        "story": story.save_progress() if story != null else {"prologue_done":false,"prologue_step":0,"ctx_place":"","current_story_id":""},
         "traders": traders,
         "city_funds": city_funds,
         "day": day,
         "player": player,
         "cargo_lots": cargo_lots,
         "price": price,
-        "stock": stock,
+        "stock": _master.extract_stock(stock),
         "_shortage_ema": _shortage_ema,
         "_effects_active": _effects_active,
 
@@ -5588,7 +5610,6 @@ func _make_save_payload() -> Dictionary:
             "last_month": _contracts_last_month_key
         },
     }
-    return {"meta": meta, "state": state}
 
 
 func _apply_save_payload(data: Dictionary) -> void:
@@ -5598,16 +5619,40 @@ func _apply_save_payload(data: Dictionary) -> void:
     _debug_test_inventory_snapshot.clear()
 
     var state: Dictionary = (data.get("state", {}) as Dictionary)
-    # v2 saves before carrier accounting did not serialize cities or NPCs.
-    # Rebuild their legacy initial state rather than inheriting a later session.
-    var saved_funds: Dictionary = state.get("city_funds", {})
     for cid in cities:
-        cities[cid].funds = float(saved_funds.get(cid, 0.0))
-    if state.has("traders"):
-        traders.assign(state.traders)
-    else:
-        init_traders()
-    day = int(state.get("day", day))
+        cities[cid].funds = float(state.city_funds[cid])
+        cities[cid].erase("treasury")
+        if state.city_treasury.has(cid):
+            cities[cid].treasury = float(state.city_treasury[cid])
+    traders.assign(state.traders)
+    day = state.day
+    industries_by_city = state.industries
+    escort_offers_by_city.clear()
+    _last_roll_kind = ""
+    _last_roll_value = 0
+    turn = state.turn
+    history = state.history
+    backlog = state.backlog
+    _supply_sched = state._supply_sched
+    _last_supply_day = state._last_supply_day
+    _price_reason_today = state._price_reason_today
+    _price_reason_last_day = state._price_reason_last_day
+    _price_reason_day_end = state._price_reason_day_end
+    _price_reason_day_end_day = state._price_reason_day_end_day
+    _smart_stock_targets = state._smart_stock_targets
+    stalls = state.stalls
+    fair_active = state.fair_active
+    route_hazard_deltas = state.route_hazard_deltas
+    _contracts_last_sweep_day = state._contracts_last_sweep_day
+    intel_provinces.assign(state.intel_provinces)
+    weekly_reports.assign(state.weekly_reports)
+    _effects_active.assign(state._effects_active)
+    supply_count_today = state.supply_count_today
+    supply_count_total = state.supply_count_total
+    supply_count_by_month = state.supply_count_by_month
+    supply_count_by_city = state.supply_count_by_city
+    supply_count_by_pid = state.supply_count_by_pid
+    var old_tutorial := tutorial_state
 
     # 旧セーブでは空から開始し、直前のプレイ状態を持ち越さない。
     _market_weekly_intel_by_prov = state.get("weekly_market_intel", {}) as Dictionary
@@ -5632,21 +5677,10 @@ func _apply_save_payload(data: Dictionary) -> void:
             if qty > 0 and _is_perishable(pid):
                 cargo_lots[pid] = [{"qty": qty, "age": 0}]
 
-    if state.has("price"):
-        price = state.get("price") as Dictionary
-    if state.has("stock"):
-        stock = state.get("stock") as Dictionary
-    if state.has("_shortage_ema"):
-        _shortage_ema = state.get("_shortage_ema") as Dictionary
-
-    event_log.clear()
-    var saved_event_log: Array = state.get("event_log", []) as Array
-    for saved_entry_any in saved_event_log:
-        var saved_entry := String(saved_entry_any).strip_edges()
-        if saved_entry != "":
-            event_log.append(saved_entry)
-    while event_log.size() > event_log_max:
-        event_log.pop_front()
+    price = state.price
+    stock = state.stock
+    _shortage_ema = state._shortage_ema
+    event_log.assign(state.event_log.slice(maxi(0,state.event_log.size() - event_log_max)))
 
     var legacy_weather_sev: int = -1
     if state.has("_weather_severity_today"):
@@ -5662,10 +5696,11 @@ func _apply_save_payload(data: Dictionary) -> void:
         for forecast_any in saved_forecast:
             if forecast_any is Dictionary:
                 _weather_forecast.append((forecast_any as Dictionary).duplicate(true))
-    _weather_ensure_forecast()
+    if _weather_forecast.is_empty():
+        _weather_init_forecast()
 
     # 旧セーブ（_weather_severity_todayのみ）を軽く救済
-    if not state.has("_weather") and legacy_weather_sev >= 0:
+    if state._weather.is_empty() and legacy_weather_sev >= 0:
         var legacy_sev: int = clampi(legacy_weather_sev, 0, 10)
         var legacy_state: int = WEATHER_SUNNY
         if legacy_sev >= 10:
@@ -5676,57 +5711,28 @@ func _apply_save_payload(data: Dictionary) -> void:
             legacy_state = WEATHER_CLOUDY
         override_weather_day_offset(0, legacy_state, legacy_sev, true, true)
 
-    # --- emergency supply ---
-    if state.has("_emergency_shortage_streak"):
-        _emergency_shortage_streak = state.get("_emergency_shortage_streak") as Dictionary
-    else:
-        _emergency_shortage_streak = {}
-    if state.has("_emergency_last_day"):
-        _emergency_last_day = state.get("_emergency_last_day") as Dictionary
-    else:
-        _emergency_last_day = {}
-
-    # --- reputation / unlocks ---
-    if state.has("reputation"):
-        var reputation_state: Dictionary = state.get("reputation") as Dictionary
-        rep_global = clamp(float(reputation_state.get("global", rep_global)), 0.0, 100.0)
-        rep_by_province = (reputation_state.get("by_province", rep_by_province) as Dictionary)
-        rep_by_city = (reputation_state.get("by_city", rep_by_city) as Dictionary)
-    else:
-        rep_global = 0.0
-        rep_by_province = {}
-        rep_by_city = {}
+    _emergency_shortage_streak = state._emergency_shortage_streak
+    _emergency_last_day = state._emergency_last_day
+    rep_global = float(state.reputation.global)
+    rep_by_province = state.reputation.by_province
+    rep_by_city = state.reputation.by_city
     _init_reputation()
+    unlocked_city_ids = state.unlocks.city_ids
 
-    if state.has("unlocks"):
-        var unlock_state: Dictionary = state.get("unlocks") as Dictionary
-        unlocked_city_ids = (unlock_state.get("city_ids", unlocked_city_ids) as Array)
-    else:
-        unlocked_city_ids = []
+    tutorial_state = state.tutorial.state
+    tutorial_locks = state.tutorial.locks
+    tutorial_progress = state.tutorial.progress
+    _contract_offers = state.contracts.offers
+    _contracts_active.assign(state.contracts.active)
+    _contracts_next_id = int(state.contracts.next_id)
+    _contracts_last_month_key = state.contracts.last_month
+
+    var story = get_node_or_null("Story")
+    if story != null:
+        story.restore_progress(state.story)
     city_unlocks_changed.emit(unlocked_city_ids.duplicate())
-
-    # --- tutorial ---
-    if state.has("tutorial"):
-        var tut: Dictionary = state.get("tutorial") as Dictionary
-        var prev_state := tutorial_state
-        tutorial_state = String(tut.get("state", tutorial_state))
-        tutorial_locks = (tut.get("locks", {}) as Dictionary)
-        tutorial_progress = (tut.get("progress", {}) as Dictionary)
-        tutorial_state_changed.emit(prev_state, tutorial_state)
-        tutorial_locks_changed.emit(get_tutorial_locks())
-
-    # --- contracts ---
-    if state.has("contracts"):
-        var cst: Dictionary = state.get("contracts") as Dictionary
-        _contract_offers = (cst.get("offers", {}) as Dictionary)
-        _contracts_active.clear()
-        var saved_contracts: Array = cst.get("active", []) as Array
-        for contract_any in saved_contracts:
-            if contract_any is Dictionary:
-                _contracts_active.append((contract_any as Dictionary).duplicate(true))
-        _contracts_next_id = int(cst.get("next_id", 1))
-        _contracts_last_month_key = String(cst.get("last_month", ""))
-        _contracts_last_sweep_day = -1
+    tutorial_state_changed.emit(old_tutorial, tutorial_state)
+    tutorial_locks_changed.emit(get_tutorial_locks())
 
 
 func _pick_daily_event_for_tier(tier: String) -> Dictionary:
